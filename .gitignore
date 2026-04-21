@@ -1,0 +1,21 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+build/
+
+# Local orchestration / worktrees
+.worktrees/
+.sisyphus/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Local crash or temp files
+hs_err_pid*
+replay_pid*
