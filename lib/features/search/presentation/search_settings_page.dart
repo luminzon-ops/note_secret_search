@@ -209,7 +209,7 @@ class _IndexStatusCard extends ConsumerWidget {
   }
 }
 
-class _SemanticReadinessCard extends StatelessWidget {
+class _SemanticReadinessCard extends ConsumerWidget {
   const _SemanticReadinessCard({
     required this.readiness,
     required this.scope,
@@ -221,9 +221,10 @@ class _SemanticReadinessCard extends StatelessWidget {
   final SearchIndexStatus indexStatus;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final isReady = readiness.ready;
+    final guidanceItems = _blockedGuidanceItems();
 
     return Card(
       color: isReady ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest,
@@ -295,7 +296,7 @@ class _SemanticReadinessCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (_blockedGuidanceItems().isNotEmpty) ...[
+                  if (guidanceItems.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Text(
                       '下一步建议',
@@ -308,11 +309,20 @@ class _SemanticReadinessCard extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        for (final item in _blockedGuidanceItems())
-                          if (item.route != null)
+                        for (final item in guidanceItems)
+                          if (item.route != null || item.action == _GuidanceAction.indexPending)
                             ActionChip(
                               label: Text(item.label),
-                              onPressed: () => context.push(item.route!),
+                              onPressed: () {
+                                if (item.route != null) {
+                                  context.push(item.route!);
+                                  return;
+                                }
+
+                                if (item.action == _GuidanceAction.indexPending) {
+                                  ref.read(searchIndexControllerProvider).indexPending();
+                                }
+                              },
                             )
                           else
                             Chip(label: Text(item.label)),
@@ -358,16 +368,27 @@ class _SemanticReadinessCard extends StatelessWidget {
     if (!scope.allowLocalEmbedding) {
       items.add(const _GuidanceItem(label: '启用本地语义检索'));
     }
+    if (indexStatus.readyForIndexing && indexStatus.pendingItems.isNotEmpty) {
+      items.add(
+        _GuidanceItem(
+          label: indexStatus.taskState.lastCompletedAt == null ? '立即构建索引' : '刷新本地索引',
+          action: _GuidanceAction.indexPending,
+        ),
+      );
+    }
 
     return items;
   }
 }
 
+enum _GuidanceAction { indexPending }
+
 class _GuidanceItem {
-  const _GuidanceItem({required this.label, this.route});
+  const _GuidanceItem({required this.label, this.route, this.action});
 
   final String label;
   final String? route;
+  final _GuidanceAction? action;
 }
 
 class _SearchScopeCard extends ConsumerWidget {
