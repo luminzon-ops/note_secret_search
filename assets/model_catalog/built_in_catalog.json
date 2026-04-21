@@ -1,0 +1,19 @@
+[
+  {
+    "id": "embed_min_cn_v1",
+    "type": "embedding",
+    "tier": "minimum",
+    "display_name": "内置最小版 Embedding",
+    "description": "低端设备优先，MVP 默认推荐。",
+    "size_bytes": 157286400,
+    "min_ram_mb": 3072,
+    "recommended_tier": "tier_1",
+    "source_list": [
+      {
+        "id": "official-cn",
+        "label": "国内镜像",
+        "url": "https://example.invalid/models/embed_min_cn_v1.onnx"
+      }
+    ]
+  }
+]
