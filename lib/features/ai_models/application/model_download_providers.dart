@@ -7,6 +7,9 @@ import 'package:note_secret_search/features/ai_models/domain/model_download_repo
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
+import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
+import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+import 'package:note_secret_search/features/search/infrastructure/onnx_embedding_engine.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_registry_repository.dart';
@@ -33,6 +36,41 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((r
       await repository.save(normalized);
     }
     resolved.add(normalized);
+  }
+
+  return resolved;
+});
+
+final embeddingRuntimeStatesProvider = FutureProvider<Map<String, EmbeddingEngineState>>((ref) async {
+  final entries = await ref.watch(modelRegistryEntriesProvider.future);
+  final embeddingEngine = ref.watch(embeddingEngineProvider);
+  final resolved = <String, EmbeddingEngineState>{};
+
+  for (final entry in entries) {
+    if (entry.type != 'embedding') {
+      continue;
+    }
+
+    if (entry.localPath == null || entry.localPath!.trim().isEmpty) {
+      resolved[entry.id] = const EmbeddingEngineState(
+        ready: false,
+        reason: '尚未配置本地 embedding 模型文件。',
+        status: EmbeddingRuntimeStatus.notInstalled,
+      );
+      continue;
+    }
+
+    if (!entry.filePresent) {
+      resolved[entry.id] = EmbeddingEngineState(
+        ready: false,
+        reason: '本地模型文件缺失，需要重新下载或修复。',
+        status: EmbeddingRuntimeStatus.missing,
+        modelPath: entry.localPath,
+      );
+      continue;
+    }
+
+    resolved[entry.id] = await embeddingEngine.getState(entry);
   }
 
   return resolved;
@@ -221,8 +259,27 @@ class ModelDownloadController {
         ),
       );
 
+      if (entry.type == 'embedding') {
+        final runtimeResult = await _ref.read(embeddingRuntimeBridgeProvider).ensureModelReady(
+              modelId: entry.id,
+              modelPath: result.localPath,
+            );
+        final runtimeState = mapEmbeddingEngineState(runtimeResult, fallbackPath: result.localPath);
+        final persisted = await _registryRepository.getById(entry.id);
+        if (persisted != null) {
+          await _registryRepository.save(
+            persisted.copyWith(
+              enabled: runtimeState.status == EmbeddingRuntimeStatus.ready ||
+                  runtimeState.status == EmbeddingRuntimeStatus.installedUnverified,
+              filePresent: runtimeState.status != EmbeddingRuntimeStatus.missing,
+            ),
+          );
+        }
+      }
+
       _ref.invalidate(modelDownloadTasksProvider);
       _ref.invalidate(modelRegistryEntriesProvider);
+      _ref.invalidate(embeddingRuntimeStatesProvider);
     } catch (error, stackTrace) {
       _logger.error('Model download failed for ${entry.id}', error, stackTrace);
       await markFailed(entry.id, error.toString());

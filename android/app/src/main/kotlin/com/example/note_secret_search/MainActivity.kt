@@ -7,6 +7,7 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterFragmentActivity() {
     private lateinit var nativeSecurityPlugin: NativeSecurityPlugin
+    private lateinit var embeddingRuntimePlugin: EmbeddingRuntimePlugin
     private lateinit var recentTaskShieldView: FrameLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,5 +30,8 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         nativeSecurityPlugin = NativeSecurityPlugin(this, recentTaskShieldView)
         nativeSecurityPlugin.attachToEngine(flutterEngine.dartExecutor.binaryMessenger)
+
+        embeddingRuntimePlugin = EmbeddingRuntimePlugin(this)
+        embeddingRuntimePlugin.attachToEngine(flutterEngine.dartExecutor.binaryMessenger)
     }
 }

@@ -30,3 +30,7 @@ final secretListProvider = FutureProvider<List<SecretItem>>((ref) async {
 
   return ref.watch(secretRepositoryProvider).listByVault(vault.id);
 });
+
+final secretDetailProvider = FutureProvider.family<SecretItem?, String>((ref, id) async {
+  return ref.watch(secretRepositoryProvider).getById(id);
+});

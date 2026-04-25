@@ -4,9 +4,9 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
+import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
-import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_repository.dart';
@@ -14,7 +14,6 @@ import 'package:note_secret_search/features/search/domain/search_result_item.dar
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/infrastructure/shared_preferences_search_repository.dart';
-import 'package:note_secret_search/features/search/infrastructure/placeholder_embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
@@ -42,10 +41,6 @@ final searchServiceProvider = Provider<SearchService>((ref) {
 
 final searchFusionServiceProvider = Provider<SearchFusionService>((ref) {
   return const SearchFusionService();
-});
-
-final embeddingEngineProvider = Provider<EmbeddingEngine>((ref) {
-  return const PlaceholderEmbeddingEngine();
 });
 
 final searchIndexServiceProvider = Provider<SearchIndexService>((ref) {
@@ -110,18 +105,18 @@ final semanticSearchResultsProvider = FutureProvider<List<SemanticSearchResult>>
     return const <SemanticSearchResult>[];
   }
 
-  final scope = await ref.watch(searchScopeConfigProvider.future);
-  final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
-  if (activeModel == null) {
+  final readiness = await ref.watch(semanticSearchReadinessProvider.future);
+  if (!readiness.ready || readiness.activeEmbeddingModel == null) {
     return const <SemanticSearchResult>[];
   }
 
+  final scope = await ref.watch(searchScopeConfigProvider.future);
   final secrets = await ref.watch(secretListProvider.future);
   final notes = await ref.watch(noteListProvider.future);
   return ref.watch(semanticSearchServiceProvider).search(
         query: query,
         scope: scope,
-        activeEmbeddingModel: activeModel,
+        activeEmbeddingModel: readiness.activeEmbeddingModel!,
         secrets: secrets,
         notes: notes,
       );
@@ -143,6 +138,86 @@ final searchIndexControllerProvider = Provider<SearchIndexController>((ref) {
 final searchIndexTaskStateProvider = StateProvider<SearchIndexTaskState>(
   (ref) => const SearchIndexTaskState.idle(),
 );
+
+final searchRefreshSessionProvider = StateProvider<SearchRefreshSessionState>(
+  (ref) => const SearchRefreshSessionState.idle(),
+);
+
+final searchRefreshFeedbackProvider = StateProvider<SearchRefreshFeedbackState>(
+  (ref) => const SearchRefreshFeedbackState.hidden(),
+);
+
+final searchPendingReindexHandoffProvider = StateProvider<SearchPendingReindexHandoffState>(
+  (ref) => const SearchPendingReindexHandoffState.hidden(),
+);
+
+class SearchRefreshSessionState {
+  const SearchRefreshSessionState({
+    required this.refreshing,
+    this.message,
+    this.lastCompletedAt,
+  });
+
+  const SearchRefreshSessionState.idle()
+      : refreshing = false,
+        message = null,
+        lastCompletedAt = null;
+
+  final bool refreshing;
+  final String? message;
+  final DateTime? lastCompletedAt;
+
+  SearchRefreshSessionState copyWith({
+    bool? refreshing,
+    String? message,
+    bool clearMessage = false,
+    DateTime? lastCompletedAt,
+    bool clearLastCompletedAt = false,
+  }) {
+    return SearchRefreshSessionState(
+      refreshing: refreshing ?? this.refreshing,
+      message: clearMessage ? null : (message ?? this.message),
+      lastCompletedAt: clearLastCompletedAt ? null : (lastCompletedAt ?? this.lastCompletedAt),
+    );
+  }
+}
+
+class SearchRefreshFeedbackState {
+  const SearchRefreshFeedbackState({
+    required this.visible,
+    this.headline,
+    this.message,
+    this.changed,
+    this.queryAtRefresh,
+    this.completedAt,
+  });
+
+  const SearchRefreshFeedbackState.hidden()
+      : visible = false,
+        headline = null,
+        message = null,
+        changed = null,
+        queryAtRefresh = null,
+        completedAt = null;
+
+  final bool visible;
+  final String? headline;
+  final String? message;
+  final bool? changed;
+  final String? queryAtRefresh;
+  final DateTime? completedAt;
+}
+
+class SearchPendingReindexHandoffState {
+  const SearchPendingReindexHandoffState({required this.visible, this.message});
+
+  const SearchPendingReindexHandoffState.hidden()
+      : visible = false,
+        message = null;
+
+  final bool visible;
+  final String? message;
+}
 
 class SearchIndexController {
   SearchIndexController({required Ref ref}) : _ref = ref;
@@ -184,6 +259,111 @@ class SearchIndexController {
           );
       rethrow;
     }
+  }
+
+  Future<void> indexPendingAndRefresh() async {
+    final query = _ref.read(searchQueryProvider).trim();
+    final beforeResults = await _ref.read(unifiedSearchResultsProvider.future);
+    final beforeIds = beforeResults.map((item) => item.id).toList(growable: false);
+
+    _ref.read(searchRefreshFeedbackProvider.notifier).state =
+        const SearchRefreshFeedbackState.hidden();
+
+    await indexPending();
+
+    _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
+        .copyWith(
+          refreshing: true,
+          message: '正在刷新搜索状态与结果...',
+        );
+
+    try {
+      _ref.invalidate(searchIndexStatusProvider);
+      _ref.invalidate(semanticSearchResultsProvider);
+      _ref.invalidate(unifiedSearchResultsProvider);
+
+      await _ref.read(searchIndexStatusProvider.future);
+      await _ref.read(semanticSearchResultsProvider.future);
+      final afterResults = await _ref.read(unifiedSearchResultsProvider.future);
+
+      _ref.read(searchRefreshFeedbackProvider.notifier).state = _buildRefreshFeedback(
+        query: query,
+        beforeIds: beforeIds,
+        afterIds: afterResults.map((item) => item.id).toList(growable: false),
+      );
+
+      _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
+          .copyWith(lastCompletedAt: DateTime.now());
+    } catch (_) {
+      _ref.read(searchRefreshFeedbackProvider.notifier).state =
+          const SearchRefreshFeedbackState.hidden();
+      _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle();
+      rethrow;
+    }
+  }
+
+  SearchRefreshFeedbackState _buildRefreshFeedback({
+    required String query,
+    required List<String> beforeIds,
+    required List<String> afterIds,
+  }) {
+    final now = DateTime.now();
+    if (query.isEmpty) {
+      return SearchRefreshFeedbackState(
+        visible: true,
+        headline: '搜索状态已刷新',
+        message: '输入关键词后可查看最新结果。',
+        changed: null,
+        queryAtRefresh: query,
+        completedAt: now,
+      );
+    }
+
+    final countChanged = beforeIds.length != afterIds.length;
+    final orderChanged = !_sameOrderedIds(beforeIds, afterIds);
+
+    if (countChanged) {
+      return SearchRefreshFeedbackState(
+        visible: true,
+        headline: '搜索状态已刷新',
+        message: '当前结果已更新，结果数量从 ${beforeIds.length} 条变为 ${afterIds.length} 条。',
+        changed: true,
+        queryAtRefresh: query,
+        completedAt: now,
+      );
+    }
+
+    if (orderChanged) {
+      return SearchRefreshFeedbackState(
+        visible: true,
+        headline: '搜索状态已刷新',
+        message: '当前结果已更新，本轮刷新调整了结果排序。',
+        changed: true,
+        queryAtRefresh: query,
+        completedAt: now,
+      );
+    }
+
+    return SearchRefreshFeedbackState(
+      visible: true,
+      headline: '搜索状态已刷新',
+      message: '当前结果已更新，本轮刷新未改变当前结果。',
+      changed: false,
+      queryAtRefresh: query,
+      completedAt: now,
+    );
+  }
+
+  bool _sameOrderedIds(List<String> left, List<String> right) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index++) {
+      if (left[index] != right[index]) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 

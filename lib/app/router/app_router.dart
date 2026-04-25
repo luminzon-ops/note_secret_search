@@ -42,6 +42,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                   path: 'secret/:id',
                   builder: (context, state) => SecretDetailPage(
                     secretId: state.pathParameters['id']!,
+                    searchQuery: state.uri.queryParameters['query'],
+                    searchSource: state.uri.queryParameters['source'],
+                    searchContext: state.uri.queryParameters['context'],
                   ),
                   routes: [
                     GoRoute(
@@ -82,6 +85,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                   path: 'item/:id',
                   builder: (context, state) => NoteDetailPage(
                     noteId: state.pathParameters['id']!,
+                    searchQuery: state.uri.queryParameters['query'],
+                    searchSource: state.uri.queryParameters['source'],
+                    searchContext: state.uri.queryParameters['context'],
                   ),
                   routes: [
                     GoRoute(

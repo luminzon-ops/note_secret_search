@@ -6,6 +6,8 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/ai_models/presentation/model_presentation_formatter.dart';
+import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 
 class ModelManagementPage extends ConsumerWidget {
   const ModelManagementPage({super.key});
@@ -15,6 +17,7 @@ class ModelManagementPage extends ConsumerWidget {
     final catalogAsync = ref.watch(modelCatalogEntriesProvider);
     final taskAsync = ref.watch(modelDownloadTasksProvider);
     final registryAsync = ref.watch(modelRegistryEntriesProvider);
+    final runtimeStatesAsync = ref.watch(embeddingRuntimeStatesProvider);
     final selectionAsync = ref.watch(activeModelSelectionProvider);
 
     return Scaffold(
@@ -27,17 +30,26 @@ class ModelManagementPage extends ConsumerWidget {
           const _ModelDownloadNoticeCard(),
           const SizedBox(height: 16),
           registryAsync.when(
-            data: (entries) => selectionAsync.when(
-              data: (selection) => _InstalledModelsCard(
-                entries: entries,
-                activeEmbeddingModelId: selection.activeEmbeddingModelId,
-              ),
-              loading: () => _InstalledModelsCard(entries: entries, activeEmbeddingModelId: null),
-              error: (error, stackTrace) => _InstalledModelsCard(
-                entries: entries,
-                activeEmbeddingModelId: null,
-              ),
-            ),
+            data: (entries) {
+              final runtimeStates = runtimeStatesAsync.valueOrNull ?? const <String, EmbeddingEngineState>{};
+              return selectionAsync.when(
+                data: (selection) => _InstalledModelsCard(
+                  entries: entries,
+                  runtimeStates: runtimeStates,
+                  activeEmbeddingModelId: selection.activeEmbeddingModelId,
+                ),
+                loading: () => _InstalledModelsCard(
+                  entries: entries,
+                  runtimeStates: runtimeStates,
+                  activeEmbeddingModelId: null,
+                ),
+                error: (error, stackTrace) => _InstalledModelsCard(
+                  entries: entries,
+                  runtimeStates: runtimeStates,
+                  activeEmbeddingModelId: null,
+                ),
+              );
+            },
             loading: () => const SizedBox.shrink(),
             error: (error, stackTrace) => Card(
               child: Padding(
@@ -93,7 +105,7 @@ class _DeviceTierCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('设备评级'),
+            Text('设备能力评级'),
             SizedBox(height: 8),
             Text('当前为 MVP 保守实现：先展示模型目录，再接设备探测、下载状态机与安装校验。'),
           ],
@@ -114,7 +126,7 @@ class _ModelDownloadNoticeCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('模型下载与部署说明'),
+            Text('模型下载与本地部署说明'),
             SizedBox(height: 8),
             Text('当前已接入基础真实下载：文件会下载到应用私有目录，并在成功后登记本地路径。MVP 阶段仍未完成断点续传、校验和校验、安装探测与完整恢复逻辑。'),
           ],
@@ -127,10 +139,12 @@ class _ModelDownloadNoticeCard extends StatelessWidget {
 class _InstalledModelsCard extends StatelessWidget {
   const _InstalledModelsCard({
     required this.entries,
+    required this.runtimeStates,
     required this.activeEmbeddingModelId,
   });
 
   final List<ModelRegistryEntry> entries;
+  final Map<String, EmbeddingEngineState> runtimeStates;
   final String? activeEmbeddingModelId;
 
   @override
@@ -150,21 +164,50 @@ class _InstalledModelsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('已安装模型', style: Theme.of(context).textTheme.titleMedium),
+            Text('本地已安装模型', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
             for (final entry in entries)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(
-                  entry.isInstalled ? Icons.inventory_2_outlined : Icons.warning_amber_outlined,
-                ),
-                title: Text(entry.name),
-                subtitle: Text(entry.localPath ?? '路径未知'),
-                trailing: Text(
-                  activeEmbeddingModelId == entry.id
-                      ? '当前语义模型'
-                      : (entry.isInstalled ? '已安装' : '记录失效'),
-                ),
+              Builder(
+                builder: (context) {
+                  final runtimeState = runtimeStates[entry.id];
+                  final isRuntimeReady = entry.type != 'embedding' || runtimeState?.ready == true;
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      isRuntimeReady && entry.isInstalled
+                          ? Icons.inventory_2_outlined
+                          : Icons.warning_amber_outlined,
+                    ),
+                    title: Text(entry.name),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(formatModelCapabilitySummary(entry)),
+                        const SizedBox(height: 2),
+                        Text(
+                          formatInstalledModelDeploymentStatus(
+                            entry,
+                            runtimeState: runtimeState,
+                          ),
+                        ),
+                        if (entry.type == 'embedding' && runtimeState != null) ...[
+                          const SizedBox(height: 2),
+                          Text('运行时状态：${_runtimeStatusLabel(runtimeState.status)}'),
+                        ],
+                        if (entry.localPath != null && entry.localPath!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(entry.localPath!),
+                        ],
+                      ],
+                    ),
+                    trailing: Text(
+                      activeEmbeddingModelId == entry.id
+                          ? '当前语义模型'
+                          : (isRuntimeReady && entry.isInstalled ? '已安装模型' : '本地记录失效'),
+                    ),
+                  );
+                },
               ),
           ],
         ),
@@ -182,6 +225,7 @@ class _CatalogSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final installedAsync = ref.watch(modelRegistryEntriesProvider);
+    final runtimeStatesAsync = ref.watch(embeddingRuntimeStatesProvider);
 
     if (entries.isEmpty) {
       return const Card(
@@ -198,21 +242,25 @@ class _CatalogSection extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('内置模型目录', style: Theme.of(context).textTheme.titleMedium),
+            Text('可下载模型目录', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
             installedAsync.when(
-              data: (installedEntries) => Column(
-                children: [
-                  for (final entry in entries) ...[
-                    _CatalogEntryTile(
-                      entry: entry,
-                      latestTask: _latestTaskFor(entry.id),
-                      installedEntry: _installedFor(installedEntries, entry.id),
-                    ),
-                    if (entry != entries.last) const Divider(height: 24),
+              data: (installedEntries) {
+                final runtimeStates = runtimeStatesAsync.valueOrNull ?? const <String, EmbeddingEngineState>{};
+                return Column(
+                  children: [
+                    for (final entry in entries) ...[
+                      _CatalogEntryTile(
+                        entry: entry,
+                        latestTask: _latestTaskFor(entry.id),
+                        installedEntry: _installedFor(installedEntries, entry.id),
+                        runtimeState: runtimeStates[entry.id],
+                      ),
+                      if (entry != entries.last) const Divider(height: 24),
+                    ],
                   ],
-                ],
-              ),
+                );
+              },
               loading: () => const Padding(
                 padding: EdgeInsets.all(16),
                 child: Center(child: CircularProgressIndicator()),
@@ -252,11 +300,13 @@ class _CatalogEntryTile extends ConsumerWidget {
     required this.entry,
     required this.latestTask,
     required this.installedEntry,
+    required this.runtimeState,
   });
 
   final ModelCatalogEntry entry;
   final ModelDownloadTask? latestTask;
   final ModelRegistryEntry? installedEntry;
+  final EmbeddingEngineState? runtimeState;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -268,6 +318,8 @@ class _CatalogEntryTile extends ConsumerWidget {
     final canRetry = latestTask?.status == ModelDownloadStatus.failed || latestTask == null;
     final activeEmbeddingModelId = selectionAsync.valueOrNull?.activeEmbeddingModelId;
     final isActiveEmbeddingModel = entry.type == 'embedding' && activeEmbeddingModelId == entry.id;
+    final canActivateEmbedding =
+        entry.type != 'embedding' || ((installedEntry?.isInstalled ?? false) && runtimeState?.ready == true);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +332,7 @@ class _CatalogEntryTile extends ConsumerWidget {
             if (isInstalled)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
-                child: Chip(label: Text(isActiveEmbeddingModel ? '已启用' : '已安装')),
+                child: Chip(label: Text(isActiveEmbeddingModel ? '当前语义模型' : '已安装模型')),
               ),
             Chip(label: Text(entry.type)),
           ],
@@ -298,8 +350,24 @@ class _CatalogEntryTile extends ConsumerWidget {
             Chip(label: Text(_formatSize(entry.sizeBytes))),
           ],
         ),
+        const SizedBox(height: 8),
+        Text(
+          formatCatalogDeploymentStatus(installedEntry, runtimeState: runtimeState),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        if (entry.type == 'embedding' && runtimeState != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '运行时状态：${_runtimeStatusLabel(runtimeState!.status)}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         const SizedBox(height: 12),
-        _DownloadStatusCard(task: latestTask, installedEntry: installedEntry),
+        _DownloadStatusCard(
+          task: latestTask,
+          installedEntry: installedEntry,
+          sourceLabel: _sourceLabel(latestTask?.sourceId),
+        ),
         const SizedBox(height: 12),
         Wrap(
           spacing: 8,
@@ -339,10 +407,11 @@ class _CatalogEntryTile extends ConsumerWidget {
             ),
             OutlinedButton.icon(
               onPressed: !isInstalled || entry.type != 'embedding'
-                  ? null
-                  : () => ref
-                      .read(activeModelSelectionControllerProvider)
-                      .setActiveEmbeddingModel(isActiveEmbeddingModel ? null : entry.id),
+                      || !canActivateEmbedding
+                   ? null
+                   : () => ref
+                       .read(activeModelSelectionControllerProvider)
+                       .setActiveEmbeddingModel(isActiveEmbeddingModel ? null : entry.id),
               icon: const Icon(Icons.check_circle_outline),
               label: Text(isActiveEmbeddingModel ? '取消启用' : '设为语义模型'),
             ),
@@ -377,6 +446,18 @@ class _CatalogEntryTile extends ConsumerWidget {
     return _statusLabel(latestTask!.status);
   }
 
+  String? _sourceLabel(String? sourceId) {
+    if (sourceId == null) {
+      return null;
+    }
+    for (final source in entry.sources) {
+      if (source.id == sourceId) {
+        return source.label;
+      }
+    }
+    return null;
+  }
+
   String _formatSize(int bytes) {
     if (bytes <= 0) {
       return '未知大小';
@@ -407,11 +488,27 @@ class _CatalogEntryTile extends ConsumerWidget {
   }
 }
 
+String _runtimeStatusLabel(EmbeddingRuntimeStatus status) {
+  switch (status) {
+    case EmbeddingRuntimeStatus.notInstalled:
+      return '未安装';
+    case EmbeddingRuntimeStatus.missing:
+      return '文件缺失';
+    case EmbeddingRuntimeStatus.installedUnverified:
+      return '待校验';
+    case EmbeddingRuntimeStatus.ready:
+      return '已就绪';
+    case EmbeddingRuntimeStatus.degraded:
+      return '运行时异常';
+  }
+}
+
 class _DownloadStatusCard extends StatelessWidget {
-  const _DownloadStatusCard({required this.task, this.installedEntry});
+  const _DownloadStatusCard({required this.task, this.installedEntry, this.sourceLabel});
 
   final ModelDownloadTask? task;
   final ModelRegistryEntry? installedEntry;
+  final String? sourceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +518,7 @@ class _DownloadStatusCard extends StatelessWidget {
         child: ListTile(
           contentPadding: const EdgeInsets.all(12),
           leading: const Icon(Icons.verified_outlined),
-          title: const Text('本地模型已安装'),
+          title: const Text('本地部署已就绪'),
           subtitle: Text(installedEntry?.localPath ?? '路径未知'),
         ),
       );
@@ -431,7 +528,7 @@ class _DownloadStatusCard extends StatelessWidget {
       return const ListTile(
         contentPadding: EdgeInsets.zero,
         leading: Icon(Icons.downloading_outlined),
-        title: Text('尚未创建下载任务'),
+        title: Text('下载任务未开始'),
         subtitle: Text('当前只建立下载状态机骨架，后续会接入真实下载器。'),
       );
     }
@@ -451,11 +548,31 @@ class _DownloadStatusCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
+            Text('任务说明：${_statusDescription(task!.status)}'),
+            const SizedBox(height: 8),
             if (task!.progress != null)
               LinearProgressIndicator(value: task!.progress)
             else
               const LinearProgressIndicator(),
             const SizedBox(height: 8),
+            if (task!.averageSpeed != null) ...[
+              Text('下载速度：${_formatBytesPerSecond(task!.averageSpeed!)}'),
+              const SizedBox(height: 4),
+            ],
+            Text('断点续传：${task!.resumable ? '支持' : '当前下载源不支持'}'),
+            const SizedBox(height: 8),
+            if (sourceLabel != null && sourceLabel!.isNotEmpty) ...[
+              Text('当前来源：$sourceLabel'),
+              const SizedBox(height: 4),
+            ],
+            Text('任务创建：${_formatDateTime(task!.createdAt)}'),
+            const SizedBox(height: 4),
+            Text('最近更新：${_formatDateTime(task!.updatedAt)}'),
+            const SizedBox(height: 8),
+            if (task!.progress != null) ...[
+              Text('下载进度：${(task!.progress! * 100).round()}%'),
+              const SizedBox(height: 4),
+            ],
             Text('已下载 ${_formatBytes(task!.downloadedBytes)} / ${_formatBytes(task!.totalBytes ?? 0)}'),
             if (task!.errorMessage != null && task!.errorMessage!.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -487,6 +604,23 @@ class _DownloadStatusCard extends StatelessWidget {
     }
   }
 
+  String _statusDescription(ModelDownloadStatus status) {
+    switch (status) {
+      case ModelDownloadStatus.idle:
+        return '下载任务尚未开始，可直接发起下载。';
+      case ModelDownloadStatus.queued:
+        return '已加入下载队列，等待开始下载。';
+      case ModelDownloadStatus.downloading:
+        return '正在下载模型文件，请保持应用可继续运行。';
+      case ModelDownloadStatus.paused:
+        return '下载已暂停，可稍后继续或重新开始。';
+      case ModelDownloadStatus.completed:
+        return '下载已完成，等待进入本地部署或可用状态。';
+      case ModelDownloadStatus.failed:
+        return '下载失败，可检查网络或重新发起下载。';
+    }
+  }
+
   String _formatBytes(int bytes) {
     if (bytes <= 0) {
       return '0 MB';
@@ -497,5 +631,28 @@ class _DownloadStatusCard extends StatelessWidget {
       return '${(sizeMb / 1024).toStringAsFixed(1)} GB';
     }
     return '${sizeMb.toStringAsFixed(0)} MB';
+  }
+
+  String _formatBytesPerSecond(double bytesPerSecond) {
+    if (bytesPerSecond <= 0) {
+      return '0 MB/s';
+    }
+
+    final sizeMb = bytesPerSecond / (1024 * 1024);
+    if (sizeMb >= 1024) {
+      return '${(sizeMb / 1024).toStringAsFixed(1)} GB/s';
+    }
+    return '${sizeMb.toStringAsFixed(1)} MB/s';
+  }
+
+  String _formatDateTime(DateTime value) {
+    final local = value.toLocal();
+    final year = local.year.toString().padLeft(4, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final day = local.day.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    final second = local.second.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute:$second';
   }
 }

@@ -29,6 +29,7 @@ class PlaceholderEmbeddingEngine implements EmbeddingEngine {
     return const EmbeddingEngineState(
       ready: true,
       reason: '当前使用占位 embedding 引擎，仅用于索引链路打通，不代表真实语义质量。',
+      status: EmbeddingRuntimeStatus.installedUnverified,
     );
   }
 }

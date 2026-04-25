@@ -23,6 +23,8 @@ class SearchFusionService {
         byKey[key] = semantic.item.copyWith(
           matchSources: <SearchMatchSource>{SearchMatchSource.semantic},
           semanticScore: semantic.score,
+          semanticHitSummary: semantic.hitSummary,
+          semanticHitField: semantic.hitField,
         );
         continue;
       }
@@ -35,11 +37,19 @@ class SearchFusionService {
       );
     }
 
-    final results = byKey.values.toList(growable: false);
+    final results = byKey.values.where(_shouldKeepUnifiedResult).toList(growable: false);
     results.sort((a, b) {
       final sourcePriority = _sourcePriority(b.matchSources).compareTo(_sourcePriority(a.matchSources));
       if (sourcePriority != 0) {
         return sourcePriority;
+      }
+
+      final semanticQualitySort =
+          _semanticQualityTier(b.matchSources, b.semanticHitField).compareTo(
+            _semanticQualityTier(a.matchSources, a.semanticHitField),
+          );
+      if (semanticQualitySort != 0) {
+        return semanticQualitySort;
       }
 
       final semanticSort = (b.semanticScore ?? -1).compareTo(a.semanticScore ?? -1);
@@ -83,6 +93,26 @@ class SearchFusionService {
     return existing >= incoming ? existing : incoming;
   }
 
+  int _semanticQualityTier(Set<SearchMatchSource> sources, SemanticHitField? field) {
+    if (!sources.contains(SearchMatchSource.semantic)) {
+      return 0;
+    }
+
+    switch (field) {
+      case SemanticHitField.title:
+      case SemanticHitField.username:
+      case SemanticHitField.summary:
+        return 2;
+      case SemanticHitField.url:
+      case SemanticHitField.secretNote:
+      case SemanticHitField.tags:
+      case SemanticHitField.noteBody:
+        return 1;
+      case null:
+        return 0;
+    }
+  }
+
   int _semanticFieldPriority(SemanticHitField? field) {
     switch (field) {
       case SemanticHitField.title:
@@ -100,5 +130,21 @@ class SearchFusionService {
       case null:
         return 0;
     }
+  }
+
+  bool _shouldKeepUnifiedResult(SearchResultItem item) {
+    if (!_isSemanticOnlyResult(item)) {
+      return true;
+    }
+
+    if (_semanticQualityTier(item.matchSources, item.semanticHitField) >= 2) {
+      return true;
+    }
+
+    return (item.semanticScore ?? 0) >= 0.90;
+  }
+
+  bool _isSemanticOnlyResult(SearchResultItem item) {
+    return item.matchSources.length == 1 && item.matchSources.contains(SearchMatchSource.semantic);
   }
 }

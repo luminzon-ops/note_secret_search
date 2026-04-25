@@ -11,19 +11,23 @@ import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/search_repository.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 
 class SemanticSearchService {
   const SemanticSearchService({
     required SearchRepository repository,
     required EmbeddingEngine embeddingEngine,
     required CryptoService cryptoService,
+    SemanticQualityPolicy qualityPolicy = const SemanticQualityPolicy.conservativeMvp(),
   })  : _repository = repository,
         _embeddingEngine = embeddingEngine,
-        _cryptoService = cryptoService;
+        _cryptoService = cryptoService,
+        _qualityPolicy = qualityPolicy;
 
   final SearchRepository _repository;
   final EmbeddingEngine _embeddingEngine;
   final CryptoService _cryptoService;
+  final SemanticQualityPolicy _qualityPolicy;
 
   Future<List<SemanticSearchResult>> search({
     required String query,
@@ -44,7 +48,22 @@ class SemanticSearchService {
     final candidates = <SemanticSearchResult>[];
     candidates.addAll(await _matchSecrets(queryVector.values, activeEmbeddingModel.id, secrets));
     candidates.addAll(await _matchNotes(queryVector.values, activeEmbeddingModel.id, notes));
-    candidates.sort((a, b) => b.score.compareTo(a.score));
+    candidates.sort((a, b) {
+      final queryAwareSort = _queryAwareFieldPriority(normalizedQuery, b.hitField).compareTo(
+        _queryAwareFieldPriority(normalizedQuery, a.hitField),
+      );
+      if (queryAwareSort != 0) {
+        return queryAwareSort;
+      }
+
+      final qualitySort = _semanticFieldQualityTier(b.hitField).compareTo(
+        _semanticFieldQualityTier(a.hitField),
+      );
+      if (qualitySort != 0) {
+        return qualitySort;
+      }
+      return b.score.compareTo(a.score);
+    });
     return candidates.take(5).toList(growable: false);
   }
 
@@ -157,6 +176,9 @@ class SemanticSearchService {
               field: SemanticHitField.noteBody,
             );
       final weightedScore = rawScore * _semanticFieldWeight(descriptor.field);
+      if (!_passesSemanticQualityGate(weightedScore, descriptor.field)) {
+        continue;
+      }
       matches.add(
         _ChunkMatch(score: weightedScore, summary: descriptor.summary, field: descriptor.field),
       );
@@ -296,6 +318,60 @@ class SemanticSearchService {
         return 0.96;
       case SemanticHitField.noteBody:
         return 0.92;
+    }
+  }
+
+  bool _passesSemanticQualityGate(double score, SemanticHitField field) {
+    return score >= _qualityPolicy.minimumThresholdFor(field);
+  }
+
+  int _queryAwareFieldPriority(String query, SemanticHitField field) {
+    if (_isAccountLikeQuery(query) && field == SemanticHitField.username) {
+      return 1;
+    }
+
+    if (_isUrlLikeQuery(query) && field == SemanticHitField.url) {
+      return 1;
+    }
+
+    if (_isTagLikeQuery(query) && field == SemanticHitField.tags) {
+      return 1;
+    }
+
+    return 0;
+  }
+
+  bool _isUrlLikeQuery(String query) {
+    return query.contains('://') || query.contains('.') || query.contains('/');
+  }
+
+  bool _isAccountLikeQuery(String query) {
+    return query.contains('@');
+  }
+
+  bool _isTagLikeQuery(String query) {
+    if (query.isEmpty || query.length > 24) {
+      return false;
+    }
+
+    if (query.contains(' ') || query.contains('@') || _isUrlLikeQuery(query)) {
+      return false;
+    }
+
+    return RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(query);
+  }
+
+  int _semanticFieldQualityTier(SemanticHitField field) {
+    switch (field) {
+      case SemanticHitField.title:
+      case SemanticHitField.username:
+      case SemanticHitField.summary:
+        return 1;
+      case SemanticHitField.url:
+      case SemanticHitField.secretNote:
+      case SemanticHitField.tags:
+      case SemanticHitField.noteBody:
+        return 0;
     }
   }
 }
