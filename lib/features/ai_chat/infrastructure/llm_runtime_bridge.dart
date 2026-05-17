@@ -25,6 +25,7 @@ abstract interface class LlmRuntimeBridge {
     required double topP,
     required int seed,
     required List<String> stopSequences,
+    required bool emitPartialCompletion,
   });
 
   Future<void> releaseModel({required String modelId});
@@ -81,6 +82,7 @@ class MethodChannelLlmRuntimeBridge implements LlmRuntimeBridge {
     required double topP,
     required int seed,
     required List<String> stopSequences,
+    required bool emitPartialCompletion,
   }) async {
     final result = await _channel.invokeMapMethod<String, dynamic>(
       'generateText',
@@ -98,6 +100,7 @@ class MethodChannelLlmRuntimeBridge implements LlmRuntimeBridge {
         'topP': topP,
         'seed': seed,
         'stopSequences': stopSequences,
+        'emitPartialCompletion': emitPartialCompletion,
       },
     );
     return result ?? <String, dynamic>{};

@@ -19,6 +19,7 @@ class LlmInferenceRequest {
       '<|im_end|>',
       '<|endoftext|>',
     ],
+    this.emitPartialCompletion = false,
   });
 
   final ModelRegistryEntry model;
@@ -33,6 +34,7 @@ class LlmInferenceRequest {
   final double topP;
   final int seed;
   final List<String> stopSequences;
+  final bool emitPartialCompletion;
 }
 
 class LlmInferenceResponse {

@@ -44,6 +44,7 @@ class LocalLlmEngine implements LlmEngine {
       topP: request.topP,
       seed: request.seed,
       stopSequences: request.stopSequences,
+      emitPartialCompletion: request.emitPartialCompletion,
     );
 
     return LlmInferenceResponse(

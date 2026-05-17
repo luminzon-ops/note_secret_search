@@ -146,7 +146,7 @@ class LlmRuntimePlugin(
             maxOutputTokens = call.argument<Int>("maxOutputTokens") ?: 96,
             maxPromptChars = call.argument<Int>("maxPromptChars") ?: 1200,
             conservativeMode = call.argument<Boolean>("conservativeMode") ?: true,
-            emitPartialCompletion = false,
+            emitPartialCompletion = call.argument<Boolean>("emitPartialCompletion") ?: false,
             temperature = (call.argument<Number>("temperature")?.toDouble()) ?: 0.7,
             topK = call.argument<Int>("topK") ?: 40,
             topP = (call.argument<Number>("topP")?.toDouble()) ?: 0.9,

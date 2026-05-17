@@ -101,6 +101,7 @@ void main() {
           'topP': 0.9,
           'seed': 42,
           'stopSequences': <String>['</s>', '<|im_end|>', '<|endoftext|>'],
+          'emitPartialCompletion': false,
         });
 
         return <String, dynamic>{
@@ -127,6 +128,7 @@ void main() {
         topP: 0.9,
         seed: 42,
         stopSequences: const <String>['</s>', '<|im_end|>', '<|endoftext|>'],
+        emitPartialCompletion: false,
       );
 
       expect(result, <String, dynamic>{

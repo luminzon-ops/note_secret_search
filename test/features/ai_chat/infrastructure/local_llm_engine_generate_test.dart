@@ -146,6 +146,7 @@ class _FakeLlmRuntimeBridge implements LlmRuntimeBridge {
     required double topP,
     required int seed,
     required List<String> stopSequences,
+    required bool emitPartialCompletion,
   }) async {
     generateTextCalls.add(
       _GenerateTextCall(
