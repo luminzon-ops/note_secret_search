@@ -19,3 +19,41 @@ Thumbs.db
 # Local crash or temp files
 hs_err_pid*
 replay_pid*
+
+# Internal dev docs (not for public repo)
+产品开发实施方案.md
+第一阶段产品进度报告.md
+CLAUDE.md
+
+# Dev tooling
+.claude/
+.claude-flow/
+.swarm/
+.mcp.json
+docs/superpowers/
+
+# Evidence / debug logs
+*.log
+llm_*
+*.png
+*.xml
+*.txt
+*.db
+
+# Build artifacts
+app-debug.apk
+android/local.properties
+android/.gradle/
+lib/arm64-v8a/
+
+# Trash / accidental files
+right
+throw
+Unit
+",+"
+"{,+"
+
+# Node (not part of the Flutter project)
+node_modules/
+package.json
+package-lock.json
