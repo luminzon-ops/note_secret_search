@@ -1,18 +1,111 @@
 [
   {
-    "id": "embed_min_cn_v1",
+    "id": "bge_small_zh_v1_5",
     "type": "embedding",
     "tier": "minimum",
-    "display_name": "内置最小版 Embedding",
-    "description": "低端设备优先，MVP 默认推荐。",
-    "size_bytes": 157286400,
+    "display_name": "BGE Small 中文 Embedding",
+    "description": "用于本地中文语义检索的 BGE 小型 embedding 模型，兼容当前 Android BERT/WordPiece runtime。",
+    "size_bytes": 94851877,
     "min_ram_mb": 3072,
     "recommended_tier": "tier_1",
+    "tokenizer": {
+      "format": "tokenizer_json",
+      "asset_path": "assets/model_catalog/tokenizers/bge_small_zh_v1_5_tokenizer.json",
+      "max_sequence_length": 256,
+      "lowercase": false
+    },
+    "runtime": {
+      "input_ids_name": "input_ids",
+      "attention_mask_name": "attention_mask",
+      "token_type_ids_name": "token_type_ids",
+      "output_name": "last_hidden_state",
+      "pooling": "mean",
+      "normalization": "l2"
+    },
     "source_list": [
       {
-        "id": "official-cn",
-        "label": "国内镜像",
-        "url": "https://example.invalid/models/embed_min_cn_v1.onnx"
+        "id": "xenova-revision-pinned",
+        "label": "HuggingFace Xenova（revision pinned）",
+        "url": "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model.onnx",
+        "checksum": "sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a",
+        "signature": "base64:placeholder_signature_for_built_in_catalog",
+        "signature_algorithm": "RSA-SHA256",
+        "key_id": "builtin-catalog-signer"
+      },
+      {
+        "id": "xenova-main-fallback",
+        "label": "HuggingFace Xenova（main fallback）",
+        "url": "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/main/onnx/model.onnx",
+        "checksum": "sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a"
+      }
+    ]
+  },
+  {
+    "id": "qwen2_5_0_5b_instruct_q4_k_m",
+    "type": "llm",
+    "tier": "local",
+    "display_name": "Qwen2.5 0.5B Instruct Local",
+    "description": "用于本地自由聊天与首轮设备问答验证的轻量级 GGUF 本地 LLM。",
+    "size_bytes": 514850816,
+    "min_ram_mb": 2048,
+    "recommended_tier": "local",
+    "source_list": [
+      {
+        "id": "qwen-official-main",
+        "label": "HuggingFace Qwen 官方 GGUF",
+        "url": "https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        "checksum": "sha256:74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
+      }
+    ]
+  },
+  {
+    "id": "smollm2_360m_instruct_q4_k_m",
+    "type": "llm",
+    "tier": "local",
+    "display_name": "SmolLM2 360M Instruct Local",
+    "description": "用于 Huawei 真机本地 LLM 稳定性验证的更轻量级 GGUF 本地模型，对照当前 Qwen 0.5B 路径。",
+    "size_bytes": 270590976,
+    "min_ram_mb": 1536,
+    "recommended_tier": "local",
+    "source_list": [
+      {
+        "id": "smollm2-jc-builds-main",
+        "label": "HuggingFace jc-builds GGUF",
+        "url": "https://hf-mirror.com/jc-builds/SmolLM2-360M-Instruct-Q4_K_M-GGUF/resolve/main/SmolLM2-360M-Instruct.Q4_K_M.gguf",
+        "checksum": "sha256:ade7aee1e5bd7c3b8f1fedafc61a1a0be31e8afa64e006607cd202323e2ccce0"
+      }
+    ]
+  },
+  {
+    "id": "minicpm_v_4_6_q4_k_m",
+    "type": "multimodal_llm",
+    "tier": "local_multimodal",
+    "display_name": "MiniCPM-V 4.6 Q4_K_M Multimodal",
+    "description": "OpenBMB MiniCPM-V 4.6 端侧多模态 GGUF 模型。该模型需要 MiniCPM-V-4_6-Q4_K_M.gguf 与 mmproj-model-f16.gguf 双文件，并依赖支持 llama.cpp mtmd / MiniCPM-V 4.6 的本地 runtime 完成图片问答推理。",
+    "size_bytes": 1516275776,
+    "min_ram_mb": 6144,
+    "recommended_tier": "vision_language_local",
+    "runtime": {
+      "backend": "llama_cpp_mtmd",
+      "variant": "minicpm_v4_6",
+      "reasoning": "off"
+    },
+    "source_list": [
+      {
+        "id": "minicpm-v-4-6-q4-k-m-llm",
+        "label": "HuggingFace MiniCPM-V 4.6 GGUF LLM（Q4_K_M）",
+        "role": "model",
+        "required": true,
+        "url": "https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/MiniCPM-V-4_6-Q4_K_M.gguf",
+        "checksum": ""
+      },
+      {
+        "id": "minicpm-v-4-6-mmproj-f16",
+        "label": "HuggingFace MiniCPM-V 4.6 mmproj（f16）",
+        "role": "mmproj",
+        "required": true,
+        "url": "https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/mmproj-model-f16.gguf",
+        "checksum": ""
       }
     ]
   }

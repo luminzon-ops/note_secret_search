@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
@@ -21,6 +22,22 @@ const _model = ModelRegistryEntry(
   filePresent: true,
 );
 
+const _metadata = EmbeddingModelMetadata(
+  tokenizer: EmbeddingTokenizerSpec(
+    format: 'tokenizer_json',
+    assetPath: 'assets/model_catalog/tokenizers/all_minilm/tokenizer.json',
+    maxSequenceLength: 256,
+    lowercase: true,
+  ),
+  runtime: EmbeddingRuntimeSpec(
+    inputIdsName: 'input_ids',
+    attentionMaskName: 'attention_mask',
+    outputName: 'last_hidden_state',
+    pooling: 'mean',
+    normalization: 'l2',
+  ),
+);
+
 class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   _FakeEmbeddingRuntimeBridge({
     required Map<String, dynamic> inspectResult,
@@ -30,13 +47,19 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
 
   final Map<String, dynamic> _inspectResult;
   final Map<String, dynamic> _embedResult;
+  EmbeddingTokenizerSpec? lastTokenizer;
+  EmbeddingRuntimeSpec? lastRuntime;
 
   @override
   Future<Map<String, dynamic>> embedText({
     required String modelId,
     required String modelPath,
     required String text,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
   }) async {
+    lastTokenizer = tokenizer;
+    lastRuntime = runtime;
     return _embedResult;
   }
 
@@ -44,7 +67,11 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   Future<Map<String, dynamic>> ensureModelReady({
     required String modelId,
     required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
   }) async {
+    lastTokenizer = tokenizer;
+    lastRuntime = runtime;
     return _inspectResult;
   }
 
@@ -52,7 +79,11 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   Future<Map<String, dynamic>> inspectModel({
     required String modelId,
     required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
   }) async {
+    lastTokenizer = tokenizer;
+    lastRuntime = runtime;
     return _inspectResult;
   }
 
@@ -76,7 +107,10 @@ void main() {
         'vectorDimension': 2,
       },
     );
-    final engine = OnnxEmbeddingEngine(bridge: bridge);
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => _metadata,
+    );
 
     final state = await engine.getState(_model);
 
@@ -98,7 +132,10 @@ void main() {
         'tokenCount': 2,
       },
     );
-    final engine = OnnxEmbeddingEngine(bridge: bridge);
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => _metadata,
+    );
 
     final state = await engine.getState(_model);
 
@@ -119,7 +156,10 @@ void main() {
         'vectorDimension': 3,
       },
     );
-    final engine = OnnxEmbeddingEngine(bridge: bridge);
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => _metadata,
+    );
 
     final vector = await engine.embed(
       const EmbeddingRequest(model: _model, text: 'hello runtime'),
@@ -127,5 +167,57 @@ void main() {
 
     expect(vector.values, <double>[0.1, 0.2, 0.3]);
     expect(vector.tokenCount, 7);
+  });
+
+  test('embed forwards tokenizer and runtime metadata to bridge', () async {
+    final bridge = _FakeEmbeddingRuntimeBridge(
+      inspectResult: <String, dynamic>{
+        'status': 'ready',
+        'reason': 'ok',
+      },
+      embedResult: <String, dynamic>{
+        'values': <double>[0.1, 0.2, 0.3],
+        'tokenCount': 3,
+        'vectorDimension': 3,
+      },
+    );
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => _metadata,
+    );
+
+    await engine.embed(
+      const EmbeddingRequest(model: _model, text: 'hello runtime'),
+    );
+
+    expect(bridge.lastTokenizer, isNotNull);
+    expect(bridge.lastTokenizer?.assetPath, contains('tokenizer.json'));
+    expect(bridge.lastRuntime, isNotNull);
+    expect(bridge.lastRuntime?.outputName, 'last_hidden_state');
+    expect(bridge.lastRuntime?.pooling, 'mean');
+  });
+
+  test('getState degrades when embedding metadata is missing', () async {
+    final bridge = _FakeEmbeddingRuntimeBridge(
+      inspectResult: <String, dynamic>{
+        'status': 'ready',
+        'reason': 'ok',
+      },
+      embedResult: <String, dynamic>{
+        'values': <double>[0.1, 0.2, 0.3],
+        'tokenCount': 3,
+        'vectorDimension': 3,
+      },
+    );
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => null,
+    );
+
+    final state = await engine.getState(_model);
+
+    expect(state.ready, isFalse);
+    expect(state.status, EmbeddingRuntimeStatus.degraded);
+    expect(state.reason, contains('metadata'));
   });
 }

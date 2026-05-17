@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_presentation_formatter.dart';
 
@@ -191,5 +192,78 @@ void main() {
       formatCatalogDeploymentStatus(model),
       '部署状态：本地记录存在，但文件缺失，需要重新下载。',
     );
+  });
+
+  test('formatCatalogRuntimeSupportStatus explains deployable multimodal entries', () {
+    const entry = ModelCatalogEntry(
+      id: 'minicpm_v_4_6_q4_k_m',
+      type: 'multimodal_llm',
+      tier: 'local_multimodal',
+      displayName: 'MiniCPM-V 4.6 Q4_K_M Multimodal',
+      description: 'Requires LLM GGUF plus mmproj-model-f16.gguf.',
+      sizeBytes: 1516275776,
+      minRamMb: 6144,
+      recommendedTier: 'vision_language_local',
+      sources: <ModelSourceEntry>[],
+    );
+
+    expect(isCatalogEntryDownloadSupported(entry), isTrue);
+    expect(
+      formatCatalogRuntimeSupportStatus(entry),
+      '运行时支持：需要下载主模型和视觉投影文件，部署后可进行本地多模态推理。',
+    );
+  });
+
+  group('shouldShowGenericTrustExplainer', () {
+    test('returns false for a single signed source entry', () {
+      const sources = [
+        ModelSourceEntry(
+          id: 'signed-only',
+          label: 'Signed Only Source',
+          url: 'https://example.com/signed.onnx',
+          checksum: 'sha256:signed',
+          signature: 'base64:sig',
+          signatureAlgorithm: 'RSA-SHA256',
+          keyId: 'key-1',
+        ),
+      ];
+
+      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    });
+
+    test('returns true for a mixed-source entry with signed metadata', () {
+      const sources = [
+        ModelSourceEntry(
+          id: 'signed-src',
+          label: 'Signed Source',
+          url: 'https://example.com/signed.onnx',
+          checksum: 'sha256:signed',
+          signature: 'base64:sig',
+          signatureAlgorithm: 'RSA-SHA256',
+          keyId: 'key-1',
+        ),
+        ModelSourceEntry(
+          id: 'unsigned-src',
+          label: 'Unsigned Source',
+          url: 'https://example.com/unsigned.onnx',
+          checksum: 'sha256:unsigned',
+        ),
+      ];
+
+      expect(shouldShowGenericTrustExplainer(sources), isTrue);
+    });
+
+    test('returns false when no source declares artifact trust', () {
+      const sources = [
+        ModelSourceEntry(
+          id: 'unsigned-src',
+          label: 'Unsigned Source',
+          url: 'https://example.com/unsigned.onnx',
+          checksum: 'sha256:unsigned',
+        ),
+      ];
+
+      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    });
   });
 }

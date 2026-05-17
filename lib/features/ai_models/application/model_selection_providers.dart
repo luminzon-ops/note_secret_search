@@ -159,6 +159,15 @@ EmbeddingEngineState _fallbackRuntimeState(ModelRegistryEntry entry) {
     );
   }
 
+   if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
+    return EmbeddingEngineState(
+      ready: false,
+      reason: '本地模型文件校验失败，需要重新下载或修复。',
+      status: EmbeddingRuntimeStatus.corrupted,
+      modelPath: entry.localPath,
+    );
+  }
+
   return EmbeddingEngineState(
     ready: entry.isInstalled,
     reason: entry.isInstalled ? '本地语义检索模型已就绪。' : '本地 embedding 模型当前不可用。',
@@ -171,6 +180,7 @@ String _runtimeBlockedReason(String modelName, EmbeddingEngineState runtimeState
   return switch (runtimeState.status) {
     EmbeddingRuntimeStatus.notInstalled => '已选择模型 $modelName，但本地模型文件尚未安装。',
     EmbeddingRuntimeStatus.missing => '已选择模型 $modelName，但本地模型文件缺失，需要重新下载或修复。',
+    EmbeddingRuntimeStatus.corrupted => '已选择模型 $modelName，但本地模型文件校验失败，需要重新下载或修复。',
     EmbeddingRuntimeStatus.installedUnverified =>
       '已选择模型 $modelName，但运行时尚未完成校验，暂不能用于语义检索。',
     EmbeddingRuntimeStatus.degraded =>

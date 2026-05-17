@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
+import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
@@ -21,6 +23,23 @@ const _embeddingModel = ModelRegistryEntry(
   minRamMb: 512,
   recommendedTier: 'mvp',
   localPath: '/data/models/minilm.onnx',
+  checksum: 'abc',
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+);
+
+const _llmModel = ModelRegistryEntry(
+  id: 'llm-1',
+  type: 'llm',
+  provider: 'builtin',
+  name: 'Phi Local',
+  version: '1.0.0',
+  sizeBytes: 104857600,
+  quantization: 'Q4_K_M',
+  minRamMb: 2048,
+  recommendedTier: 'local',
+  localPath: '/data/models/phi.gguf',
   checksum: 'abc',
   enabled: true,
   installedAt: null,
@@ -126,5 +145,143 @@ void main() {
 
     expect(model, isNull);
     expect(selection.activeEmbeddingModelId, isNull);
+  });
+
+  test('activeLocalLlmModelProvider preserves selection when runtime is degraded (recoverable)', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => {
+            'llm-1': const LlmRuntimeState(
+              ready: false,
+              reason: 'session failed',
+              status: LlmRuntimeStatus.degraded,
+            ),
+          },
+        ),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    final model = await container.read(activeLocalLlmModelProvider.future);
+    final preferences = await container.read(sharedPreferencesProvider.future);
+
+    // Degraded is recoverable — selection and shared-pref key must be preserved
+    expect(model?.id, 'llm-1');
+    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
+  });
+
+  test('activeLocalLlmModelProvider preserves selection when runtime is installedUnverified (recoverable)', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => {
+            'llm-1': const LlmRuntimeState(
+              ready: false,
+              reason: 'waiting verification',
+              status: LlmRuntimeStatus.installedUnverified,
+            ),
+          },
+        ),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    final model = await container.read(activeLocalLlmModelProvider.future);
+    final preferences = await container.read(sharedPreferencesProvider.future);
+
+    // installedUnverified is recoverable — selection and shared-pref key must be preserved
+    expect(model?.id, 'llm-1');
+    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
+  });
+
+  test('activeLocalLlmModelProvider self-heals when runtime probe fails after selection', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => {
+            'llm-1': const LlmRuntimeState(
+              ready: false,
+              reason: '真实 probe failed',
+              status: LlmRuntimeStatus.degraded,
+            ),
+          },
+        ),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    // A degraded runtime should preserve the model (same as the recoverable case above)
+    final model = await container.read(activeLocalLlmModelProvider.future);
+    expect(model?.id, 'llm-1');
+  });
+
+  test('activeLocalLlmModelProvider self-heals when LLM file is missing (not recoverable)', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+    final missingLlmModel = _llmModel.copyWith(filePresent: false, enabled: false);
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        modelRegistryEntriesProvider.overrideWith((ref) async => [missingLlmModel]),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => {
+            'llm-1': const LlmRuntimeState(
+              ready: false,
+              reason: 'missing file',
+              status: LlmRuntimeStatus.missing,
+            ),
+          },
+        ),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    final model = await container.read(activeLocalLlmModelProvider.future);
+    final preferences = await container.read(sharedPreferencesProvider.future);
+
+    // Missing file is not recoverable — selection must be cleared
+    expect(model, isNull);
+    expect(preferences.getString('ai.active_llm_model_id'), isNull);
+  });
+
+  test('activeLocalLlmModelProvider keeps selection when runtime is ready but registry entry is stale', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+    final staleLlmModel = _llmModel.copyWith(enabled: false);
+    final container = ProviderContainer(
+      overrides: [
+        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        modelRegistryEntriesProvider.overrideWith((ref) async => [staleLlmModel]),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => {
+            'llm-1': const LlmRuntimeState(
+              ready: true,
+              reason: 'runtime already warm',
+              status: LlmRuntimeStatus.ready,
+            ),
+          },
+        ),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    final model = await container.read(activeLocalLlmModelProvider.future);
+    final preferences = await container.read(sharedPreferencesProvider.future);
+
+    expect(model?.id, 'llm-1');
+    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
   });
 }

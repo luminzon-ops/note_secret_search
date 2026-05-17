@@ -319,6 +319,8 @@ class _SearchFeedbackCard extends StatelessWidget {
         '当前语义模型已安装但尚未完成运行时校验，本次还无法参与语义检索。',
       EmbeddingRuntimeStatus.degraded =>
         '当前语义模型存在运行时异常，本次无法稳定参与语义检索，建议先前往模型管理排查。',
+      EmbeddingRuntimeStatus.corrupted =>
+        '当前语义模型文件校验失败或已损坏，本次无法参与语义检索，建议前往模型管理重新下载或修复。',
       EmbeddingRuntimeStatus.missing || EmbeddingRuntimeStatus.notInstalled =>
         '当前语义模型文件缺失或尚未安装，本次仅能依赖关键词检索。',
       EmbeddingRuntimeStatus.ready || null => '本次未找到匹配结果，建议检查检索范围、查询词，或刷新索引后再试。',

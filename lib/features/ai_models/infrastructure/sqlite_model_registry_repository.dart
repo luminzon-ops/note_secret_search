@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
@@ -62,9 +65,11 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
         'min_ram_mb': entry.minRamMb,
         'recommended_tier': entry.recommendedTier,
         'local_path': entry.localPath,
+        'artifact_paths_json': encodeModelArtifactPathsForSqlite(entry.artifacts),
         'checksum': entry.checksum,
         'enabled': entry.enabled ? 1 : 0,
         'installed_at': entry.installedAt?.millisecondsSinceEpoch,
+        'integrity_status': entry.integrityStatus.name,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -82,12 +87,41 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
       minRamMb: row['min_ram_mb'] as int?,
       recommendedTier: row['recommended_tier'] as String?,
       localPath: row['local_path'] as String?,
+      artifacts: decodeModelArtifactPathsFromSqlite(row['artifact_paths_json'] as String?),
       checksum: row['checksum'] as String?,
       enabled: (row['enabled'] as int? ?? 0) == 1,
       installedAt: row['installed_at'] == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['installed_at']! as int),
       filePresent: true,
+      integrityStatus: _parseIntegrityStatus(row['integrity_status'] as String?),
     );
   }
+
+  ModelIntegrityStatus _parseIntegrityStatus(String? raw) {
+    return ModelIntegrityStatus.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => ModelIntegrityStatus.unknown,
+    );
+  }
+}
+
+String encodeModelArtifactPathsForSqlite(List<ModelArtifactPath> artifacts) {
+  return jsonEncode(
+    artifacts.map((artifact) => artifact.toJson()).toList(growable: false),
+  );
+}
+
+List<ModelArtifactPath> decodeModelArtifactPathsFromSqlite(String? raw) {
+  if (raw == null || raw.trim().isEmpty) {
+    return const <ModelArtifactPath>[];
+  }
+  final decoded = jsonDecode(raw);
+  if (decoded is! List) {
+    return const <ModelArtifactPath>[];
+  }
+  return decoded
+      .whereType<Map<String, dynamic>>()
+      .map(ModelArtifactPath.fromJson)
+      .toList(growable: false);
 }

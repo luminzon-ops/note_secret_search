@@ -105,7 +105,15 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
       if (matched) {
         ref.read(securityOrchestratorProvider).unlockWithPin();
         if (mounted) {
-          context.pop(true);
+          final router = GoRouter.maybeOf(context);
+          final navigator = Navigator.of(context);
+          if (navigator.canPop()) {
+            navigator.pop(true);
+          } else if (router != null && router.canPop()) {
+            router.pop(true);
+          } else if (router != null) {
+            router.go('/vault');
+          }
         }
         return;
       }

@@ -38,6 +38,7 @@ SearchStatusSummary buildSearchStatusSummary({
     final actionLabel = switch (readiness.runtimeStatus) {
       EmbeddingRuntimeStatus.installedUnverified => '前往模型管理完成校验',
       EmbeddingRuntimeStatus.degraded => '前往模型管理排查',
+      EmbeddingRuntimeStatus.corrupted => '前往模型管理重新下载',
       EmbeddingRuntimeStatus.missing || EmbeddingRuntimeStatus.notInstalled => '前往模型管理',
       EmbeddingRuntimeStatus.ready || null => '前往模型管理',
     };

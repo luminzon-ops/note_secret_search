@@ -27,20 +27,23 @@ class EmbeddingRuntimePlugin(
                 "inspectModel" -> {
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
-                    result.success(runtime.inspectModel(modelId = modelId, modelPath = modelPath))
+                    val spec = readSpec(call)
+                    result.success(runtime.inspectModel(modelId = modelId, modelPath = modelPath, spec = spec))
                 }
 
                 "ensureModelReady" -> {
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
-                    result.success(runtime.ensureModelReady(modelId = modelId, modelPath = modelPath))
+                    val spec = readSpec(call)
+                    result.success(runtime.ensureModelReady(modelId = modelId, modelPath = modelPath, spec = spec))
                 }
 
                 "embedText" -> {
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
                     val text = requiredString(call, "text")
-                    result.success(runtime.embedText(modelId = modelId, modelPath = modelPath, text = text))
+                    val spec = readSpec(call)
+                    result.success(runtime.embedText(modelId = modelId, modelPath = modelPath, text = text, spec = spec))
                 }
 
                 "releaseModel" -> {
@@ -63,6 +66,16 @@ class EmbeddingRuntimePlugin(
     private fun requiredString(call: MethodCall, name: String): String {
         return call.argument<String>(name)?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("$name is required")
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun readSpec(call: MethodCall): OnnxEmbeddingModelSpec {
+        val tokenizer = call.argument<Map<String, Any?>>("tokenizer")
+        val runtime = call.argument<Map<String, Any?>>("runtime")
+        return OnnxEmbeddingModelSpec.fromMaps(
+            tokenizer = tokenizer as Map<*, *>?,
+            runtime = runtime as Map<*, *>?,
+        ) ?: throw IllegalArgumentException("embedding tokenizer/runtime metadata is required")
     }
 
     companion object {

@@ -15,4 +15,14 @@ abstract interface class AppDatabase {
 
 abstract final class DatabaseMigrations {
   static List<String> initial() => DatabaseSchema.createStatements;
+
+  static List<String> forVersion(int version) {
+    return switch (version) {
+      2 => DatabaseSchema.chatPersistenceStatements,
+      3 => const <String>[
+          'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
+        ],
+      _ => const <String>[],
+    };
+  }
 }

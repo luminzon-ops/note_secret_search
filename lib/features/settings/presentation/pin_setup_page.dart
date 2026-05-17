@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinSetupPage extends ConsumerStatefulWidget {
-  const PinSetupPage({super.key});
+  const PinSetupPage({this.unlockOnSuccess = false, super.key});
+
+  final bool unlockOnSuccess;
 
   @override
   ConsumerState<PinSetupPage> createState() => _PinSetupPageState();
@@ -89,12 +93,31 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
     setState(() => _submitting = true);
     try {
-      await ref.read(securitySettingsControllerProvider.notifier).setPin(_pinController.text.trim());
+      final repository = await ref.read(securitySettingsRepositoryProvider.future);
+      final currentSettings = await repository.load();
+      final nextSettings = currentSettings.copyWith(pinEnabled: true);
+      await repository.savePinMaterial(_pinController.text.trim());
+      await repository.save(nextSettings);
+      ref.read(securityOrchestratorProvider).enablePinFallback(true);
+      ref.read(pinStateControllerProvider.notifier).markPinMaterialReady();
+      ref.read(pinStateControllerProvider.notifier).configureEnabled(true);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('PIN 已保存并启用')),
-        );
-        context.pop();
+        if (widget.unlockOnSuccess) {
+          ref.read(securityOrchestratorProvider).unlockWithPin();
+          final router = GoRouter.maybeOf(context);
+          if (router != null) {
+            ref.read(appRouterProvider).go('/vault');
+          } else {
+            Navigator.of(context).pop(true);
+          }
+        } else {
+          ref.invalidate(securitySettingsRepositoryProvider);
+          ref.invalidate(securitySettingsControllerProvider);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('PIN 已保存并启用')),
+          );
+          context.pop();
+        }
       }
     } finally {
       if (mounted) {

@@ -1,21 +1,65 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
-class AppLockGate extends ConsumerWidget {
+class AppLockGate extends ConsumerStatefulWidget {
   const AppLockGate({required this.child, super.key});
+
+  static const Set<String> _unlockAllowedLocations = {
+    '/unlock/pin',
+    '/unlock/pin/setup',
+    '/settings/security/pin',
+  };
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(lockSessionControllerProvider);
-    if (session.isUnlocked) {
-      return child;
-    }
+  ConsumerState<AppLockGate> createState() => _AppLockGateState();
+}
 
-    return AppLockScreen(onUnlocked: () => context.go('/vault'));
+class _AppLockGateState extends ConsumerState<AppLockGate> {
+  var _hydrationStarted = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_hydrationStarted) {
+      return;
+    }
+    _hydrationStarted = true;
+    Future<void>(() async {
+      final repository = await ref.read(securitySettingsRepositoryProvider.future);
+      final settings = await repository.load();
+      final hasPinMaterial = await repository.hasPinMaterial();
+      ref.read(lockSessionControllerProvider.notifier).setPinEnabled(settings.pinEnabled);
+      final pinStateController = ref.read(pinStateControllerProvider.notifier);
+      pinStateController.configureEnabled(settings.pinEnabled);
+      if (hasPinMaterial) {
+        pinStateController.markPinMaterialReady();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = ref.watch(lockSessionControllerProvider);
+    final router = ref.watch(appRouterProvider);
+
+    return ValueListenableBuilder<RouteInformation>(
+      valueListenable: router.routeInformationProvider,
+      builder: (context, routeInformation, _) {
+        final location = routeInformation.uri.path;
+        if (session.isUnlocked || AppLockGate._unlockAllowedLocations.contains(location)) {
+          return widget.child;
+        }
+
+        return AppLockScreen(
+          onUnlocked: () => ref.read(appRouterProvider).go('/vault'),
+        );
+      },
+    );
   }
 }
 
@@ -66,6 +110,14 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                   icon: const Icon(Icons.fingerprint),
                   label: Text(_busy ? '验证中...' : '使用生物识别解锁'),
                 ),
+                if (!pinState.hasPinMaterial) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _openPinSetup,
+                    icon: const Icon(Icons.pin_outlined),
+                    label: const Text('设置应用 PIN'),
+                  ),
+                ],
                 if (session.pinEnabled && pinState.hasPinMaterial) ...[
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
@@ -107,7 +159,16 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
   }
 
   Future<void> _openPinUnlock() async {
-    final unlocked = await context.push<bool>('/unlock/pin');
+    final unlocked = await ref.read(appRouterProvider).push<bool>('/unlock/pin');
+    if (unlocked == true && mounted) {
+      widget.onUnlocked();
+    }
+  }
+
+  Future<void> _openPinSetup() async {
+    final unlocked = await ref
+        .read(appRouterProvider)
+        .push<bool>('/unlock/pin/setup');
     if (unlocked == true && mounted) {
       widget.onUnlocked();
     }

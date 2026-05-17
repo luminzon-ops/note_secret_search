@@ -18,6 +18,7 @@ class SqlCipherAppDatabase implements AppDatabase {
   Database? _database;
 
   static const _databaseName = 'note_secret_search.db';
+  static const _databaseVersion = 3;
 
   @override
   Future<void> initialize() async {
@@ -31,13 +32,27 @@ class SqlCipherAppDatabase implements AppDatabase {
     _database = await openDatabase(
       path,
       password: databasePassword,
-      version: 1,
+      version: _databaseVersion,
       onCreate: (db, version) async {
         final batch = db.batch();
         for (final statement in DatabaseMigrations.initial()) {
           batch.execute(statement);
         }
         await batch.commit(noResult: true);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        for (var version = oldVersion + 1; version <= newVersion; version++) {
+          final statements = DatabaseMigrations.forVersion(version);
+          if (statements.isEmpty) {
+            continue;
+          }
+
+          final batch = db.batch();
+          for (final statement in statements) {
+            batch.execute(statement);
+          }
+          await batch.commit(noResult: true);
+        }
       },
     );
 

@@ -1,6 +1,7 @@
 package com.example.note_secret_search
 
 import android.app.Activity
+import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -13,14 +14,20 @@ class BiometricAuthenticator(
     private val executor = ContextCompat.getMainExecutor(activity)
 
     fun authenticate(reason: String, result: MethodChannel.Result) {
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
             .setTitle("解锁 Note Secret Search")
             .setSubtitle(reason)
-            .setAllowedAuthenticators(
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            promptInfoBuilder.setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
                     BiometricManager.Authenticators.DEVICE_CREDENTIAL,
             )
-            .build()
+        } else {
+            promptInfoBuilder.setNegativeButtonText("取消")
+        }
+
+        val promptInfo = promptInfoBuilder.build()
 
         val prompt = BiometricPrompt(
             hostActivity,

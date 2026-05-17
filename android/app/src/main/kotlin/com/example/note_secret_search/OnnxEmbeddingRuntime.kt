@@ -5,8 +5,11 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtException
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import java.io.File
 import java.nio.FloatBuffer
+import java.nio.LongBuffer
+import org.json.JSONObject
 
 class OnnxEmbeddingRuntime(
     private val context: Context,
@@ -14,7 +17,7 @@ class OnnxEmbeddingRuntime(
 ) {
     private val environment: OrtEnvironment = OrtEnvironment.getEnvironment()
 
-    fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
+    fun inspectModel(modelId: String, modelPath: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
         val file = File(modelPath)
         if (!file.exists()) {
             return runtimeState(
@@ -26,6 +29,7 @@ class OnnxEmbeddingRuntime(
 
         return try {
             val session = createSession(file)
+            validateSpec(session, spec)
             val vectorDimension = inferVectorDimension(session)
             session.close()
             runtimeState(
@@ -43,7 +47,7 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun ensureModelReady(modelId: String, modelPath: String): Map<String, Any?> {
+    fun ensureModelReady(modelId: String, modelPath: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
         val file = File(modelPath)
         if (!file.exists()) {
             return runtimeState(
@@ -56,6 +60,7 @@ class OnnxEmbeddingRuntime(
         return try {
             val existing = sessionManager.get(modelId)
             val session = existing ?: createSession(file).also { sessionManager.replace(modelId, it) }
+            validateSpec(session, spec)
             val vectorDimension = inferVectorDimension(session)
             runtimeState(
                 status = "ready",
@@ -73,10 +78,10 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun embedText(modelId: String, modelPath: String, text: String): Map<String, Any?> {
+    fun embedText(modelId: String, modelPath: String, text: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
         require(text.isNotBlank()) { "Text for embedding must not be blank." }
 
-        val ready = ensureModelReady(modelId, modelPath)
+        val ready = ensureModelReady(modelId, modelPath, spec)
         if (ready["status"] != "ready") {
             throw IllegalStateException(ready["reason"] as? String ?: "Embedding runtime is not ready.")
         }
@@ -84,10 +89,11 @@ class OnnxEmbeddingRuntime(
         val session = sessionManager.get(modelId)
             ?: throw IllegalStateException("Embedding session was not prepared.")
 
-        val outputVector = runMinimalInference(session, text)
+        val encoded = loadTokenizer(spec.tokenizer).encode(text)
+        val outputVector = runMinimalInference(session, encoded, spec)
         return mapOf(
             "values" to outputVector,
-            "tokenCount" to text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.size,
+            "tokenCount" to encoded.attentionMask.count { it == 1L },
             "vectorDimension" to outputVector.size,
         )
     }
@@ -107,44 +113,80 @@ class OnnxEmbeddingRuntime(
 
     private fun inferVectorDimension(session: OrtSession): Int? {
         val outputInfo = session.outputInfo.values.firstOrNull() ?: return null
-        val shape = outputInfo.info.shape
-        val positiveDims = shape.filter { it > 0 }
+        val tensorInfo = outputInfo.info as? TensorInfo ?: return null
+        val positiveDims = tensorInfo.shape.filter { it > 0L }
         return positiveDims.lastOrNull()?.toInt()
     }
 
-    private fun runMinimalInference(session: OrtSession, text: String): List<Double> {
-        val tensorInputName = session.inputNames.firstOrNull()
-            ?: throw OrtException("MODEL_SCHEMA_UNSUPPORTED: no ONNX input found")
+    private fun runMinimalInference(
+        session: OrtSession,
+        encoded: EncodedEmbeddingInput,
+        spec: OnnxEmbeddingModelSpec,
+    ): List<Double> {
+        val sequenceLength = encoded.inputIds.size.toLong()
+        val shape = longArrayOf(1, sequenceLength)
 
-        val values = textToFloatInput(text)
-        val shape = longArrayOf(1, values.size.toLong())
-        val tensor = OnnxTensor.createTensor(environment, FloatBuffer.wrap(values), shape)
+        val inputIdsTensor = OnnxTensor.createTensor(
+            environment,
+            LongBuffer.wrap(encoded.inputIds),
+            shape,
+        )
+        val attentionMaskTensor = OnnxTensor.createTensor(
+            environment,
+            LongBuffer.wrap(encoded.attentionMask),
+            shape,
+        )
+        val tokenTypeIdsTensor = spec.runtime.tokenTypeIdsName?.let {
+            OnnxTensor.createTensor(environment, LongBuffer.wrap(encoded.tokenTypeIds), shape)
+        }
 
-        tensor.use { inputTensor ->
-            session.run(mapOf(tensorInputName to inputTensor)).use { outputs ->
-                val first = outputs.firstOrNull()?.value
-                    ?: throw OrtException("EMPTY_OUTPUT: no embedding output returned")
+        inputIdsTensor.use { ids ->
+            attentionMaskTensor.use { mask ->
+                tokenTypeIdsTensor.use { tokenTypes ->
+                    val inputs = mutableMapOf<String, OnnxTensor>(
+                        spec.runtime.inputIdsName to ids,
+                        spec.runtime.attentionMaskName to mask,
+                    )
+                    if (spec.runtime.tokenTypeIdsName != null && tokenTypes != null) {
+                        inputs[spec.runtime.tokenTypeIdsName] = tokenTypes
+                    }
 
-                val floats = extractFloatValues(first)
-                if (floats.isEmpty()) {
-                    throw OrtException("EMPTY_OUTPUT: embedding vector is empty")
+                    session.run(inputs).use { outputs ->
+                        val selected = outputs.firstOrNull { it.key == spec.runtime.outputName }?.value
+                            ?: outputs.firstOrNull()?.value
+                            ?: throw OrtException("EMPTY_OUTPUT: no embedding output returned")
+
+                        val tokenVectors = extractTokenVectors(selected)
+                        val floats = when {
+                            tokenVectors != null -> EmbeddingVectorPostProcessor.pool(
+                                tokenVectors = tokenVectors,
+                                attentionMask = encoded.attentionMask,
+                                pooling = spec.runtime.pooling,
+                            )
+
+                            else -> extractFloatValues(selected)
+                        }
+                        if (floats.isEmpty()) {
+                            throw OrtException("EMPTY_OUTPUT: embedding vector is empty")
+                        }
+                        return EmbeddingVectorPostProcessor.normalize(
+                            values = floats,
+                            normalization = spec.runtime.normalization,
+                        )
+                    }
                 }
-                return normalize(floats)
             }
         }
     }
 
-    private fun textToFloatInput(text: String): FloatArray {
-        val normalized = text.trim()
-        if (normalized.isEmpty()) {
-            return floatArrayOf(0f)
-        }
-
-        val maxLength = 64
-        val chars = normalized.take(maxLength)
-        return FloatArray(chars.length) { index ->
-            chars[index].code.toFloat()
-        }
+    private fun loadTokenizer(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer {
+        val raw = context.assets.open(spec.assetPath).bufferedReader().use { it.readText() }
+        val vocab = extractVocabulary(raw)
+        return WordpieceEmbeddingTokenizer(
+            vocab = vocab,
+            lowercase = spec.lowercase,
+            maxSequenceLength = spec.maxSequenceLength,
+        )
     }
 
     private fun extractFloatValues(value: Any): List<Double> {
@@ -152,6 +194,21 @@ class OnnxEmbeddingRuntime(
             is FloatArray -> value.map(Float::toDouble)
             is Array<*> -> flattenArray(value)
             else -> emptyList()
+        }
+    }
+
+    private fun extractTokenVectors(value: Any): Array<FloatArray>? {
+        return when (value) {
+            is Array<*> -> {
+                val first = value.firstOrNull()
+                when (first) {
+                    is FloatArray -> arrayOf(first)
+                    is Array<*> -> first.mapNotNull { it as? FloatArray }.toTypedArray().takeIf { it.isNotEmpty() }
+                    else -> null
+                }
+            }
+
+            else -> null
         }
     }
 
@@ -166,12 +223,41 @@ class OnnxEmbeddingRuntime(
         return flattened
     }
 
-    private fun normalize(values: List<Double>): List<Double> {
-        val norm = kotlin.math.sqrt(values.sumOf { it * it })
-        if (norm == 0.0) {
-            return values
+    private fun validateSpec(session: OrtSession, spec: OnnxEmbeddingModelSpec) {
+        context.assets.open(spec.tokenizer.assetPath).close()
+
+        val inputNames = session.inputNames
+        require(inputNames.contains(spec.runtime.inputIdsName)) {
+            "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.inputIdsName}"
         }
-        return values.map { it / norm }
+        require(inputNames.contains(spec.runtime.attentionMaskName)) {
+            "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.attentionMaskName}"
+        }
+        if (spec.runtime.tokenTypeIdsName != null) {
+            require(inputNames.contains(spec.runtime.tokenTypeIdsName)) {
+                "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.tokenTypeIdsName}"
+            }
+        }
+
+        require(session.outputInfo.containsKey(spec.runtime.outputName)) {
+            "MODEL_SCHEMA_UNSUPPORTED: missing output ${spec.runtime.outputName}"
+        }
+    }
+
+    private fun extractVocabulary(rawJson: String): Map<String, Int> {
+        val root = JSONObject(rawJson)
+        val model = root.optJSONObject("model")
+        val vocabObject = model?.optJSONObject("vocab")
+            ?: root.optJSONObject("vocab")
+            ?: throw IllegalArgumentException("TOKENIZER_SCHEMA_UNSUPPORTED: vocab not found")
+
+        val vocab = mutableMapOf<String, Int>()
+        val keys = vocabObject.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            vocab[key] = vocabObject.getInt(key)
+        }
+        return vocab
     }
 
     private fun runtimeState(

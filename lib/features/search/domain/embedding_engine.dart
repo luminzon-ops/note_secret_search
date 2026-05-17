@@ -3,6 +3,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 enum EmbeddingRuntimeStatus {
   notInstalled,
   missing,
+  corrupted,
   installedUnverified,
   ready,
   degraded,

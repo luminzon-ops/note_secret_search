@@ -1,10 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.note_secret_search">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="Note Secret Search"
         android:allowBackup="false"
         android:supportsRtl="true">
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

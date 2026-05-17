@@ -28,6 +28,24 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
   }
 
   @override
+  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(String modelId, String sourceId) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      DatabaseSchema.downloadTasks,
+      where: 'model_id = ? AND source_id = ?',
+      whereArgs: <Object>[modelId, sourceId],
+      orderBy: 'updated_at DESC',
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    return _mapTask(rows.first);
+  }
+
+  @override
   Future<List<ModelDownloadTask>> listTasks() async {
     final db = await _database.database;
     final rows = await db.query(

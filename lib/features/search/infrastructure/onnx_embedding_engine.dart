@@ -2,10 +2,16 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
+typedef EmbeddingMetadataResolver = Future<EmbeddingModelMetadata?> Function(String modelId);
+
 class OnnxEmbeddingEngine implements EmbeddingEngine {
-  const OnnxEmbeddingEngine({required EmbeddingRuntimeBridge bridge}) : _bridge = bridge;
+  const OnnxEmbeddingEngine({
+    required EmbeddingRuntimeBridge bridge,
+    this.resolveMetadata,
+  }) : _bridge = bridge;
 
   final EmbeddingRuntimeBridge _bridge;
+  final EmbeddingMetadataResolver? resolveMetadata;
 
   @override
   Future<EmbeddingEngineState> getState(ModelRegistryEntry model) async {
@@ -18,7 +24,21 @@ class OnnxEmbeddingEngine implements EmbeddingEngine {
       );
     }
 
-    final result = await _bridge.inspectModel(modelId: model.id, modelPath: path);
+    final metadata = await _resolveMetadata(model.id);
+    if (metadata == null) {
+      return const EmbeddingEngineState(
+        ready: false,
+        reason: '当前 embedding model metadata 缺失，无法完成标准 ONNX runtime 校验。',
+        status: EmbeddingRuntimeStatus.degraded,
+      );
+    }
+
+    final result = await _bridge.inspectModel(
+      modelId: model.id,
+      modelPath: path,
+      tokenizer: metadata.tokenizer,
+      runtime: metadata.runtime,
+    );
     return mapEmbeddingEngineState(result, fallbackPath: path);
   }
 
@@ -29,10 +49,17 @@ class OnnxEmbeddingEngine implements EmbeddingEngine {
       throw StateError('Active embedding model path is missing.');
     }
 
+    final metadata = await _resolveMetadata(request.model.id);
+    if (metadata == null) {
+      throw StateError('Embedding metadata is missing for model ${request.model.id}.');
+    }
+
     final result = await _bridge.embedText(
       modelId: request.model.id,
       modelPath: path,
       text: request.text,
+      tokenizer: metadata.tokenizer,
+      runtime: metadata.runtime,
     );
 
     final rawValues = (result['values'] as List<dynamic>? ?? const <dynamic>[])
@@ -44,6 +71,14 @@ class OnnxEmbeddingEngine implements EmbeddingEngine {
       tokenCount: (result['tokenCount'] as num?)?.toInt() ?? request.text.length,
     );
   }
+
+  Future<EmbeddingModelMetadata?> _resolveMetadata(String modelId) async {
+    final resolver = resolveMetadata;
+    if (resolver == null) {
+      return null;
+    }
+    return resolver(modelId);
+  }
 }
 
 EmbeddingEngineState mapEmbeddingEngineState(
@@ -54,6 +89,7 @@ EmbeddingEngineState mapEmbeddingEngineState(
   final status = switch (rawStatus) {
     'notInstalled' || 'not_installed' => EmbeddingRuntimeStatus.notInstalled,
     'missing' => EmbeddingRuntimeStatus.missing,
+    'corrupted' => EmbeddingRuntimeStatus.corrupted,
     'installedUnverified' || 'installed_unverified' => EmbeddingRuntimeStatus.installedUnverified,
     'ready' => EmbeddingRuntimeStatus.ready,
     'degraded' => EmbeddingRuntimeStatus.degraded,

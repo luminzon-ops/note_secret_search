@@ -1,3 +1,11 @@
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
+
+enum ModelIntegrityStatus {
+  unknown,
+  valid,
+  corrupted,
+}
+
 class ModelRegistryEntry {
   const ModelRegistryEntry({
     required this.id,
@@ -14,6 +22,8 @@ class ModelRegistryEntry {
     required this.enabled,
     required this.installedAt,
     required this.filePresent,
+    this.integrityStatus = ModelIntegrityStatus.unknown,
+    this.artifacts = const <ModelArtifactPath>[],
   });
 
   final String id;
@@ -30,8 +40,28 @@ class ModelRegistryEntry {
   final bool enabled;
   final DateTime? installedAt;
   final bool filePresent;
+  final ModelIntegrityStatus integrityStatus;
+  final List<ModelArtifactPath> artifacts;
 
-  bool get isInstalled => enabled && filePresent && (localPath?.isNotEmpty ?? false);
+  bool get isInstalled {
+    final hasPrimaryPath = localPath?.isNotEmpty ?? false;
+    final hasRequiredMultimodalArtifacts = type != 'multimodal_llm' ||
+        (artifactPathForRole('model') != null && artifactPathForRole('mmproj') != null);
+    return enabled &&
+        filePresent &&
+        integrityStatus != ModelIntegrityStatus.corrupted &&
+        hasPrimaryPath &&
+        hasRequiredMultimodalArtifacts;
+  }
+
+  String? artifactPathForRole(String role) {
+    for (final artifact in artifacts) {
+      if (artifact.role == role && artifact.localPath.isNotEmpty) {
+        return artifact.localPath;
+      }
+    }
+    return null;
+  }
 
   ModelRegistryEntry copyWith({
     String? id,
@@ -56,6 +86,8 @@ class ModelRegistryEntry {
     DateTime? installedAt,
     bool clearInstalledAt = false,
     bool? filePresent,
+    ModelIntegrityStatus? integrityStatus,
+    List<ModelArtifactPath>? artifacts,
   }) {
     return ModelRegistryEntry(
       id: id ?? this.id,
@@ -72,6 +104,8 @@ class ModelRegistryEntry {
       enabled: enabled ?? this.enabled,
       installedAt: clearInstalledAt ? null : (installedAt ?? this.installedAt),
       filePresent: filePresent ?? this.filePresent,
+      integrityStatus: integrityStatus ?? this.integrityStatus,
+      artifacts: artifacts ?? this.artifacts,
     );
   }
 }

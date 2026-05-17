@@ -8,22 +8,33 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterFragmentActivity() {
     private lateinit var nativeSecurityPlugin: NativeSecurityPlugin
     private lateinit var embeddingRuntimePlugin: EmbeddingRuntimePlugin
-    private lateinit var recentTaskShieldView: FrameLayout
+    private lateinit var llmRuntimePlugin: LlmRuntimePlugin
+    private val recentTaskShieldCoordinator = RecentTaskShieldCoordinator(
+        create = {
+            FrameLayout(this).apply {
+                setBackgroundColor(0xFF101418.toInt())
+                alpha = 0.98f
+                visibility = android.view.View.GONE
+            }
+        },
+        attach = { shield ->
+            addContentView(
+                shield,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        },
+    )
+
+    private val recentTaskShieldView: FrameLayout
+        get() = recentTaskShieldCoordinator.shield()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        recentTaskShieldView
         super.onCreate(savedInstanceState)
-        recentTaskShieldView = FrameLayout(this).apply {
-            setBackgroundColor(0xFF101418.toInt())
-            alpha = 0.98f
-            visibility = android.view.View.GONE
-        }
-        addContentView(
-            recentTaskShieldView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-            ),
-        )
+        recentTaskShieldCoordinator.attachIfNeeded()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -33,5 +44,8 @@ class MainActivity : FlutterFragmentActivity() {
 
         embeddingRuntimePlugin = EmbeddingRuntimePlugin(this)
         embeddingRuntimePlugin.attachToEngine(flutterEngine.dartExecutor.binaryMessenger)
+
+        llmRuntimePlugin = LlmRuntimePlugin(this)
+        llmRuntimePlugin.attachToEngine(flutterEngine.dartExecutor.binaryMessenger)
     }
 }

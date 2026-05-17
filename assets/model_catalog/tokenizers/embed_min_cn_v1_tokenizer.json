@@ -1,0 +1,18 @@
+{
+  "version": "1.0",
+  "model": {
+    "type": "WordPiece",
+    "vocab": {
+      "[PAD]": 0,
+      "[UNK]": 100,
+      "[CLS]": 101,
+      "[SEP]": 102,
+      "hello": 2001,
+      "world": 2002,
+      "##s": 2003,
+      "test": 2004,
+      "embedding": 2005,
+      "model": 2006
+    }
+  }
+}

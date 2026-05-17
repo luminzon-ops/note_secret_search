@@ -12,6 +12,8 @@ abstract final class DatabaseSchema {
   static const String providerConfigs = 'provider_configs';
   static const String syncAccounts = 'sync_accounts';
   static const String appSettings = 'app_settings';
+  static const String chatSessions = 'chat_sessions';
+  static const String chatMessages = 'chat_messages';
 
   static const List<String> createStatements = [
     '''
@@ -106,7 +108,9 @@ abstract final class DatabaseSchema {
       min_ram_mb INTEGER,
       recommended_tier TEXT,
       local_path TEXT,
+      artifact_paths_json TEXT,
       checksum TEXT,
+      integrity_status TEXT NOT NULL DEFAULT 'unknown',
       enabled INTEGER NOT NULL DEFAULT 0,
       installed_at INTEGER
     )
@@ -173,6 +177,36 @@ abstract final class DatabaseSchema {
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value_ciphertext BLOB NOT NULL
+    )
+    ''',
+    ...chatPersistenceStatements,
+  ];
+
+  static const List<String> chatPersistenceStatements = [
+    '''
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL,
+      title TEXT NOT NULL,
+      allow_private_context INTEGER NOT NULL DEFAULT 0,
+      last_model_id TEXT,
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+    ''',
+    '''
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL,
+      used_private_context INTEGER NOT NULL DEFAULT 0,
+      auto_retrieved_context_summary TEXT,
+      manual_context_item_ids_json TEXT,
+      related_source_ids_json TEXT,
+      created_at INTEGER NOT NULL
     )
     ''',
   ];

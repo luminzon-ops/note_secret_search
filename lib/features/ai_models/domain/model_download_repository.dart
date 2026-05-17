@@ -5,5 +5,7 @@ abstract interface class ModelDownloadRepository {
 
   Future<ModelDownloadTask?> findLatestTaskByModel(String modelId);
 
+  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(String modelId, String sourceId);
+
   Future<void> saveTask(ModelDownloadTask task);
 }

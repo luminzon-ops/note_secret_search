@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:note_secret_search/features/ai_chat/presentation/ai_chat_page.dart';
+import 'package:note_secret_search/features/ai_providers/presentation/external_provider_settings_page.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_management_page.dart';
 import 'package:note_secret_search/features/notes/presentation/note_detail_page.dart';
 import 'package:note_secret_search/features/notes/presentation/note_editor_page.dart';
@@ -22,6 +24,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/unlock/pin',
         builder: (context, state) => const PinUnlockPage(),
+      ),
+      GoRoute(
+        path: '/unlock/pin/setup',
+        builder: (context, state) => const PinSetupPage(unlockOnSuccess: true),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) => AppShell(
@@ -103,6 +109,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ]),
           StatefulShellBranch(routes: [
             GoRoute(
+              path: '/ai/chat',
+              name: 'aiChat',
+              builder: (context, state) => AiChatPage(),
+            ),
+          ]),
+          StatefulShellBranch(routes: [
+            GoRoute(
               path: '/models',
               name: 'models',
               builder: (context, state) => const ModelManagementPage(),
@@ -120,9 +133,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                   routes: [
                     GoRoute(
                       path: 'pin',
-                      builder: (context, state) => const PinSetupPage(),
+                      builder: (context, state) => PinSetupPage(
+                        unlockOnSuccess:
+                            state.uri.queryParameters['unlockOnSuccess'] == 'true',
+                      ),
                     ),
                   ],
+                ),
+                GoRoute(
+                  path: 'ai/providers',
+                  builder: (context, state) => const ExternalProviderSettingsPage(),
                 ),
               ],
             ),

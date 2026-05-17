@@ -1,6 +1,7 @@
 package com.example.note_secret_search
 
 import android.app.Activity
+import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -48,12 +49,13 @@ class NativeSecurityPlugin(
             }
 
             "getBiometricAvailability" -> {
-                val availability = when (
-                    BiometricManager.from(activity).canAuthenticate(
-                        BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            BiometricManager.Authenticators.DEVICE_CREDENTIAL,
-                    )
-                ) {
+                val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                } else {
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG
+                }
+                val availability = when (BiometricManager.from(activity).canAuthenticate(authenticators)) {
                     BiometricManager.BIOMETRIC_SUCCESS -> "available"
                     BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "not_enrolled"
                     else -> "unavailable"

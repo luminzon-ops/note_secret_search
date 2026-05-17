@@ -22,6 +22,7 @@ class AppShell extends StatelessWidget {
           NavigationDestination(icon: Icon(Icons.lock_outline), label: '保险库'),
           NavigationDestination(icon: Icon(Icons.search), label: '搜索'),
           NavigationDestination(icon: Icon(Icons.note_alt_outlined), label: '笔记'),
+          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: '问答'),
           NavigationDestination(icon: Icon(Icons.memory_outlined), label: '模型'),
           NavigationDestination(icon: Icon(Icons.settings_outlined), label: '设置'),
         ],

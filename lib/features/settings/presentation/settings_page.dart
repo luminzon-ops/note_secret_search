@@ -24,6 +24,12 @@ class SettingsPage extends StatelessWidget {
             onTap: () => context.push('/models'),
           ),
           ListTile(
+            title: const Text('外部模型'),
+            subtitle: const Text('OpenAI 兼容接口、API Key 与外发风险控制'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/settings/ai/providers'),
+          ),
+          ListTile(
             title: const Text('搜索与索引'),
             subtitle: const Text('检索范围、语义索引策略与搜索隐私控制'),
             trailing: const Icon(Icons.chevron_right),
