@@ -9,6 +9,7 @@ class MainActivity : FlutterFragmentActivity() {
     private lateinit var nativeSecurityPlugin: NativeSecurityPlugin
     private lateinit var embeddingRuntimePlugin: EmbeddingRuntimePlugin
     private lateinit var llmRuntimePlugin: LlmRuntimePlugin
+    private lateinit var deviceProfilerPlugin: DeviceProfilerPlugin
     private val recentTaskShieldCoordinator = RecentTaskShieldCoordinator(
         create = {
             FrameLayout(this).apply {
@@ -47,5 +48,12 @@ class MainActivity : FlutterFragmentActivity() {
 
         llmRuntimePlugin = LlmRuntimePlugin(this)
         llmRuntimePlugin.attachToEngine(flutterEngine.dartExecutor.binaryMessenger)
+
+        deviceProfilerPlugin = DeviceProfilerPlugin(this)
+        val deviceProfilerChannel = io.flutter.plugin.common.MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            DeviceProfilerPlugin.CHANNEL_NAME,
+        )
+        deviceProfilerChannel.setMethodCallHandler(deviceProfilerPlugin)
     }
 }
