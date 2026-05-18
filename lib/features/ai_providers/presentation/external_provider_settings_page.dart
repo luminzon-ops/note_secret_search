@@ -20,6 +20,7 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
   bool _allowSensitiveFields = false;
   bool _saving = false;
   bool _testing = false;
+  ExternalProviderType _providerType = ExternalProviderType.openAiCompatible;
 
   @override
   void initState() {
@@ -51,6 +52,25 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
 
     setState(() {
       _allowSensitiveFields = config.allowSensitiveFields;
+      _providerType = config.providerType;
+    });
+  }
+
+  void _onProviderTypeChanged(ExternalProviderType? type) {
+    if (type == null) return;
+    setState(() {
+      _providerType = type;
+      if (type == ExternalProviderType.ollama) {
+        if (_baseUrlController.text == 'https://api.openai.com/v1') {
+          _baseUrlController.text = 'http://localhost:11434';
+        }
+        if (_modelNameController.text.isEmpty) {
+          _modelNameController.text = 'llama3';
+        }
+        if (_displayNameController.text.isEmpty) {
+          _displayNameController.text = 'Ollama 本地服务';
+        }
+      }
     });
   }
 
@@ -98,8 +118,8 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
 
   ExternalProviderConfig _buildConfig() {
     return ExternalProviderConfig(
-      id: 'openai-compatible-default',
-      providerType: ExternalProviderType.openAiCompatible,
+      id: _providerType == ExternalProviderType.ollama ? 'ollama-default' : 'openai-compatible-default',
+      providerType: _providerType,
       displayName: _displayNameController.text.trim(),
       baseUrl: _baseUrlController.text.trim(),
       apiKey: _apiKeyController.text.trim(),
@@ -130,9 +150,23 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              'OpenAI 兼容接口',
-              style: Theme.of(context).textTheme.titleMedium,
+            DropdownButtonFormField<ExternalProviderType>(
+              initialValue: _providerType,
+              decoration: const InputDecoration(
+                labelText: '提供商类型',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: ExternalProviderType.openAiCompatible,
+                  child: Text('OpenAI 兼容接口'),
+                ),
+                DropdownMenuItem(
+                  value: ExternalProviderType.ollama,
+                  child: Text('Ollama 本地服务'),
+                ),
+              ],
+              onChanged: _onProviderTypeChanged,
             ),
             const SizedBox(height: 8),
             TextFormField(
@@ -152,15 +186,17 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
               ),
               validator: _requiredValidator,
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _apiKeyController,
-              decoration: const InputDecoration(
-                labelText: 'API Key',
-                border: OutlineInputBorder(),
+            if (_providerType != ExternalProviderType.ollama) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _apiKeyController,
+                decoration: const InputDecoration(
+                  labelText: 'API Key',
+                  border: OutlineInputBorder(),
+                ),
+                validator: _providerType == ExternalProviderType.ollama ? null : _requiredValidator,
               ),
-              validator: _requiredValidator,
-            ),
+            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: _modelNameController,

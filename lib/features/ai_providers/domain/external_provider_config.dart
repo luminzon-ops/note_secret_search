@@ -1,4 +1,4 @@
-enum ExternalProviderType { openAiCompatible }
+enum ExternalProviderType { openAiCompatible, ollama }
 
 class ExternalProviderConfig {
   const ExternalProviderConfig({

@@ -5,6 +5,7 @@ import 'package:note_secret_search/features/ai_providers/domain/external_provide
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_providers/infrastructure/openai_compatible_provider_client.dart';
+import 'package:note_secret_search/features/ai_providers/infrastructure/ollama_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/infrastructure/sqlite_external_provider_repository.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
@@ -16,7 +17,13 @@ final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>(
 });
 
 final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
-  return OpenAiCompatibleProviderClient(dio: Dio());
+  final dio = Dio();
+  final configAsync = ref.watch(enabledExternalProviderProvider);
+  final config = configAsync.valueOrNull;
+  if (config != null && config.providerType == ExternalProviderType.ollama) {
+    return OllamaProviderClient(dio: dio);
+  }
+  return OpenAiCompatibleProviderClient(dio: dio);
 });
 
 final enabledExternalProviderProvider = FutureProvider<ExternalProviderConfig?>((ref) async {
