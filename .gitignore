@@ -21,8 +21,6 @@ hs_err_pid*
 replay_pid*
 
 # Internal dev docs (not for public repo)
-产品开发实施方案.md
-第一阶段产品进度报告.md
 CLAUDE.md
 
 # Dev tooling
