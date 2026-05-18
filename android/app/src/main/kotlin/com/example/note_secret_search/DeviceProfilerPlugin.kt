@@ -14,7 +14,13 @@ class DeviceProfilerPlugin(
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "getProfile" -> result.success(buildProfile())
+            "getProfile" -> {
+                val profile = buildProfile()
+                android.util.Log.i(TAG, "profile manufacturer=${profile["manufacturer"]} model=${profile["model"]} " +
+                    "sdkInt=${profile["sdkInt"]} release=${profile["release"]} cpuAbi=${profile["cpuAbi"]} " +
+                    "totalRamMb=${profile["totalRamMb"]} tier=${profile["tier"]}")
+                result.success(profile)
+            }
             else -> result.notImplemented()
         }
     }
@@ -69,5 +75,6 @@ class DeviceProfilerPlugin(
 
     companion object {
         const val CHANNEL_NAME = "note_secret_search/device_profiler"
+        private const val TAG = "DeviceProfilerPlugin"
     }
 }
