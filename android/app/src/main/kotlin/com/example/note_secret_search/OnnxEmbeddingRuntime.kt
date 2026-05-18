@@ -180,7 +180,7 @@ class OnnxEmbeddingRuntime(
     }
 
     private fun loadTokenizer(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer {
-        val raw = context.assets.open(spec.assetPath).bufferedReader().use { it.readText() }
+        val raw = context.assets.open("flutter_assets/${spec.assetPath}").bufferedReader().use { it.readText() }
         val vocab = extractVocabulary(raw)
         return WordpieceEmbeddingTokenizer(
             vocab = vocab,
@@ -224,7 +224,7 @@ class OnnxEmbeddingRuntime(
     }
 
     private fun validateSpec(session: OrtSession, spec: OnnxEmbeddingModelSpec) {
-        context.assets.open(spec.tokenizer.assetPath).close()
+        context.assets.open("flutter_assets/${spec.tokenizer.assetPath}").close()
 
         val inputNames = session.inputNames
         require(inputNames.contains(spec.runtime.inputIdsName)) {
