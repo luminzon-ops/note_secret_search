@@ -1173,7 +1173,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('当前状态：本地语义检索已可用'), findsOneWidget);
-    expect(find.text('当前索引已最新，可以直接继续检索。'), findsWidgets);
+    expect(find.text('当前索引已最新，可以直接继续使用语义检索。'), findsWidgets);
     expect(find.text('待索引摘要：暂无待处理项'), findsOneWidget);
   });
 
