@@ -30,9 +30,12 @@
 
 ### 环境要求
 
-- Flutter SDK 3.x
-- Android SDK 34+
+- Flutter stable >=3.38.4
+- Dart >=3.11.0
+- Android SDK 36
+- Android target SDK 34
 - JDK 17
+- Gradle wrapper 8.11.1
 
 ### 依赖安装
 
@@ -49,6 +52,14 @@ flutter run --debug
 # 构建 debug APK
 flutter build apk --debug
 ```
+
+### 质量检查
+
+```powershell
+.\scripts\quality\Invoke-QualityChecks.ps1
+```
+
+CI additionally runs the same Flutter analysis, Dart tests, Android JVM tests, and debug APK build.
 
 ### 下载安装包
 

@@ -129,6 +129,21 @@ const _bgeEmbeddingCatalogEntry = ModelCatalogEntry(
   ],
 );
 
+Future<void> scrollUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  double delta = 320,
+  int maxScrolls = 30,
+}) async {
+  expect(finder, findsOneWidget);
+  await tester.scrollUntilVisible(
+    finder,
+    delta,
+    maxScrolls: maxScrolls,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   Finder chipWithLabel(String label) {
     return find.byWidgetPredicate(
@@ -305,7 +320,7 @@ void main() {
     final startDownload = find.widgetWithText(FilledButton, '开始下载');
     expect(startDownload, findsOneWidget);
 
-    await tester.ensureVisible(startDownload);
+    await scrollUntilFound(tester, startDownload);
     await tester.pumpAndSettle();
     await tester.tap(startDownload);
     await tester.pump();
@@ -492,7 +507,11 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('部署状态：本地文件已安装，待运行时校验。'), findsOneWidget);
+    final deploymentStatus = find.text(
+      '部署状态：本地文件已安装，待运行时校验。',
+    );
+    await scrollUntilFound(tester, deploymentStatus);
+    expect(deploymentStatus, findsOneWidget);
     expect(find.text('部署状态：本地记录存在，但文件缺失，需要重新下载。'), findsNothing);
   });
 
@@ -719,9 +738,9 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    final button = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, '设为语义模型'),
-    );
+    final buttonFinder = find.widgetWithText(OutlinedButton, '设为语义模型');
+    await scrollUntilFound(tester, buttonFinder);
+    final button = tester.widget<OutlinedButton>(buttonFinder);
     expect(button.onPressed, isNull);
     expect(find.text('运行时状态：运行时异常'), findsWidgets);
   });
@@ -792,7 +811,11 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('部署状态：本地已就绪，可用于后续启用或检索配置。'), findsOneWidget);
+    final readyStatus = find.text(
+      '部署状态：本地已就绪，可用于后续启用或检索配置。',
+    );
+    await scrollUntilFound(tester, readyStatus);
+    expect(readyStatus, findsOneWidget);
     expect(find.text('本地部署已就绪'), findsOneWidget);
   });
 
@@ -862,7 +885,9 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(chipWithLabel('当前语义模型'), findsOneWidget);
+    final activeChip = chipWithLabel('当前语义模型');
+    await scrollUntilFound(tester, activeChip);
+    expect(activeChip, findsOneWidget);
   });
 
   testWidgets('ModelManagementPage shows 下载任务未开始 when no download task exists', (
@@ -1561,7 +1586,7 @@ void main() {
     expect(find.textContaining('GitHub Releases'), findsAtLeast(2));
 
     final dropdownFinder = find.byType(DropdownButton<String>).first;
-    await tester.scrollUntilVisible(dropdownFinder, 200);
+    await scrollUntilFound(tester, dropdownFinder);
     await tester.tap(dropdownFinder);
     await tester.pumpAndSettle();
     await tester.tap(find.text('备用镜像').last);
@@ -1626,14 +1651,14 @@ void main() {
     await tester.pumpAndSettle();
 
     final dropdownFinder = find.byType(DropdownButton<String>).first;
-    await tester.scrollUntilVisible(dropdownFinder, 200);
+    await scrollUntilFound(tester, dropdownFinder);
     await tester.tap(dropdownFinder);
     await tester.pumpAndSettle();
     await tester.tap(find.text('备用镜像').last);
     await tester.pumpAndSettle();
 
     final downloadButtonFinder = find.text('开始下载');
-    await tester.scrollUntilVisible(downloadButtonFinder, 200);
+    await scrollUntilFound(tester, downloadButtonFinder);
     await tester.tap(downloadButtonFinder);
     await tester.pumpAndSettle();
 
@@ -2316,7 +2341,7 @@ void main() {
 
     // Open dropdown
     final dropdownFinder = find.byType(DropdownButton<String>).first;
-    await tester.scrollUntilVisible(dropdownFinder, 200);
+    await scrollUntilFound(tester, dropdownFinder);
     await tester.tap(dropdownFinder);
     await tester.pumpAndSettle();
 
@@ -2992,7 +3017,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final buttonFinder = find.widgetWithText(OutlinedButton, '设为当前本地LLM');
-    await tester.scrollUntilVisible(buttonFinder, 200);
+    await scrollUntilFound(tester, buttonFinder);
     await tester.tap(buttonFinder);
     await tester.pump();
 
@@ -3063,9 +3088,9 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    final button = tester.widget<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, '设为当前本地LLM'),
-    );
+    final buttonFinder = find.widgetWithText(OutlinedButton, '设为当前本地LLM');
+    await scrollUntilFound(tester, buttonFinder);
+    final button = tester.widget<OutlinedButton>(buttonFinder);
     expect(button.onPressed, isNull);
   });
 
