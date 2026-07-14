@@ -9,21 +9,25 @@ final noteRepositoryProvider = Provider<NoteRepository>((ref) {
   return SqliteNoteRepository(database: ref.watch(appDatabaseProvider));
 });
 
-final noteListProvider = FutureProvider<List<NoteItem>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <NoteItem>[];
-  }
-  final vault = await ref.watch(defaultVaultProvider.future);
-  if (vault == null) {
-    return const <NoteItem>[];
-  }
+final noteListProvider = FutureProvider<List<NoteItem>>((ref) {
+  return guardSensitiveFuture<List<NoteItem>>(
+    ref,
+    lockedValue: const <NoteItem>[],
+    load: () async {
+      final vault = await ref.watch(defaultVaultProvider.future);
+      if (vault == null) {
+        return const <NoteItem>[];
+      }
 
-  return ref.watch(noteRepositoryProvider).listByVault(vault.id);
+      return ref.watch(noteRepositoryProvider).listByVault(vault.id);
+    },
+  );
 });
 
-final noteDetailProvider = FutureProvider.family<NoteItem?, String>((ref, id) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  return ref.watch(noteRepositoryProvider).getById(id);
+final noteDetailProvider = FutureProvider.family<NoteItem?, String>((ref, id) {
+  return guardSensitiveFuture<NoteItem?>(
+    ref,
+    lockedValue: null,
+    load: () => ref.watch(noteRepositoryProvider).getById(id),
+  );
 });

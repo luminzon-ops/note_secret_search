@@ -8,66 +8,76 @@ final chatSessionRepositoryProvider = Provider<ChatSessionRepository>((ref) {
   return SqliteChatSessionRepository(database: ref.watch(appDatabaseProvider));
 });
 
-final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <ChatSession>[];
-  }
-  final repository = ref.watch(chatSessionRepositoryProvider);
-  return repository.listSessions();
+final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) {
+  return guardSensitiveFuture<List<ChatSession>>(
+    ref,
+    lockedValue: const <ChatSession>[],
+    load: () => ref.watch(chatSessionRepositoryProvider).listSessions(),
+  );
 });
 
-final restoredChatSessionIdProvider = FutureProvider<String?>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  final sessions = await ref.watch(chatSessionsProvider.future);
-  if (sessions.isEmpty) {
-    return null;
-  }
-  return sessions.first.id;
+final restoredChatSessionIdProvider = FutureProvider<String?>((ref) {
+  return guardSensitiveFuture<String?>(
+    ref,
+    lockedValue: null,
+    load: () async {
+      final sessions = await ref.watch(chatSessionsProvider.future);
+      if (sessions.isEmpty) {
+        return null;
+      }
+      return sessions.first.id;
+    },
+  );
 });
 
 final currentChatSessionIdProvider = StateProvider<String?>((ref) => null);
 
 final suppressRestoredChatSessionProvider = StateProvider<bool>((ref) => false);
 
-final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  final sessionId = ref.watch(currentChatSessionIdProvider);
-  if (sessionId == null || sessionId.isEmpty) {
-    if (ref.watch(suppressRestoredChatSessionProvider)) {
-      return null;
-    }
-    final restoredId = await ref.watch(restoredChatSessionIdProvider.future);
-    if (restoredId == null || restoredId.isEmpty) {
-      return null;
-    }
-    return ref.watch(chatSessionRepositoryProvider).getSession(restoredId);
-  }
+final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) {
+  return guardSensitiveFuture<ChatSession?>(
+    ref,
+    lockedValue: null,
+    load: () async {
+      final sessionId = ref.watch(currentChatSessionIdProvider);
+      if (sessionId == null || sessionId.isEmpty) {
+        if (ref.watch(suppressRestoredChatSessionProvider)) {
+          return null;
+        }
+        final restoredId =
+            await ref.watch(restoredChatSessionIdProvider.future);
+        if (restoredId == null || restoredId.isEmpty) {
+          return null;
+        }
+        return ref.watch(chatSessionRepositoryProvider).getSession(restoredId);
+      }
 
-  return ref.watch(chatSessionRepositoryProvider).getSession(sessionId);
+      return ref.watch(chatSessionRepositoryProvider).getSession(sessionId);
+    },
+  );
 });
 
-final currentChatMessagesProvider = FutureProvider<List<ChatStoredMessage>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <ChatStoredMessage>[];
-  }
-  var sessionId = ref.watch(currentChatSessionIdProvider);
-  if (sessionId == null || sessionId.isEmpty) {
-    if (ref.watch(suppressRestoredChatSessionProvider)) {
-      return const <ChatStoredMessage>[];
-    }
-    sessionId = await ref.watch(restoredChatSessionIdProvider.future);
-  }
+final currentChatMessagesProvider =
+    FutureProvider<List<ChatStoredMessage>>((ref) {
+  return guardSensitiveFuture<List<ChatStoredMessage>>(
+    ref,
+    lockedValue: const <ChatStoredMessage>[],
+    load: () async {
+      var sessionId = ref.watch(currentChatSessionIdProvider);
+      if (sessionId == null || sessionId.isEmpty) {
+        if (ref.watch(suppressRestoredChatSessionProvider)) {
+          return const <ChatStoredMessage>[];
+        }
+        sessionId = await ref.watch(restoredChatSessionIdProvider.future);
+      }
 
-  if (sessionId == null || sessionId.isEmpty) {
-    return const <ChatStoredMessage>[];
-  }
+      if (sessionId == null || sessionId.isEmpty) {
+        return const <ChatStoredMessage>[];
+      }
 
-  final repository = ref.watch(chatSessionRepositoryProvider);
-  return repository.listMessages(sessionId);
+      return ref.watch(chatSessionRepositoryProvider).listMessages(sessionId);
+    },
+  );
 });
 
 final chatSessionControllerProvider = Provider<ChatSessionController>((ref) {

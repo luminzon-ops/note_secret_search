@@ -16,125 +16,140 @@ final llmEngineProvider = Provider<LlmEngine>((ref) {
   return LocalLlmEngine(bridge: ref.watch(llmRuntimeBridgeProvider));
 });
 
-final llmRuntimeStatesProvider = FutureProvider<Map<String, LlmRuntimeState>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <String, LlmRuntimeState>{};
-  }
-  final entries = await ref.watch(modelRegistryEntriesProvider.future);
-  final llmEngine = ref.watch(llmEngineProvider);
-  final resolved = <String, LlmRuntimeState>{};
+final llmRuntimeStatesProvider =
+    FutureProvider<Map<String, LlmRuntimeState>>((ref) {
+  return guardSensitiveFuture<Map<String, LlmRuntimeState>>(
+    ref,
+    lockedValue: const <String, LlmRuntimeState>{},
+    load: () async {
+      final entries = await ref.watch(modelRegistryEntriesProvider.future);
+      final llmEngine = ref.watch(llmEngineProvider);
+      final resolved = <String, LlmRuntimeState>{};
 
-  for (final entry in entries) {
-    if (entry.type != 'llm') {
-      continue;
-    }
+      for (final entry in entries) {
+        if (entry.type != 'llm') {
+          continue;
+        }
 
-    if (entry.localPath == null || entry.localPath!.trim().isEmpty) {
-      resolved[entry.id] = const LlmRuntimeState(
-        ready: false,
-        reason: '尚未配置本地 LLM 模型文件。',
-        status: LlmRuntimeStatus.notInstalled,
-      );
-      continue;
-    }
+        if (entry.localPath == null || entry.localPath!.trim().isEmpty) {
+          resolved[entry.id] = const LlmRuntimeState(
+            ready: false,
+            reason: '尚未配置本地 LLM 模型文件。',
+            status: LlmRuntimeStatus.notInstalled,
+          );
+          continue;
+        }
 
-    if (!entry.filePresent) {
-      resolved[entry.id] = LlmRuntimeState(
-        ready: false,
-        reason: '本地模型文件缺失，需要重新下载或修复。',
-        status: LlmRuntimeStatus.missing,
-        modelPath: entry.localPath,
-      );
-      continue;
-    }
+        if (!entry.filePresent) {
+          resolved[entry.id] = LlmRuntimeState(
+            ready: false,
+            reason: '本地模型文件缺失，需要重新下载或修复。',
+            status: LlmRuntimeStatus.missing,
+            modelPath: entry.localPath,
+          );
+          continue;
+        }
 
-    if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
-      resolved[entry.id] = LlmRuntimeState(
-        ready: false,
-        reason: '本地模型文件校验失败，需要重新下载或修复。',
-        status: LlmRuntimeStatus.corrupted,
-        modelPath: entry.localPath,
-      );
-      continue;
-    }
+        if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
+          resolved[entry.id] = LlmRuntimeState(
+            ready: false,
+            reason: '本地模型文件校验失败，需要重新下载或修复。',
+            status: LlmRuntimeStatus.corrupted,
+            modelPath: entry.localPath,
+          );
+          continue;
+        }
 
-    resolved[entry.id] = await llmEngine.getState(entry);
-  }
+        resolved[entry.id] = await llmEngine.getState(entry);
+      }
 
-  return resolved;
+      return resolved;
+    },
+  );
 });
 
-final activeLocalLlmModelProvider = FutureProvider<ModelRegistryEntry?>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  final preferences = await ref.watch(sharedPreferencesProvider.future);
-  final storedModelId = preferences.getString(_activeLlmModelIdKey);
-  if (storedModelId == null || storedModelId.isEmpty) {
-    return null;
-  }
+final activeLocalLlmModelProvider = FutureProvider<ModelRegistryEntry?>((ref) {
+  return guardSensitiveFuture<ModelRegistryEntry?>(
+    ref,
+    lockedValue: null,
+    load: () async {
+      final preferences = await ref.watch(sharedPreferencesProvider.future);
+      final storedModelId = preferences.getString(_activeLlmModelIdKey);
+      if (storedModelId == null || storedModelId.isEmpty) {
+        return null;
+      }
 
-  final entries = await ref.watch(modelRegistryEntriesProvider.future);
-  final runtimeStates = await ref.watch(llmRuntimeStatesProvider.future);
-  final selectedEntry = entries.where((entry) => entry.id == storedModelId && entry.type == 'llm').firstOrNull;
-  if (selectedEntry == null) {
-    await preferences.remove(_activeLlmModelIdKey);
-    return null;
-  }
+      final entries = await ref.watch(modelRegistryEntriesProvider.future);
+      final runtimeStates = await ref.watch(llmRuntimeStatesProvider.future);
+      final selectedEntry = entries
+          .where((entry) => entry.id == storedModelId && entry.type == 'llm')
+          .firstOrNull;
+      if (selectedEntry == null) {
+        await preferences.remove(_activeLlmModelIdKey);
+        return null;
+      }
 
-  final runtimeState = runtimeStates[selectedEntry.id] ?? _fallbackRuntimeState(selectedEntry);
-  // Only clear for truly broken states; recoverable states (degraded, installedUnverified)
-  // keep the selection so localLlmReadinessProvider can report the blocked reason.
-  final isBrokenState = runtimeState.status == LlmRuntimeStatus.missing ||
-      runtimeState.status == LlmRuntimeStatus.corrupted;
-  if (isBrokenState) {
-    await preferences.remove(_activeLlmModelIdKey);
-    return null;
-  }
+      final runtimeState = runtimeStates[selectedEntry.id] ??
+          _fallbackRuntimeState(selectedEntry);
+      // Only clear for truly broken states; recoverable states (degraded, installedUnverified)
+      // keep the selection so localLlmReadinessProvider can report the blocked reason.
+      final isBrokenState = runtimeState.status == LlmRuntimeStatus.missing ||
+          runtimeState.status == LlmRuntimeStatus.corrupted;
+      if (isBrokenState) {
+        await preferences.remove(_activeLlmModelIdKey);
+        return null;
+      }
 
-  return selectedEntry;
+      return selectedEntry;
+    },
+  );
 });
 
-final localLlmReadinessProvider = FutureProvider<LocalLlmReadiness>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const LocalLlmReadiness(
+final localLlmReadinessProvider = FutureProvider<LocalLlmReadiness>((ref) {
+  return guardSensitiveFuture<LocalLlmReadiness>(
+    ref,
+    lockedValue: const LocalLlmReadiness(
       ready: false,
       reason: '应用已锁定。',
       activeModel: null,
       runtimeState: null,
-    );
-  }
-  final model = await ref.watch(activeLocalLlmModelProvider.future);
-  if (model == null) {
-    return const LocalLlmReadiness(
-      ready: false,
-      reason: '尚未选择本地 LLM 模型。',
-      activeModel: null,
-      runtimeState: null,
-    );
-  }
+    ),
+    load: () async {
+      final model = await ref.watch(activeLocalLlmModelProvider.future);
+      if (model == null) {
+        return const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
+        );
+      }
 
-  final runtimeStates = await ref.watch(llmRuntimeStatesProvider.future);
-  final runtimeState = runtimeStates[model.id] ?? _fallbackRuntimeState(model);
+      final runtimeStates = await ref.watch(llmRuntimeStatesProvider.future);
+      final runtimeState =
+          runtimeStates[model.id] ?? _fallbackRuntimeState(model);
 
-  if (!runtimeState.ready) {
-    return LocalLlmReadiness(
-      ready: false,
-      reason: runtimeState.reason,
-      activeModel: model,
-      runtimeState: runtimeState,
-    );
-  }
+      if (!runtimeState.ready) {
+        return LocalLlmReadiness(
+          ready: false,
+          reason: runtimeState.reason,
+          activeModel: model,
+          runtimeState: runtimeState,
+        );
+      }
 
-  return LocalLlmReadiness(
-    ready: true,
-    reason: '本地 LLM 模型已就绪：${model.name}',
-    activeModel: model,
-    runtimeState: runtimeState,
+      return LocalLlmReadiness(
+        ready: true,
+        reason: '本地 LLM 模型已就绪：${model.name}',
+        activeModel: model,
+        runtimeState: runtimeState,
+      );
+    },
   );
 });
 
-final activeLocalLlmSelectionControllerProvider = Provider<ActiveLocalLlmSelectionController>((ref) {
+final activeLocalLlmSelectionControllerProvider =
+    Provider<ActiveLocalLlmSelectionController>((ref) {
   return ActiveLocalLlmSelectionController(ref: ref);
 });
 
@@ -200,7 +215,8 @@ LlmRuntimeState _fallbackRuntimeState(ModelRegistryEntry entry) {
   return LlmRuntimeState(
     ready: entry.isInstalled,
     reason: entry.isInstalled ? '本地 LLM 模型已就绪。' : '本地 LLM 模型当前不可用。',
-    status: entry.isInstalled ? LlmRuntimeStatus.ready : LlmRuntimeStatus.degraded,
+    status:
+        entry.isInstalled ? LlmRuntimeStatus.ready : LlmRuntimeStatus.degraded,
     modelPath: entry.localPath,
   );
 }

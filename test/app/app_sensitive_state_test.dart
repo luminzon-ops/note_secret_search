@@ -35,32 +35,22 @@ void main() {
       );
       chatController.setAllowPrivateContext(true);
       chatController.setManualItems(const [_manualContext]);
-      fixture.container
-          .read(sensitiveStateAccessAllowedProvider.notifier)
-          .state = false;
+      expect(
+        fixture.container.read(sensitiveStateAccessAllowedProvider),
+        isTrue,
+      );
 
-      bool? accessAllowedAtFirstFrame;
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: fixture.container,
-          child: Stack(
-            alignment: Alignment.topLeft,
-            children: [
-              const NoteSecretSearchApp(),
-              Consumer(
-                builder: (context, ref, child) {
-                  accessAllowedAtFirstFrame ??= ref.watch(
-                    sensitiveStateAccessAllowedProvider,
-                  );
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
-          ),
+          child: const NoteSecretSearchApp(),
         ),
       );
 
-      expect(accessAllowedAtFirstFrame, isFalse);
+      expect(find.byType(MaterialApp), findsNothing);
+
+      await tester.pump();
+      expect(find.byType(MaterialApp), findsOneWidget);
       expect(
         fixture.container.read(sensitiveStateAccessAllowedProvider),
         isFalse,

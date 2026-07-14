@@ -9,7 +9,8 @@ import 'package:note_secret_search/features/ai_providers/infrastructure/ollama_p
 import 'package:note_secret_search/features/ai_providers/infrastructure/sqlite_external_provider_repository.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
-final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>((ref) {
+final externalProviderRepositoryProvider =
+    Provider<ExternalProviderRepository>((ref) {
   return SqliteExternalProviderRepository(
     database: ref.watch(appDatabaseProvider),
     cryptoService: ref.watch(cryptoServiceProvider),
@@ -26,33 +27,39 @@ final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
   return OpenAiCompatibleProviderClient(dio: dio);
 });
 
-final enabledExternalProviderProvider = FutureProvider<ExternalProviderConfig?>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  return ref.watch(externalProviderRepositoryProvider).loadEnabled();
+final enabledExternalProviderProvider =
+    FutureProvider<ExternalProviderConfig?>((ref) {
+  return guardSensitiveFuture<ExternalProviderConfig?>(
+    ref,
+    lockedValue: null,
+    load: () => ref.watch(externalProviderRepositoryProvider).loadEnabled(),
+  );
 });
 
-final externalProviderStatusProvider = FutureProvider<ExternalProviderStatus>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const ExternalProviderStatus(
+final externalProviderStatusProvider =
+    FutureProvider<ExternalProviderStatus>((ref) {
+  return guardSensitiveFuture<ExternalProviderStatus>(
+    ref,
+    lockedValue: const ExternalProviderStatus(
       available: false,
       reason: '应用已锁定。',
       config: null,
-    );
-  }
-  final config = await ref.watch(enabledExternalProviderProvider.future);
-  if (config == null) {
-    return const ExternalProviderStatus(
-      available: false,
-      reason: '尚未启用外部模型提供方。',
-      config: null,
-    );
-  }
-  return ExternalProviderStatus(
-    available: true,
-    reason: '外部模型已可用：${config.displayName}',
-    config: config,
+    ),
+    load: () async {
+      final config = await ref.watch(enabledExternalProviderProvider.future);
+      if (config == null) {
+        return const ExternalProviderStatus(
+          available: false,
+          reason: '尚未启用外部模型提供方。',
+          config: null,
+        );
+      }
+      return ExternalProviderStatus(
+        available: true,
+        reason: '外部模型已可用：${config.displayName}',
+        config: config,
+      );
+    },
   );
 });
 
@@ -61,7 +68,8 @@ final externalPrivacyConfirmationControllerProvider =
   return ExternalPrivacyConfirmationController(ref: ref);
 });
 
-final externalProviderSettingsControllerProvider = Provider<ExternalProviderSettingsController>((ref) {
+final externalProviderSettingsControllerProvider =
+    Provider<ExternalProviderSettingsController>((ref) {
   return ExternalProviderSettingsController(ref: ref);
 });
 
@@ -84,7 +92,8 @@ class ExternalPrivacyConfirmationController {
 
   Future<bool> hasAcknowledged(String providerId) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    return preferences.getBool(_providerAcknowledgementKey(providerId)) ?? false;
+    return preferences.getBool(_providerAcknowledgementKey(providerId)) ??
+        false;
   }
 
   Future<void> markAcknowledged(String providerId) async {

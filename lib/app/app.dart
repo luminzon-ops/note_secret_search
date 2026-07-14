@@ -20,6 +20,7 @@ class NoteSecretSearchApp extends ConsumerStatefulWidget {
 
 class _NoteSecretSearchAppState extends ConsumerState<NoteSecretSearchApp> {
   late final ProviderSubscription<LockSessionState> _lockSubscription;
+  var _initialSensitiveStateReady = false;
 
   @override
   void initState() {
@@ -28,10 +29,17 @@ class _NoteSecretSearchAppState extends ConsumerState<NoteSecretSearchApp> {
     final initialSession = ref.read(lockSessionControllerProvider);
     if (initialSession.isUnlocked) {
       invalidator.allowSensitiveStateAccess();
+      _initialSensitiveStateReady = true;
     } else {
       scheduleMicrotask(() {
-        if (mounted && !ref.read(lockSessionControllerProvider).isUnlocked) {
+        if (!mounted) {
+          return;
+        }
+        if (!ref.read(lockSessionControllerProvider).isUnlocked) {
           invalidator.clearForLock();
+        }
+        if (mounted) {
+          setState(() => _initialSensitiveStateReady = true);
         }
       });
     }
@@ -59,6 +67,10 @@ class _NoteSecretSearchAppState extends ConsumerState<NoteSecretSearchApp> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_initialSensitiveStateReady) {
+      return const SizedBox.shrink();
+    }
+
     final bootstrapState = ref.watch(appBootstrapProvider);
     final router = ref.watch(appRouterProvider);
 

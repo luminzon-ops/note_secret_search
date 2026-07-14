@@ -18,28 +18,34 @@ final secretRepositoryProvider = Provider<SecretRepository>((ref) {
   );
 });
 
-final defaultVaultProvider = FutureProvider<Vault?>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  return ref.watch(vaultRepositoryProvider).getDefaultVault();
+final defaultVaultProvider = FutureProvider<Vault?>((ref) {
+  return guardSensitiveFuture<Vault?>(
+    ref,
+    lockedValue: null,
+    load: () => ref.watch(vaultRepositoryProvider).getDefaultVault(),
+  );
 });
 
-final secretListProvider = FutureProvider<List<SecretItem>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <SecretItem>[];
-  }
-  final vault = await ref.watch(defaultVaultProvider.future);
-  if (vault == null) {
-    return const <SecretItem>[];
-  }
+final secretListProvider = FutureProvider<List<SecretItem>>((ref) {
+  return guardSensitiveFuture<List<SecretItem>>(
+    ref,
+    lockedValue: const <SecretItem>[],
+    load: () async {
+      final vault = await ref.watch(defaultVaultProvider.future);
+      if (vault == null) {
+        return const <SecretItem>[];
+      }
 
-  return ref.watch(secretRepositoryProvider).listByVault(vault.id);
+      return ref.watch(secretRepositoryProvider).listByVault(vault.id);
+    },
+  );
 });
 
-final secretDetailProvider = FutureProvider.family<SecretItem?, String>((ref, id) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return null;
-  }
-  return ref.watch(secretRepositoryProvider).getById(id);
+final secretDetailProvider =
+    FutureProvider.family<SecretItem?, String>((ref, id) {
+  return guardSensitiveFuture<SecretItem?>(
+    ref,
+    lockedValue: null,
+    load: () => ref.watch(secretRepositoryProvider).getById(id),
+  );
 });

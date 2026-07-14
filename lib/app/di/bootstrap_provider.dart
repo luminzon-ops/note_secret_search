@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
@@ -55,6 +57,17 @@ final lockSessionControllerProvider = StateNotifierProvider<LockSessionControlle
 );
 
 final sensitiveStateAccessAllowedProvider = StateProvider<bool>((ref) => false);
+
+FutureOr<T> guardSensitiveFuture<T>(
+  Ref ref, {
+  required T lockedValue,
+  required Future<T> Function() load,
+}) {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return lockedValue;
+  }
+  return load();
+}
 
 final pinStateControllerProvider = StateNotifierProvider<PinStateController, PinState>(
   (ref) => PinStateController(),

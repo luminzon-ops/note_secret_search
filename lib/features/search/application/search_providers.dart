@@ -61,91 +61,109 @@ final semanticSearchServiceProvider = Provider<SemanticSearchService>((ref) {
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
-final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <SearchResultItem>[];
-  }
-  final query = ref.watch(searchQueryProvider).trim();
-  if (query.isEmpty) {
-    return const <SearchResultItem>[];
-  }
+final keywordSearchResultsProvider =
+    FutureProvider<List<SearchResultItem>>((ref) {
+  return guardSensitiveFuture<List<SearchResultItem>>(
+    ref,
+    lockedValue: const <SearchResultItem>[],
+    load: () async {
+      final query = ref.watch(searchQueryProvider).trim();
+      if (query.isEmpty) {
+        return const <SearchResultItem>[];
+      }
 
-  final scope = await ref.watch(searchScopeConfigProvider.future);
-  final secrets = await ref.watch(secretListProvider.future);
-  final notes = await ref.watch(noteListProvider.future);
-  return ref.watch(searchServiceProvider).search(
-        query: query,
-        scope: scope,
-        secrets: secrets,
-        notes: notes,
-      );
+      final scope = await ref.watch(searchScopeConfigProvider.future);
+      final secrets = await ref.watch(secretListProvider.future);
+      final notes = await ref.watch(noteListProvider.future);
+      return ref.watch(searchServiceProvider).search(
+            query: query,
+            scope: scope,
+            secrets: secrets,
+            notes: notes,
+          );
+    },
+  );
 });
 
-final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const SearchIndexStatus(
+final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
+  return guardSensitiveFuture<SearchIndexStatus>(
+    ref,
+    lockedValue: const SearchIndexStatus(
       engineReady: false,
       engineReason: '应用已锁定。',
       hasActiveEmbeddingModel: false,
       pendingItems: <SearchIndexPendingItem>[],
-    );
-  }
-  final secrets = await ref.watch(secretListProvider.future);
-  final notes = await ref.watch(noteListProvider.future);
-  final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
-  final settings = await ref.watch(searchIndexSettingsProvider.future);
-  final baseStatus = await ref.watch(searchIndexServiceProvider).buildStatus(
-        secrets: secrets,
-        notes: notes,
-        activeEmbeddingModel: activeModel,
-        settings: settings,
+    ),
+    load: () async {
+      final secrets = await ref.watch(secretListProvider.future);
+      final notes = await ref.watch(noteListProvider.future);
+      final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
+      final settings = await ref.watch(searchIndexSettingsProvider.future);
+      final baseStatus =
+          await ref.watch(searchIndexServiceProvider).buildStatus(
+                secrets: secrets,
+                notes: notes,
+                activeEmbeddingModel: activeModel,
+                settings: settings,
+              );
+      final taskState = ref.watch(searchIndexTaskStateProvider);
+      return SearchIndexStatus(
+        engineReady: baseStatus.engineReady,
+        engineReason: baseStatus.engineReason,
+        hasActiveEmbeddingModel: baseStatus.hasActiveEmbeddingModel,
+        pendingItems: baseStatus.pendingItems,
+        taskState: taskState,
       );
-  final taskState = ref.watch(searchIndexTaskStateProvider);
-  return SearchIndexStatus(
-    engineReady: baseStatus.engineReady,
-    engineReason: baseStatus.engineReason,
-    hasActiveEmbeddingModel: baseStatus.hasActiveEmbeddingModel,
-    pendingItems: baseStatus.pendingItems,
-    taskState: taskState,
+    },
   );
 });
 
-final semanticSearchResultsProvider = FutureProvider<List<SemanticSearchResult>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <SemanticSearchResult>[];
-  }
-  final query = ref.watch(searchQueryProvider).trim();
-  if (query.isEmpty) {
-    return const <SemanticSearchResult>[];
-  }
+final semanticSearchResultsProvider =
+    FutureProvider<List<SemanticSearchResult>>((ref) {
+  return guardSensitiveFuture<List<SemanticSearchResult>>(
+    ref,
+    lockedValue: const <SemanticSearchResult>[],
+    load: () async {
+      final query = ref.watch(searchQueryProvider).trim();
+      if (query.isEmpty) {
+        return const <SemanticSearchResult>[];
+      }
 
-  final readiness = await ref.watch(semanticSearchReadinessProvider.future);
-  if (!readiness.ready || readiness.activeEmbeddingModel == null) {
-    return const <SemanticSearchResult>[];
-  }
+      final readiness = await ref.watch(semanticSearchReadinessProvider.future);
+      if (!readiness.ready || readiness.activeEmbeddingModel == null) {
+        return const <SemanticSearchResult>[];
+      }
 
-  final scope = await ref.watch(searchScopeConfigProvider.future);
-  final secrets = await ref.watch(secretListProvider.future);
-  final notes = await ref.watch(noteListProvider.future);
-  return ref.watch(semanticSearchServiceProvider).search(
-        query: query,
-        scope: scope,
-        activeEmbeddingModel: readiness.activeEmbeddingModel!,
-        secrets: secrets,
-        notes: notes,
-      );
+      final scope = await ref.watch(searchScopeConfigProvider.future);
+      final secrets = await ref.watch(secretListProvider.future);
+      final notes = await ref.watch(noteListProvider.future);
+      return ref.watch(semanticSearchServiceProvider).search(
+            query: query,
+            scope: scope,
+            activeEmbeddingModel: readiness.activeEmbeddingModel!,
+            secrets: secrets,
+            notes: notes,
+          );
+    },
+  );
 });
 
-final unifiedSearchResultsProvider = FutureProvider<List<SearchResultItem>>((ref) async {
-  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
-    return const <SearchResultItem>[];
-  }
-  final keywordResults = await ref.watch(keywordSearchResultsProvider.future);
-  final semanticResults = await ref.watch(semanticSearchResultsProvider.future);
-  return ref.watch(searchFusionServiceProvider).fuse(
-        keywordResults: keywordResults,
-        semanticResults: semanticResults,
-      );
+final unifiedSearchResultsProvider =
+    FutureProvider<List<SearchResultItem>>((ref) {
+  return guardSensitiveFuture<List<SearchResultItem>>(
+    ref,
+    lockedValue: const <SearchResultItem>[],
+    load: () async {
+      final keywordResults =
+          await ref.watch(keywordSearchResultsProvider.future);
+      final semanticResults =
+          await ref.watch(semanticSearchResultsProvider.future);
+      return ref.watch(searchFusionServiceProvider).fuse(
+            keywordResults: keywordResults,
+            semanticResults: semanticResults,
+          );
+    },
+  );
 });
 
 final searchIndexControllerProvider = Provider<SearchIndexController>((ref) {
