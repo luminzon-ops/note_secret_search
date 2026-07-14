@@ -20,52 +20,14 @@ import 'package:note_secret_search/features/search/domain/search_result_item.dar
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
+part 'ai_chat_sensitive_providers.dart';
+
 final aiChatContextRetrieverProvider = Provider<AiChatContextRetriever>((ref) {
   return SemanticAiChatContextRetriever(ref: ref);
 });
 
 final aiChatOrchestratorProvider = Provider<AiChatOrchestrator>((ref) {
   return AiChatOrchestrator(ref: ref);
-});
-
-final freeChatSemanticReadinessProvider =
-    FutureProvider<SemanticSearchReadiness>((ref) {
-  return guardSensitiveFuture<SemanticSearchReadiness>(
-    ref,
-    lockedValue: const SemanticSearchReadiness(
-      ready: false,
-      reason: '应用已锁定。',
-    ),
-    load: () => ref.watch(semanticSearchReadinessProvider.future),
-  );
-});
-
-final privateQaSemanticReadinessProvider =
-    FutureProvider<SemanticSearchReadiness>((ref) {
-  return guardSensitiveFuture<SemanticSearchReadiness>(
-    ref,
-    lockedValue: const SemanticSearchReadiness(
-      ready: false,
-      reason: '应用已锁定。',
-    ),
-    load: () => ref.watch(semanticSearchReadinessProvider.future),
-  );
-});
-
-final manualContextCandidatesProvider =
-    FutureProvider<List<ChatContextItem>>((ref) {
-  return guardSensitiveFuture<List<ChatContextItem>>(
-    ref,
-    lockedValue: const <ChatContextItem>[],
-    load: () async {
-      final secrets = await ref.watch(secretListProvider.future);
-      final notes = await ref.watch(noteListProvider.future);
-      return [
-        ..._mapSecretsToContextItems(secrets),
-        ..._mapNotesToContextItems(notes)
-      ];
-    },
-  );
 });
 
 final privateQaChatControllerProvider =
