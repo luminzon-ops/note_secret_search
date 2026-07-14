@@ -10,17 +10,17 @@ import 'package:note_secret_search/features/auth_security/application/security_o
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lock_gate.dart';
-import 'package:note_secret_search/features/auth_security/presentation/pin_unlock_page.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('first install lock screen shows biometric and setup pin actions together', (
+  testWidgets('first install lock screen does not expose pin setup', (
     tester,
   ) async {
     final sessionController = LockSessionController();
@@ -29,7 +29,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
           securityOrchestratorProvider.overrideWith(
             (ref) => SecurityOrchestrator(
@@ -42,125 +44,30 @@ void main() {
             ),
           ),
         ],
-        child: const MaterialApp(
-          home: AppLockGate(child: Placeholder()),
-        ),
+        child: const MaterialApp(home: AppLockGate(child: Placeholder())),
       ),
     );
 
     await tester.pumpAndSettle();
 
     expect(find.text('使用生物识别解锁'), findsOneWidget);
-    expect(find.text('设置应用 PIN'), findsOneWidget);
+    expect(find.text('设置应用 PIN'), findsNothing);
     expect(find.text('使用应用 PIN 解锁'), findsNothing);
   });
 
-  testWidgets('existing pin lock screen shows biometric and pin unlock actions', (tester) async {
-    final sessionController = LockSessionController();
-    final pinStateController = PinStateController();
-
-    sessionController.setPinEnabled(true);
-    pinStateController.configureEnabled(true);
-    pinStateController.markPinMaterialReady();
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
-          pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-            ),
-          ),
-        ],
-        child: const MaterialApp(
-          home: AppLockGate(child: Placeholder()),
-        ),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-
-    expect(find.text('使用生物识别解锁'), findsOneWidget);
-    expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
-    expect(find.text('设置应用 PIN'), findsNothing);
-  });
-
-  testWidgets('cold start lock screen restores saved pin state from shared preferences', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({
-      'flutter.security.pin_enabled': true,
-      'flutter.security.pin_material': '2468',
-      'flutter.security.biometric_preferred': true,
-      'flutter.security.auto_lock_seconds': 30,
-      'flutter.security.clipboard_clear_seconds': 60,
-    });
-
-    final sessionController = LockSessionController();
-    final pinStateController = PinStateController();
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
-          pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-            ),
-          ),
-        ],
-        child: const MaterialApp(
-          home: AppLockGate(child: Placeholder()),
-        ),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-    await tester.pumpAndSettle();
-
-    expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
-    expect(find.text('设置应用 PIN'), findsNothing);
-  });
-
-  testWidgets('existing pin unlock from lock screen returns to vault without navigation error', (
+  testWidgets('locked gate reveals the lock screen after its first frame', (
     tester,
   ) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController();
-    final repository = _FakeSecuritySettingsRepository(pin: '2468');
+    final screenshotGateway = _FakeScreenshotProtectionGateway();
     final router = GoRouter(
       initialLocation: '/vault',
       routes: [
         GoRoute(
-          path: '/unlock/pin',
-          builder: (context, state) => const PinUnlockPage(),
-        ),
-        StatefulShellRoute.indexedStack(
-          builder: (context, state, navigationShell) => Scaffold(body: navigationShell),
-          branches: [
-            StatefulShellBranch(
-              routes: [
-                GoRoute(
-                  path: '/vault',
-                  builder: (context, state) => const Scaffold(body: Text('vault')),
-                ),
-              ],
-            ),
-          ],
+          path: '/vault',
+          builder: (context, state) =>
+              const Scaffold(body: Text('sensitive vault content')),
         ),
       ],
     );
@@ -169,60 +76,387 @@ void main() {
       ProviderScope(
         overrides: [
           appRouterProvider.overrideWithValue(router),
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
-          pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-            ),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
           ),
-          securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
-          securitySettingsControllerProvider.overrideWith(
-            (ref) => SecuritySettingsController(
-              repository: repository,
-              securityOrchestrator: ref.read(securityOrchestratorProvider),
-              pinStateController: pinStateController,
-            ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          screenshotProtectionGatewayProvider.overrideWithValue(
+            screenshotGateway,
           ),
         ],
         child: MaterialApp.router(
           routerConfig: router,
-          builder: (context, child) => AppLockGate(
-            child: child ?? const SizedBox.shrink(),
-          ),
+          builder: (context, child) =>
+              AppLockGate(child: child ?? const SizedBox.shrink()),
         ),
       ),
     );
 
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
     await tester.pumpAndSettle();
 
-    expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
+    expect(find.text('应用已锁定'), findsOneWidget);
+    expect(find.text('sensitive vault content'), findsNothing);
+    expect(screenshotGateway.obscuredUpdates, [false]);
 
-    await tester.tap(find.text('使用应用 PIN 解锁'));
+    pinStateController.configureEnabled(false);
+    await tester.pumpAndSettle();
+    expect(screenshotGateway.obscuredUpdates, [false]);
+
+    sessionController.lock();
+    await tester.pumpAndSettle();
+    expect(screenshotGateway.obscuredUpdates, [false, false]);
+  });
+
+  testWidgets('locked gate keeps the shield while the app is inactive', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final screenshotGateway = _FakeScreenshotProtectionGateway();
+    final router = GoRouter(
+      initialLocation: '/vault',
+      routes: [
+        GoRoute(
+          path: '/vault',
+          builder: (context, state) =>
+              const Scaffold(body: Text('sensitive vault content')),
+        ),
+      ],
+    );
+    addTearDown(() async {
+      tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.resumed,
+      );
+      await tester.pump();
+      router.dispose();
+    });
+    tester.binding.handleAppLifecycleStateChanged(
+      AppLifecycleState.inactive,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appRouterProvider.overrideWithValue(router),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          screenshotProtectionGatewayProvider.overrideWithValue(
+            screenshotGateway,
+          ),
+        ],
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) =>
+              AppLockGate(child: child ?? const SizedBox.shrink()),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('应用已锁定'), findsOneWidget);
+    expect(find.text('sensitive vault content'), findsNothing);
+    expect(screenshotGateway.obscuredUpdates, isEmpty);
+  });
+
+  testWidgets(
+    'existing pin lock screen shows biometric and pin unlock actions',
+    (tester) async {
+      final sessionController = LockSessionController();
+      final pinStateController = PinStateController();
+
+      sessionController.setPinEnabled(true);
+      pinStateController.configureEnabled(true);
+      pinStateController.markPinMaterialReady();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            lockSessionControllerProvider.overrideWith(
+              (ref) => sessionController,
+            ),
+            pinStateControllerProvider.overrideWith(
+              (ref) => pinStateController,
+            ),
+            securityOrchestratorProvider.overrideWith(
+              (ref) => SecurityOrchestrator(
+                biometricGateway: _FakeBiometricGateway(),
+                screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+                secureKeyGateway: _FakeSecureKeyGateway(),
+                sessionController: sessionController,
+                pinStateController: pinStateController,
+                logger: const AppLogger(),
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: AppLockGate(child: Placeholder())),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('使用生物识别解锁'), findsOneWidget);
+      expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
+      expect(find.text('设置应用 PIN'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'cold start lock screen restores saved pin state from shared preferences',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'flutter.security.pin_enabled': true,
+        'flutter.security.pin_material': '2468',
+        'flutter.security.biometric_preferred': true,
+        'flutter.security.auto_lock_seconds': 30,
+        'flutter.security.clipboard_clear_seconds': 60,
+      });
+
+      final sessionController = LockSessionController();
+      final pinStateController = PinStateController();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            lockSessionControllerProvider.overrideWith(
+              (ref) => sessionController,
+            ),
+            pinStateControllerProvider.overrideWith(
+              (ref) => pinStateController,
+            ),
+            securityOrchestratorProvider.overrideWith(
+              (ref) => SecurityOrchestrator(
+                biometricGateway: _FakeBiometricGateway(),
+                screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+                secureKeyGateway: _FakeSecureKeyGateway(),
+                sessionController: sessionController,
+                pinStateController: pinStateController,
+                logger: const AppLogger(),
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: AppLockGate(child: Placeholder())),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
+      expect(find.text('设置应用 PIN'), findsNothing);
+    },
+  );
+
+  testWidgets('locked protected routes redirect to vault', (tester) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final repository = _FakeSecuritySettingsRepository(pin: '');
+    late GoRouter router;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            router = ref.watch(appRouterProvider);
+            return MaterialApp.router(
+              routerConfig: router,
+              builder: (context, child) =>
+                  AppLockGate(child: child ?? const SizedBox.shrink()),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    router.go('/settings/security/pin');
+    await tester.pumpAndSettle();
+
+    expect(router.routeInformationProvider.value.uri.path, '/vault');
+    expect(find.text('应用已锁定'), findsOneWidget);
+    expect(find.text('设置应用 PIN'), findsNothing);
+  });
+
+  testWidgets('locked pin route requires enabled pin material', (tester) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final repository = _FakeSecuritySettingsRepository(pin: '');
+    late GoRouter router;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            router = ref.watch(appRouterProvider);
+            return MaterialApp.router(
+              routerConfig: router,
+              builder: (context, child) =>
+                  AppLockGate(child: child ?? const SizedBox.shrink()),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    router.go('/unlock/pin');
+    await tester.pumpAndSettle();
+
+    expect(router.routeInformationProvider.value.uri.path, '/vault');
+    expect(find.text('PIN 解锁'), findsNothing);
+    expect(find.text('应用已锁定'), findsOneWidget);
+  });
+
+  testWidgets('pin state refresh revokes an open unlock route', (tester) async {
+    final sessionController = LockSessionController()..setPinEnabled(true);
+    final pinStateController = PinStateController()
+      ..configureEnabled(true)
+      ..markPinMaterialReady();
+    final repository = _FakeSecuritySettingsRepository(pin: '2468');
+    late GoRouter router;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
+        ],
+        child: Consumer(
+          builder: (context, ref, _) {
+            router = ref.watch(appRouterProvider);
+            return MaterialApp.router(
+              routerConfig: router,
+              builder: (context, child) =>
+                  AppLockGate(child: child ?? const SizedBox.shrink()),
+            );
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    router.go('/unlock/pin');
     await tester.pumpAndSettle();
     expect(find.text('PIN 解锁'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextFormField), '2468');
-    await tester.tap(find.text('解锁'));
+    sessionController.setPinEnabled(false);
+    pinStateController.configureEnabled(false);
     await tester.pumpAndSettle();
 
-    expect(tester.takeException(), isNull);
-    expect(sessionController.state.isUnlocked, isTrue);
-    expect(find.text('vault'), findsOneWidget);
+    expect(router.routeInformationProvider.value.uri.path, '/vault');
+    expect(find.text('PIN 解锁'), findsNothing);
+    expect(find.text('应用已锁定'), findsOneWidget);
   });
 
-  testWidgets('router builder structure reveals pin setup route instead of re-showing lock screen', (tester) async {
-    SharedPreferences.setMockInitialValues({});
+  testWidgets(
+    'real router pin unlock returns to vault without navigation error',
+    (tester) async {
+      final sessionController = LockSessionController();
+      final pinStateController = PinStateController();
+      final repository = _FakeSecuritySettingsRepository(pin: '2468');
+      late GoRouter router;
 
-    final sessionController = LockSessionController();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            lockSessionControllerProvider.overrideWith(
+              (ref) => sessionController,
+            ),
+            pinStateControllerProvider.overrideWith(
+              (ref) => pinStateController,
+            ),
+            securityOrchestratorProvider.overrideWith(
+              (ref) => SecurityOrchestrator(
+                biometricGateway: _FakeBiometricGateway(),
+                screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+                secureKeyGateway: _FakeSecureKeyGateway(),
+                sessionController: sessionController,
+                pinStateController: pinStateController,
+                logger: const AppLogger(),
+              ),
+            ),
+            securitySettingsRepositoryProvider.overrideWith(
+              (ref) async => repository,
+            ),
+            securitySettingsControllerProvider.overrideWith(
+              (ref) => SecuritySettingsController(
+                repository: repository,
+                securityOrchestrator: ref.read(securityOrchestratorProvider),
+                pinStateController: pinStateController,
+              ),
+            ),
+            defaultVaultProvider.overrideWith((ref) async => null),
+            secretListProvider.overrideWith(
+              (ref) async => const [],
+            ),
+          ],
+          child: Consumer(
+            builder: (context, ref, _) {
+              router = ref.watch(appRouterProvider);
+              return MaterialApp.router(
+                routerConfig: router,
+                builder: (context, child) =>
+                    AppLockGate(child: child ?? const SizedBox.shrink()),
+              );
+            },
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+
+      expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
+
+      await tester.tap(find.text('使用应用 PIN 解锁'));
+      await tester.pumpAndSettle();
+      expect(find.text('PIN 解锁'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextFormField), '2468');
+      await tester.tap(find.text('解锁'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(sessionController.state.isUnlocked, isTrue);
+      expect(router.routeInformationProvider.value.uri.path, '/vault');
+      expect(find.text('保险库'), findsWidgets);
+    },
+  );
+
+  testWidgets('unlocked session can open pin setup from security settings', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController()
+      ..markUnlocked(UnlockMethod.biometric);
     final pinStateController = PinStateController();
+    final repository = _FakeSecuritySettingsRepository(pin: '');
     final router = GoRouter(
       initialLocation: '/vault',
       routes: [
@@ -231,8 +465,8 @@ void main() {
           builder: (context, state) => const Scaffold(body: Text('vault')),
         ),
         GoRoute(
-          path: '/unlock/pin/setup',
-          builder: (context, state) => const PinSetupPage(unlockOnSuccess: true),
+          path: '/settings/security/pin',
+          builder: (context, state) => const PinSetupPage(),
         ),
       ],
     );
@@ -241,103 +475,33 @@ void main() {
       ProviderScope(
         overrides: [
           appRouterProvider.overrideWithValue(router),
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-            ),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
           ),
         ],
         child: MaterialApp.router(
           routerConfig: router,
-          builder: (context, child) => AppLockGate(
-            child: child ?? const SizedBox.shrink(),
-          ),
+          builder: (context, child) =>
+              AppLockGate(child: child ?? const SizedBox.shrink()),
         ),
       ),
     );
 
     await tester.pumpAndSettle();
-    await tester.tap(find.text('设置应用 PIN'));
+    router.go('/settings/security/pin');
     await tester.pumpAndSettle();
 
+    expect(
+      router.routeInformationProvider.value.uri.path,
+      '/settings/security/pin',
+    );
     expect(find.text('输入 4-8 位 PIN'), findsOneWidget);
     expect(find.text('确认 PIN'), findsOneWidget);
     expect(find.text('应用已锁定'), findsNothing);
-  });
-
-  testWidgets('lock flow can finish pin setup through dedicated unlock route when repository becomes ready later', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-
-    final sessionController = LockSessionController();
-    final pinStateController = PinStateController();
-    final router = GoRouter(
-      initialLocation: '/vault',
-      routes: [
-        GoRoute(
-          path: '/vault',
-          builder: (context, state) => const Scaffold(body: Text('vault')),
-        ),
-        GoRoute(
-          path: '/unlock/pin/setup',
-          builder: (context, state) => const PinSetupPage(unlockOnSuccess: true),
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          appRouterProvider.overrideWithValue(router),
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
-          pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-            ),
-          ),
-          sharedPreferencesProvider.overrideWith((ref) async {
-            await Future<void>.delayed(const Duration(milliseconds: 300));
-            return SharedPreferences.getInstance();
-          }),
-        ],
-        child: MaterialApp.router(
-          routerConfig: router,
-          builder: (context, child) => AppLockGate(
-            child: child ?? const SizedBox.shrink(),
-          ),
-        ),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('设置应用 PIN'));
-    await tester.pump();
-
-    expect(tester.takeException(), isNull);
-
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byType(TextFormField).first, '1234');
-    await tester.enterText(find.byType(TextFormField).last, '1234');
-    await tester.tap(find.text('保存 PIN'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('vault'), findsOneWidget);
     expect(sessionController.state.isUnlocked, isTrue);
   });
 }
@@ -347,15 +511,20 @@ class _FakeBiometricGateway implements BiometricGateway {
   Future<bool> authenticate() async => false;
 
   @override
-  Future<BiometricAvailability> getAvailability() async => BiometricAvailability.available;
+  Future<BiometricAvailability> getAvailability() async =>
+      BiometricAvailability.available;
 }
 
 class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
+  final List<bool> obscuredUpdates = [];
+
   @override
   Future<void> enableSensitiveWindowProtection() async {}
 
   @override
-  Future<void> updateRecentTaskProtection({required bool obscured}) async {}
+  Future<void> updateRecentTaskProtection({required bool obscured}) async {
+    obscuredUpdates.add(obscured);
+  }
 }
 
 class _FakeSecureKeyGateway implements SecureKeyGateway {
@@ -369,7 +538,9 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
 class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
   _FakeSecuritySettingsRepository({required String pin}) : _pin = pin;
 
-  SecuritySettings _settings = const SecuritySettings.defaults().copyWith(pinEnabled: true);
+  SecuritySettings _settings = const SecuritySettings.defaults().copyWith(
+    pinEnabled: true,
+  );
   String _pin;
 
   @override

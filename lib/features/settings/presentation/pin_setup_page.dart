@@ -93,7 +93,9 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
     setState(() => _submitting = true);
     try {
-      final repository = await ref.read(securitySettingsRepositoryProvider.future);
+      final repository = await ref.read(
+        securitySettingsRepositoryProvider.future,
+      );
       final currentSettings = await repository.load();
       final nextSettings = currentSettings.copyWith(pinEnabled: true);
       await repository.savePinMaterial(_pinController.text.trim());
@@ -103,7 +105,12 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
       ref.read(pinStateControllerProvider.notifier).configureEnabled(true);
       if (mounted) {
         if (widget.unlockOnSuccess) {
-          ref.read(securityOrchestratorProvider).unlockWithPin();
+          final unlocked = await ref
+              .read(securityOrchestratorProvider)
+              .unlockWithPin();
+          if (!unlocked || !mounted) {
+            return;
+          }
           final router = GoRouter.maybeOf(context);
           if (router != null) {
             ref.read(appRouterProvider).go('/vault');
@@ -113,9 +120,9 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
         } else {
           ref.invalidate(securitySettingsRepositoryProvider);
           ref.invalidate(securitySettingsControllerProvider);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PIN 已保存并启用')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
           context.pop();
         }
       }

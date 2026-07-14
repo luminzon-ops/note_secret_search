@@ -28,7 +28,8 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
   Widget build(BuildContext context) {
     final pinState = ref.watch(pinStateControllerProvider);
     final coolDownUntil = pinState.coolDownUntil;
-    final inCoolDown = coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
+    final inCoolDown =
+        coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
 
     return Scaffold(
       appBar: AppBar(title: const Text('PIN 解锁')),
@@ -45,13 +46,17 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                   children: [
                     const Text('输入应用 PIN 作为备用解锁方式。'),
                     const SizedBox(height: 8),
-                    Text('当前失败次数：${pinState.failedAttempts}/${SecuritySettingsController.maxPinFailures}'),
+                    Text(
+                      '当前失败次数：${pinState.failedAttempts}/${SecuritySettingsController.maxPinFailures}',
+                    ),
                     if (inCoolDown)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           '冷却中，结束时间：${coolDownUntil.toLocal()}',
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       ),
                   ],
@@ -98,12 +103,22 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
     });
 
     try {
-      final matched = await ref.read(securitySettingsControllerProvider.notifier).verifyPin(
-            _pinController.text.trim(),
-          );
+      final matched = await ref
+          .read(securitySettingsControllerProvider.notifier)
+          .verifyPin(_pinController.text.trim());
 
       if (matched) {
-        ref.read(securityOrchestratorProvider).unlockWithPin();
+        final unlocked = await ref
+            .read(securityOrchestratorProvider)
+            .unlockWithPin();
+        if (!unlocked) {
+          if (mounted) {
+            setState(() {
+              _errorText = '安全解锁失败，请重试';
+            });
+          }
+          return;
+        }
         if (mounted) {
           final router = GoRouter.maybeOf(context);
           final navigator = Navigator.of(context);
@@ -118,7 +133,9 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
         return;
       }
 
-      ref.read(securityOrchestratorProvider).registerPinFailure(
+      ref
+          .read(securityOrchestratorProvider)
+          .registerPinFailure(
             maxFailures: SecuritySettingsController.maxPinFailures,
             coolDown: SecuritySettingsController.pinCoolDown,
           );

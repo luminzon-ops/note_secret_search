@@ -11,12 +11,12 @@ class SecurityOrchestrator {
     required LockSessionController sessionController,
     required PinStateController pinStateController,
     required AppLogger logger,
-  })  : _biometricGateway = biometricGateway,
-        _screenshotProtectionGateway = screenshotProtectionGateway,
-        _secureKeyGateway = secureKeyGateway,
-        _sessionController = sessionController,
-        _pinStateController = pinStateController,
-        _logger = logger;
+  }) : _biometricGateway = biometricGateway,
+       _screenshotProtectionGateway = screenshotProtectionGateway,
+       _secureKeyGateway = secureKeyGateway,
+       _sessionController = sessionController,
+       _pinStateController = pinStateController,
+       _logger = logger;
 
   final BiometricGateway _biometricGateway;
   final ScreenshotProtectionGateway _screenshotProtectionGateway;
@@ -35,20 +35,39 @@ class SecurityOrchestrator {
 
   Future<bool> unlockWithBiometrics() async {
     final granted = await _biometricGateway.authenticate();
-    if (granted) {
-      _sessionController.markUnlocked(UnlockMethod.biometric);
-      _pinStateController.resetFailures();
+    if (!granted) {
+      return false;
     }
-    return granted;
+    return _completeUnlock(UnlockMethod.biometric);
   }
 
-  void unlockWithPin() {
-    _sessionController.markUnlocked(UnlockMethod.pin);
+  Future<bool> unlockWithPin() {
+    return _completeUnlock(UnlockMethod.pin);
+  }
+
+  Future<bool> _completeUnlock(UnlockMethod method) async {
+    try {
+      await _screenshotProtectionGateway.updateRecentTaskProtection(
+        obscured: false,
+      );
+    } catch (_) {
+      _sessionController.lock();
+      return false;
+    }
+
+    _sessionController.markUnlocked(method);
     _pinStateController.resetFailures();
+    return true;
   }
 
-  void registerPinFailure({required int maxFailures, required Duration coolDown}) {
-    _pinStateController.registerFailure(maxFailures: maxFailures, coolDown: coolDown);
+  void registerPinFailure({
+    required int maxFailures,
+    required Duration coolDown,
+  }) {
+    _pinStateController.registerFailure(
+      maxFailures: maxFailures,
+      coolDown: coolDown,
+    );
   }
 
   void enablePinFallback(bool enabled) {
