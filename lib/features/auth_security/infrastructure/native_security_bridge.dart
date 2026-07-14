@@ -43,7 +43,11 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
   @override
   Future<String> getDatabasePasswordMaterial() async {
     final value = await _channel.invokeMethod<String>('getDatabasePasswordMaterial');
-    return value ?? 'fallback-db-password-material';
+    final material = value?.trim();
+    if (material == null || material.isEmpty) {
+      throw StateError('Database key material is unavailable.');
+    }
+    return material;
   }
 
   @override

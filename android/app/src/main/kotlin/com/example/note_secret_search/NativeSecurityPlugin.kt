@@ -17,6 +17,7 @@ class NativeSecurityPlugin(
 
     private lateinit var channel: MethodChannel
     private val keyManager = SecureKeyManager(activity)
+    private val secureKeyMethodHandler = SecureKeyMethodHandler(keyManager)
     private val biometricAuthenticator = BiometricAuthenticator(activity)
 
     fun attachToEngine(messenger: BinaryMessenger) {
@@ -40,12 +41,11 @@ class NativeSecurityPlugin(
             }
 
             "ensureRootKey" -> {
-                keyManager.ensureRootKey()
-                result.success(null)
+                secureKeyMethodHandler.ensureRootKey(result)
             }
 
             "getDatabasePasswordMaterial" -> {
-                result.success(keyManager.getDatabasePasswordMaterial())
+                secureKeyMethodHandler.getDatabasePasswordMaterial(result)
             }
 
             "getBiometricAvailability" -> {
@@ -76,5 +76,37 @@ class NativeSecurityPlugin(
 
     companion object {
         private const val CHANNEL_NAME = "note_secret_search/native_security"
+    }
+}
+
+internal class SecureKeyMethodHandler(
+    private val operations: SecureKeyOperations,
+) {
+    fun ensureRootKey(result: MethodChannel.Result) {
+        handle(result) {
+            operations.ensureRootKey()
+            null
+        }
+    }
+
+    fun getDatabasePasswordMaterial(result: MethodChannel.Result) {
+        handle(result) {
+            operations.getDatabasePasswordMaterial()
+        }
+    }
+
+    private fun handle(
+        result: MethodChannel.Result,
+        operation: () -> Any?,
+    ) {
+        try {
+            result.success(operation())
+        } catch (_: Throwable) {
+            result.error(
+                "SECURE_KEY_UNAVAILABLE",
+                "Secure key material is unavailable.",
+                null,
+            )
+        }
     }
 }

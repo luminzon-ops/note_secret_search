@@ -11,7 +11,11 @@ class NativeDatabaseKeyProvider implements DatabaseKeyProvider {
   final SecureKeyGateway _secureKeyGateway;
 
   @override
-  Future<String> getDatabasePassword() {
-    return _secureKeyGateway.getDatabasePasswordMaterial();
+  Future<String> getDatabasePassword() async {
+    final material = (await _secureKeyGateway.getDatabasePasswordMaterial()).trim();
+    if (material.isEmpty) {
+      throw StateError('Database key material is unavailable.');
+    }
+    return material;
   }
 }
