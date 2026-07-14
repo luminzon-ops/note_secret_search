@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinSetupPage extends ConsumerStatefulWidget {
-  const PinSetupPage({this.unlockOnSuccess = false, super.key});
-
-  final bool unlockOnSuccess;
+  const PinSetupPage({super.key});
 
   @override
   ConsumerState<PinSetupPage> createState() => _PinSetupPageState();
@@ -104,27 +100,12 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
       ref.read(pinStateControllerProvider.notifier).markPinMaterialReady();
       ref.read(pinStateControllerProvider.notifier).configureEnabled(true);
       if (mounted) {
-        if (widget.unlockOnSuccess) {
-          final unlocked = await ref
-              .read(securityOrchestratorProvider)
-              .unlockWithPin();
-          if (!unlocked || !mounted) {
-            return;
-          }
-          final router = GoRouter.maybeOf(context);
-          if (router != null) {
-            ref.read(appRouterProvider).go('/vault');
-          } else {
-            Navigator.of(context).pop(true);
-          }
-        } else {
-          ref.invalidate(securitySettingsRepositoryProvider);
-          ref.invalidate(securitySettingsControllerProvider);
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
-          context.pop();
-        }
+        ref.invalidate(securitySettingsRepositoryProvider);
+        ref.invalidate(securitySettingsControllerProvider);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
+        Navigator.of(context).pop();
       }
     } finally {
       if (mounted) {

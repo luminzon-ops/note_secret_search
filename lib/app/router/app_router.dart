@@ -158,11 +158,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                     routes: [
                       GoRoute(
                         path: 'pin',
-                        builder: (context, state) => PinSetupPage(
-                          unlockOnSuccess:
-                              state.uri.queryParameters['unlockOnSuccess'] ==
-                              'true',
-                        ),
+                        builder: (context, state) => const PinSetupPage(),
                       ),
                     ],
                   ),

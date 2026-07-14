@@ -16,6 +16,7 @@ class AppLockLifecycleController with WidgetsBindingObserver {
   final ScreenshotProtectionGateway _screenshotProtectionGateway;
   DateTime? _pausedAt;
   Future<void> _lifecycleQueue = Future<void>.value();
+  AppLifecycleState? _latestLifecycleState;
   bool _started = false;
 
   void start() {
@@ -36,16 +37,28 @@ class AppLockLifecycleController with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final previousState = _latestLifecycleState;
+    _latestLifecycleState = state;
     switch (state) {
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
       case AppLifecycleState.inactive:
-        _pausedAt ??= DateTime.now();
+        if (previousState == null ||
+            previousState == AppLifecycleState.resumed) {
+          _pausedAt = DateTime.now();
+        } else {
+          _pausedAt ??= DateTime.now();
+        }
         _enqueue(_handleBackgroundTransition);
       case AppLifecycleState.resumed:
         _enqueue(_handleResume);
       case AppLifecycleState.detached:
-        _pausedAt ??= DateTime.now();
+        if (previousState == null ||
+            previousState == AppLifecycleState.resumed) {
+          _pausedAt = DateTime.now();
+        } else {
+          _pausedAt ??= DateTime.now();
+        }
         _enqueue(
           () => _screenshotProtectionGateway.updateRecentTaskProtection(
             obscured: true,
@@ -75,6 +88,10 @@ class AppLockLifecycleController with WidgetsBindingObserver {
   }
 
   Future<void> _handleResume() async {
+    if (_latestLifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+
     final pausedAt = _pausedAt;
     _pausedAt = null;
     if (pausedAt != null) {
@@ -85,6 +102,9 @@ class AppLockLifecycleController with WidgetsBindingObserver {
       }
     }
 
+    if (_latestLifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
     if (!_sessionController.isUnlocked) {
       _sessionController.lock();
       return;

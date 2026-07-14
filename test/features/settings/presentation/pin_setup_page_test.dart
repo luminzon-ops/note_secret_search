@@ -16,7 +16,9 @@ import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('pin setup launched from lock flow returns true after successful save', (tester) async {
+  testWidgets('pin setup never unlocks a locked session after save', (
+    tester,
+  ) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController();
     final repository = _FakeSecuritySettingsRepository();
@@ -54,7 +56,7 @@ void main() {
                   onPressed: () async {
                     result = await Navigator.of(context).push<bool>(
                       MaterialPageRoute(
-                        builder: (_) => const PinSetupPage(unlockOnSuccess: true),
+                        builder: (_) => const PinSetupPage(),
                       ),
                     );
                   },
@@ -75,8 +77,9 @@ void main() {
     await tester.tap(find.text('保存 PIN'));
     await tester.pumpAndSettle();
 
-    expect(result, isTrue);
-    expect(sessionController.state.isUnlocked, isTrue);
+    expect(result, isNull);
+    expect(sessionController.state.isUnlocked, isFalse);
+    expect(sessionController.state.pinEnabled, isTrue);
   });
 
   testWidgets('pin setup can save successfully even when settings repository becomes ready later', (
@@ -116,7 +119,7 @@ void main() {
                   onPressed: () async {
                     result = await Navigator.of(context).push<bool>(
                       MaterialPageRoute(
-                        builder: (_) => const PinSetupPage(unlockOnSuccess: true),
+                        builder: (_) => const PinSetupPage(),
                       ),
                     );
                   },
@@ -142,8 +145,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
-    expect(result, isTrue);
-    expect(sessionController.state.isUnlocked, isTrue);
+    expect(result, isNull);
+    expect(sessionController.state.isUnlocked, isFalse);
+    expect(sessionController.state.pinEnabled, isTrue);
   });
 }
 

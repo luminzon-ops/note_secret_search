@@ -40,6 +40,48 @@ void main() {
   });
 
   test(
+    'stale resumed work does not unshield after a newer inactive transition',
+    () async {
+      final sessionController = LockSessionController()
+        ..markUnlocked(UnlockMethod.biometric);
+      final firstObscureBlocker = Completer<void>();
+      var obscuredCallCount = 0;
+      final gateway = _RecordingScreenshotProtectionGateway(
+        onUpdate: (obscured) async {
+          if (obscured) {
+            obscuredCallCount += 1;
+            if (obscuredCallCount == 1) {
+              await firstObscureBlocker.future;
+            }
+          }
+        },
+      );
+      final controller = AppLockLifecycleController(
+        sessionController: sessionController,
+        autoLockSecondsLoader: () async => 1,
+        screenshotProtectionGateway: gateway,
+      );
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+      await _waitUntil(() => gateway.obscuredUpdates.isNotEmpty);
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+      firstObscureBlocker.complete();
+
+      await _waitUntil(() => gateway.obscuredUpdates.length >= 2);
+      expect(gateway.obscuredUpdates, [true, true]);
+
+      await Future<void>.delayed(const Duration(milliseconds: 1100));
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await _drainEventQueue();
+
+      expect(gateway.obscuredUpdates, [true, true]);
+      expect(sessionController.state.isUnlocked, isFalse);
+    },
+  );
+
+  test(
     'resumed lifecycle keeps shield when background transition locked',
     () async {
       final sessionController = LockSessionController()

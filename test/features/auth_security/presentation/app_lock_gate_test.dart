@@ -250,7 +250,7 @@ void main() {
     },
   );
 
-  testWidgets('locked protected routes redirect to vault', (tester) async {
+  testWidgets('all locked protected routes redirect to vault', (tester) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController();
     final repository = _FakeSecuritySettingsRepository(pin: '');
@@ -281,12 +281,36 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    router.go('/settings/security/pin');
-    await tester.pumpAndSettle();
+    const protectedLocations = <String>[
+      '/vault/secret/new',
+      '/vault/secret/secret-id',
+      '/vault/secret/secret-id/edit',
+      '/search',
+      '/search/settings',
+      '/notes',
+      '/notes/item/new',
+      '/notes/item/note-id',
+      '/notes/item/note-id/edit',
+      '/ai/chat',
+      '/models',
+      '/settings',
+      '/settings/security',
+      '/settings/security/pin',
+      '/settings/ai/providers',
+    ];
 
-    expect(router.routeInformationProvider.value.uri.path, '/vault');
-    expect(find.text('应用已锁定'), findsOneWidget);
-    expect(find.text('设置应用 PIN'), findsNothing);
+    for (final location in protectedLocations) {
+      router.go(location);
+      await tester.pumpAndSettle();
+
+      expect(
+        router.routeInformationProvider.value.uri.path,
+        '/vault',
+        reason: '$location must be inaccessible while locked',
+      );
+      expect(find.text('应用已锁定'), findsOneWidget);
+      expect(find.text('设置应用 PIN'), findsNothing);
+    }
   });
 
   testWidgets('locked pin route requires enabled pin material', (tester) async {
