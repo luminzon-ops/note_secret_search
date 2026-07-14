@@ -9,11 +9,17 @@ final chatSessionRepositoryProvider = Provider<ChatSessionRepository>((ref) {
 });
 
 final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <ChatSession>[];
+  }
   final repository = ref.watch(chatSessionRepositoryProvider);
   return repository.listSessions();
 });
 
 final restoredChatSessionIdProvider = FutureProvider<String?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   final sessions = await ref.watch(chatSessionsProvider.future);
   if (sessions.isEmpty) {
     return null;
@@ -26,6 +32,9 @@ final currentChatSessionIdProvider = StateProvider<String?>((ref) => null);
 final suppressRestoredChatSessionProvider = StateProvider<bool>((ref) => false);
 
 final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   final sessionId = ref.watch(currentChatSessionIdProvider);
   if (sessionId == null || sessionId.isEmpty) {
     if (ref.watch(suppressRestoredChatSessionProvider)) {
@@ -42,6 +51,9 @@ final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) async {
 });
 
 final currentChatMessagesProvider = FutureProvider<List<ChatStoredMessage>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <ChatStoredMessage>[];
+  }
   var sessionId = ref.watch(currentChatSessionIdProvider);
   if (sessionId == null || sessionId.isEmpty) {
     if (ref.watch(suppressRestoredChatSessionProvider)) {

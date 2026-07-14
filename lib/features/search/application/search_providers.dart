@@ -62,6 +62,9 @@ final semanticSearchServiceProvider = Provider<SemanticSearchService>((ref) {
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
 final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <SearchResultItem>[];
+  }
   final query = ref.watch(searchQueryProvider).trim();
   if (query.isEmpty) {
     return const <SearchResultItem>[];
@@ -79,6 +82,14 @@ final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((ref
 });
 
 final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const SearchIndexStatus(
+      engineReady: false,
+      engineReason: '应用已锁定。',
+      hasActiveEmbeddingModel: false,
+      pendingItems: <SearchIndexPendingItem>[],
+    );
+  }
   final secrets = await ref.watch(secretListProvider.future);
   final notes = await ref.watch(noteListProvider.future);
   final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
@@ -100,6 +111,9 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) async 
 });
 
 final semanticSearchResultsProvider = FutureProvider<List<SemanticSearchResult>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <SemanticSearchResult>[];
+  }
   final query = ref.watch(searchQueryProvider).trim();
   if (query.isEmpty) {
     return const <SemanticSearchResult>[];
@@ -123,6 +137,9 @@ final semanticSearchResultsProvider = FutureProvider<List<SemanticSearchResult>>
 });
 
 final unifiedSearchResultsProvider = FutureProvider<List<SearchResultItem>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <SearchResultItem>[];
+  }
   final keywordResults = await ref.watch(keywordSearchResultsProvider.future);
   final semanticResults = await ref.watch(semanticSearchResultsProvider.future);
   return ref.watch(searchFusionServiceProvider).fuse(

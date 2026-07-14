@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:uuid/uuid.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
@@ -36,6 +37,9 @@ final privateQaSemanticReadinessProvider = FutureProvider<SemanticSearchReadines
 });
 
 final manualContextCandidatesProvider = FutureProvider<List<ChatContextItem>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <ChatContextItem>[];
+  }
   final secrets = await ref.watch(secretListProvider.future);
   final notes = await ref.watch(noteListProvider.future);
   return [..._mapSecretsToContextItems(secrets), ..._mapNotesToContextItems(notes)];
@@ -398,12 +402,18 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
   final Ref _ref;
   final AppLogger _logger = const AppLogger();
   static const _uuid = Uuid();
+  var _generation = 0;
 
   Future<void> restoreSessionIfNeeded() async {
+    final generation = _generation;
+    if (!_canContinue(generation)) {
+      return;
+    }
+
     final selectedSessionId = _ref.read(currentChatSessionIdProvider);
     if (selectedSessionId != null && selectedSessionId.isNotEmpty) {
       if (state.currentSessionId != selectedSessionId) {
-        await selectSession(selectedSessionId);
+        await _selectSession(selectedSessionId, generation);
       }
       return;
     }
@@ -417,18 +427,34 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
     }
 
     final sessions = await _ref.read(chatSessionsProvider.future);
+    if (!_canContinue(generation)) {
+      return;
+    }
     final matchingSession = sessions.where((session) => session.mode == state.mode).firstOrNull;
     if (matchingSession == null) {
       return;
     }
 
-    await selectSession(matchingSession.id);
+    await _selectSession(matchingSession.id, generation);
   }
 
   Future<void> selectSession(String sessionId) async {
+    await _selectSession(sessionId, _generation);
+  }
+
+  Future<void> _selectSession(String sessionId, int generation) async {
+    if (!_canContinue(generation)) {
+      return;
+    }
     final repository = _ref.read(chatSessionRepositoryProvider);
     final messages = await repository.listMessages(sessionId);
+    if (!_canContinue(generation)) {
+      return;
+    }
     final session = await repository.getSession(sessionId);
+    if (!_canContinue(generation)) {
+      return;
+    }
 
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
 
@@ -448,12 +474,20 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
   }
 
   Future<void> startNewSession() async {
+    _generation++;
+    _resetConversation();
+  }
+
+  void resetForLock() {
+    _generation++;
+    _resetConversation();
+  }
+
+  void _resetConversation() {
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
     _ref.read(currentChatSessionIdProvider.notifier).state = null;
-    state = state.copyWith(
-      messages: const <ChatMessage>[],
-      clearCurrentSessionId: true,
-      clearErrorMessage: true,
+    state = AiChatConversationState(
+      mode: state.mode,
       suppressSessionRestore: true,
     );
     _ref.invalidate(currentChatMessagesProvider);
@@ -462,12 +496,22 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
 
   Future<void> send(String input) async {
     final normalized = input.trim();
-    if (normalized.isEmpty || state.sending) {
+    final generation = _generation;
+    if (normalized.isEmpty || state.sending || !_canContinue(generation)) {
       return;
     }
 
+    final conversationMode = state.mode;
+    final allowPrivateContext = state.allowPrivateContext;
+    final manualItems = List<ChatContextItem>.of(
+      state.manualItems,
+      growable: false,
+    );
     final repository = _ref.read(chatSessionRepositoryProvider);
     final llmReadiness = await _ref.read(localLlmReadinessProvider.future);
+    if (!_canContinue(generation)) {
+      return;
+    }
     final timestamp = DateTime.now();
     final sessionId = state.currentSessionId ?? _uuid.v4();
     final correlationId = timestamp.microsecondsSinceEpoch;
@@ -475,14 +519,14 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
 
     _logger.info(
       '[ai_chat_send] event=start correlation_id=$correlationId '
-      'session_id=$sessionId mode=${state.mode.name} input_len=${normalized.length}',
+      'session_id=$sessionId mode=${conversationMode.name} input_len=${normalized.length}',
     );
 
     final session = ChatSession(
       id: sessionId,
-      mode: state.mode,
+      mode: conversationMode,
       title: sessionTitle,
-      allowPrivateContext: state.allowPrivateContext,
+      allowPrivateContext: allowPrivateContext,
       lastModelId: llmReadiness.activeModel?.id,
       archived: false,
       createdAt: timestamp,
@@ -504,6 +548,9 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
     );
 
     await repository.saveSession(session);
+    if (!_canContinue(generation)) {
+      return;
+    }
     await repository.saveMessage(
       ChatStoredMessage(
         id: userMessage.id,
@@ -514,6 +561,9 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
         createdAt: userMessage.createdAt,
       ),
     );
+    if (!_canContinue(generation)) {
+      return;
+    }
     _logger.info(
       '[ai_chat_send] event=user_saved correlation_id=$correlationId '
       'message_id=${userMessage.id}',
@@ -533,12 +583,15 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
     try {
       final response = await _ref.read(aiChatOrchestratorProvider).send(
             AiChatRequest(
-              mode: state.mode,
+              mode: conversationMode,
               userInput: normalized,
-              allowPrivateContext: state.allowPrivateContext,
-              manualItems: state.manualItems,
+              allowPrivateContext: allowPrivateContext,
+              manualItems: manualItems,
             ),
           );
+      if (!_canContinue(generation)) {
+        return;
+      }
       final assistantMessage = ChatMessage(
         id: loadingMessage.id,
         role: ChatMessageRole.assistant,
@@ -552,11 +605,14 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
       await repository.saveSession(
         session.copyWith(
           title: sessionTitle,
-          allowPrivateContext: state.allowPrivateContext,
+          allowPrivateContext: allowPrivateContext,
           lastModelId: llmReadiness.activeModel?.id,
           updatedAt: assistantMessage.createdAt,
         ),
       );
+      if (!_canContinue(generation)) {
+        return;
+      }
       await repository.saveMessage(
         ChatStoredMessage(
           id: assistantMessage.id,
@@ -568,11 +624,14 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
           autoRetrievedContextSummary: assistantMessage.contextSummary.isEmpty
               ? null
               : assistantMessage.contextSummary.join('；'),
-          manualContextItemIds: state.manualItems.map((item) => item.id).toList(growable: false),
+          manualContextItemIds: manualItems.map((item) => item.id).toList(growable: false),
           relatedSourceIds: response.contextItems.map((item) => item.id).toList(growable: false),
           createdAt: assistantMessage.createdAt,
         ),
       );
+      if (!_canContinue(generation)) {
+        return;
+      }
       _logger.info(
         '[ai_chat_send] event=assistant_saved correlation_id=$correlationId '
         'message_id=${assistantMessage.id} status=completed',
@@ -589,6 +648,9 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
       _ref.invalidate(currentChatMessagesProvider);
       _ref.invalidate(currentChatSessionProvider);
     } catch (error) {
+      if (!_canContinue(generation)) {
+        return;
+      }
       final failedMessage = ChatMessage(
         id: loadingMessage.id,
         role: ChatMessageRole.system,
@@ -599,11 +661,14 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
       await repository.saveSession(
         session.copyWith(
           title: sessionTitle,
-          allowPrivateContext: state.allowPrivateContext,
+          allowPrivateContext: allowPrivateContext,
           lastModelId: llmReadiness.activeModel?.id,
           updatedAt: failedMessage.createdAt,
         ),
       );
+      if (!_canContinue(generation)) {
+        return;
+      }
       await repository.saveMessage(
         ChatStoredMessage(
           id: failedMessage.id,
@@ -614,6 +679,9 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
           createdAt: failedMessage.createdAt,
         ),
       );
+      if (!_canContinue(generation)) {
+        return;
+      }
       _logger.info(
         '[ai_chat_send] event=assistant_saved correlation_id=$correlationId '
         'message_id=${failedMessage.id} status=failed',
@@ -634,11 +702,22 @@ class AiChatConversationController extends StateNotifier<AiChatConversationState
   }
 
   void setAllowPrivateContext(bool value) {
+    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+      return;
+    }
     state = state.copyWith(allowPrivateContext: value);
   }
 
   void setManualItems(List<ChatContextItem> items) {
+    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+      return;
+    }
     state = state.copyWith(manualItems: items);
+  }
+
+  bool _canContinue(int generation) {
+    return generation == _generation &&
+        _ref.read(sensitiveStateAccessAllowedProvider);
   }
 
   List<ChatMessage> _replaceMessageById({

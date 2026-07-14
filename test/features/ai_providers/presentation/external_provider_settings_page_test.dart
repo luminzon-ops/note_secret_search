@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
@@ -19,6 +21,11 @@ void main() {
   ) async {
     final container = ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()
+            ..markUnlocked(UnlockMethod.biometric),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(
             ready: false,
@@ -67,6 +74,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           externalProviderRepositoryProvider.overrideWithValue(repository),
           externalProviderClientProvider.overrideWithValue(client),
         ],
@@ -137,6 +145,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           externalProviderRepositoryProvider.overrideWithValue(repository),
           externalProviderClientProvider.overrideWithValue(_RecordingExternalProviderClient()),
         ],

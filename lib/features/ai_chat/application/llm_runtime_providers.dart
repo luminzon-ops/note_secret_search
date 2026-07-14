@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_chat/infrastructure/llm_runtime_bridge.dart';
@@ -16,6 +17,9 @@ final llmEngineProvider = Provider<LlmEngine>((ref) {
 });
 
 final llmRuntimeStatesProvider = FutureProvider<Map<String, LlmRuntimeState>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <String, LlmRuntimeState>{};
+  }
   final entries = await ref.watch(modelRegistryEntriesProvider.future);
   final llmEngine = ref.watch(llmEngineProvider);
   final resolved = <String, LlmRuntimeState>{};
@@ -61,6 +65,9 @@ final llmRuntimeStatesProvider = FutureProvider<Map<String, LlmRuntimeState>>((r
 });
 
 final activeLocalLlmModelProvider = FutureProvider<ModelRegistryEntry?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   final preferences = await ref.watch(sharedPreferencesProvider.future);
   final storedModelId = preferences.getString(_activeLlmModelIdKey);
   if (storedModelId == null || storedModelId.isEmpty) {
@@ -89,6 +96,14 @@ final activeLocalLlmModelProvider = FutureProvider<ModelRegistryEntry?>((ref) as
 });
 
 final localLlmReadinessProvider = FutureProvider<LocalLlmReadiness>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const LocalLlmReadiness(
+      ready: false,
+      reason: '应用已锁定。',
+      activeModel: null,
+      runtimeState: null,
+    );
+  }
   final model = await ref.watch(activeLocalLlmModelProvider.future);
   if (model == null) {
     return const LocalLlmReadiness(

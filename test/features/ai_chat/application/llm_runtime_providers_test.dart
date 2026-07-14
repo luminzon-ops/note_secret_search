@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
@@ -31,6 +32,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -60,6 +62,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -89,6 +92,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -113,6 +117,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
         llmRuntimeStatesProvider.overrideWith((ref) async => const <String, LlmRuntimeState>{}),
@@ -131,6 +136,7 @@ void main() {
     final degradedModel = _llmModel.copyWith(localPath: '/data/models/phi.gguf');
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryEntriesProvider.overrideWith((ref) async => [degradedModel]),
         llmEngineProvider.overrideWithValue(_FakeLlmEngine()),
       ],
@@ -148,6 +154,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -180,6 +187,7 @@ void main() {
     final bridge = _ReadyAfterEnsureBridge();
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeBridgeProvider.overrideWithValue(bridge),

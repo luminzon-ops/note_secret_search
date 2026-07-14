@@ -192,7 +192,3 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
     }
   }
 }
-
-final secretDetailProvider = FutureProvider.family<SecretItem?, String>((ref, id) async {
-  return ref.watch(secretRepositoryProvider).getById(id);
-});

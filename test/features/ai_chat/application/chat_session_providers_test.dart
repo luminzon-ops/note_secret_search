@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
@@ -155,7 +156,10 @@ void main() {
       ],
     );
     final container = ProviderContainer(
-      overrides: [chatSessionRepositoryProvider.overrideWithValue(fakeRepository)],
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+      ],
     );
 
     addTearDown(container.dispose);
@@ -166,7 +170,12 @@ void main() {
 
   test('currentChatMessagesProvider returns empty when no current session is selected', () async {
     final container = ProviderContainer(
-      overrides: [chatSessionRepositoryProvider.overrideWithValue(_FakeChatSessionRepository())],
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        chatSessionRepositoryProvider.overrideWithValue(
+          _FakeChatSessionRepository(),
+        ),
+      ],
     );
 
     addTearDown(container.dispose);
@@ -191,7 +200,10 @@ void main() {
       },
     );
     final container = ProviderContainer(
-      overrides: [chatSessionRepositoryProvider.overrideWithValue(fakeRepository)],
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+      ],
     );
 
     addTearDown(container.dispose);
@@ -227,7 +239,10 @@ void main() {
       ],
     );
     final container = ProviderContainer(
-      overrides: [chatSessionRepositoryProvider.overrideWithValue(fakeRepository)],
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+      ],
     );
 
     addTearDown(container.dispose);
@@ -262,7 +277,10 @@ void main() {
       },
     );
     final container = ProviderContainer(
-      overrides: [chatSessionRepositoryProvider.overrideWithValue(fakeRepository)],
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+      ],
     );
 
     addTearDown(container.dispose);

@@ -27,10 +27,20 @@ final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
 });
 
 final enabledExternalProviderProvider = FutureProvider<ExternalProviderConfig?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   return ref.watch(externalProviderRepositoryProvider).loadEnabled();
 });
 
 final externalProviderStatusProvider = FutureProvider<ExternalProviderStatus>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const ExternalProviderStatus(
+      available: false,
+      reason: '应用已锁定。',
+      config: null,
+    );
+  }
   final config = await ref.watch(enabledExternalProviderProvider.future);
   if (config == null) {
     return const ExternalProviderStatus(

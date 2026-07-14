@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
@@ -395,6 +396,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
           modelCatalogEntriesProvider.overrideWith((ref) async => const <ModelCatalogEntry>[]),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),

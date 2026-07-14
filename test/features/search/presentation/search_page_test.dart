@@ -1223,6 +1223,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           searchQueryProvider.overrideWith((ref) => 'bank account'),
           unifiedSearchResultsProvider.overrideWith((ref) async => const <SearchResultItem>[]),
           semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),
@@ -1252,6 +1253,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           searchQueryProvider.overrideWith((ref) => 'bank account'),
           unifiedSearchResultsProvider.overrideWith((ref) async => const <SearchResultItem>[]),
           semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),

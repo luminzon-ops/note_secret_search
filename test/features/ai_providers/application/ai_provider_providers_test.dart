@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
@@ -24,6 +25,7 @@ void main() {
     final repository = _MemoryExternalProviderRepository(configs: const [_provider]);
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         externalProviderRepositoryProvider.overrideWithValue(repository),
       ],
     );
@@ -39,6 +41,7 @@ void main() {
     final repository = _MemoryExternalProviderRepository(configs: const [_provider]);
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         externalProviderRepositoryProvider.overrideWithValue(repository),
       ],
     );
@@ -55,6 +58,7 @@ void main() {
     final repository = _MemoryExternalProviderRepository();
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         externalProviderRepositoryProvider.overrideWithValue(repository),
       ],
     );
@@ -70,6 +74,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
       ],
     );
@@ -89,6 +94,7 @@ void main() {
     final client = _RecordingExternalProviderClient();
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         externalProviderRepositoryProvider.overrideWithValue(repository),
         externalProviderClientProvider.overrideWithValue(client),
       ],

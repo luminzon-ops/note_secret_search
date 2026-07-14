@@ -10,6 +10,9 @@ final noteRepositoryProvider = Provider<NoteRepository>((ref) {
 });
 
 final noteListProvider = FutureProvider<List<NoteItem>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <NoteItem>[];
+  }
   final vault = await ref.watch(defaultVaultProvider.future);
   if (vault == null) {
     return const <NoteItem>[];
@@ -19,5 +22,8 @@ final noteListProvider = FutureProvider<List<NoteItem>>((ref) async {
 });
 
 final noteDetailProvider = FutureProvider.family<NoteItem?, String>((ref, id) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   return ref.watch(noteRepositoryProvider).getById(id);
 });

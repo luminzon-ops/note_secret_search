@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
@@ -55,6 +56,7 @@ void main() {
   testWidgets('private QA tab disables send when semantic readiness is false', (tester) async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(
             ready: true,
@@ -90,6 +92,7 @@ void main() {
   testWidgets('free chat tab allows send when llm is ready', (tester) async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(
             ready: true,
@@ -129,6 +132,7 @@ void main() {
   ) async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(
             ready: true,
@@ -172,6 +176,7 @@ void main() {
   ) async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(
             ready: true,
@@ -248,6 +253,7 @@ void main() {
     final externalClient = _RecordingExternalProviderClient();
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         localLlmReadinessProvider.overrideWith(
           (ref) async => const LocalLlmReadiness(

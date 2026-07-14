@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,6 +51,7 @@ void main() {
   test('semanticSearchReadinessProvider reports unverified runtime as not ready', () async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         activeModelSelectionProvider.overrideWith(
           (ref) async => const ActiveModelSelection(activeEmbeddingModelId: 'embed-1'),
         ),
@@ -78,6 +80,7 @@ void main() {
   test('activeEmbeddingModelProvider returns selected model even when runtime degraded', () async {
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         activeModelSelectionProvider.overrideWith(
           (ref) async => const ActiveModelSelection(activeEmbeddingModelId: 'embed-1'),
         ),
@@ -104,6 +107,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_embedding_model_id': 'embed-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
         embeddingRuntimeStatesProvider.overrideWith((ref) async => const <String, EmbeddingEngineState>{}),
@@ -124,6 +128,7 @@ void main() {
     final missingModel = _embeddingModel.copyWith(filePresent: false, enabled: false);
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => [missingModel]),
         embeddingRuntimeStatesProvider.overrideWith(
@@ -151,6 +156,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -179,6 +185,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -207,6 +214,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -233,6 +241,7 @@ void main() {
     final missingLlmModel = _llmModel.copyWith(filePresent: false, enabled: false);
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => [missingLlmModel]),
         llmRuntimeStatesProvider.overrideWith(
@@ -262,6 +271,7 @@ void main() {
     final staleLlmModel = _llmModel.copyWith(enabled: false);
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
         modelRegistryEntriesProvider.overrideWith((ref) async => [staleLlmModel]),
         llmRuntimeStatesProvider.overrideWith(

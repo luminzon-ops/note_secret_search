@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
@@ -28,6 +30,11 @@ void main() {
   }) async {
     return ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()
+            ..markUnlocked(UnlockMethod.biometric),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
           (ref) async =>
               llmReadiness ??

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
@@ -792,6 +793,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
@@ -835,6 +837,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
       ],
@@ -885,6 +888,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
@@ -941,6 +945,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
@@ -1059,6 +1064,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
@@ -1101,6 +1107,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         llmRuntimeBridgeProvider.overrideWithValue(bridge),
@@ -1912,6 +1919,7 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),

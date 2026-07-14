@@ -31,6 +31,9 @@ final modelRegistryRepositoryProvider = Provider<ModelRegistryRepository>((ref) 
 });
 
 final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <ModelRegistryEntry>[];
+  }
   final repository = ref.watch(modelRegistryRepositoryProvider);
   final downloadService = ref.watch(modelDownloadServiceProvider);
   final catalogEntries = await ref.watch(modelCatalogEntriesProvider.future);
@@ -129,6 +132,9 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((r
 });
 
 final embeddingRuntimeStatesProvider = FutureProvider<Map<String, EmbeddingEngineState>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <String, EmbeddingEngineState>{};
+  }
   final entries = await ref.watch(modelRegistryEntriesProvider.future);
   final embeddingEngine = ref.watch(embeddingEngineProvider);
   final resolved = <String, EmbeddingEngineState>{};
@@ -188,6 +194,9 @@ final modelSourceProbeServiceProvider = Provider<ModelSourceProbeService>((ref) 
 });
 
 final modelDownloadTasksProvider = FutureProvider<List<ModelDownloadTask>>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const <ModelDownloadTask>[];
+  }
   final repository = ref.watch(modelDownloadRepositoryProvider);
   final downloadService = ref.watch(modelDownloadServiceProvider);
   final catalogEntries = await ref.watch(modelCatalogEntriesProvider.future);

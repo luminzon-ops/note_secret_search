@@ -1,17 +1,64 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/app/di/sensitive_state_invalidator_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/app/theme/app_theme.dart';
 import 'package:note_secret_search/core/error/app_error_view.dart';
+import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lifecycle_guard.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lock_gate.dart';
 
-class NoteSecretSearchApp extends ConsumerWidget {
+class NoteSecretSearchApp extends ConsumerStatefulWidget {
   const NoteSecretSearchApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NoteSecretSearchApp> createState() => _NoteSecretSearchAppState();
+}
+
+class _NoteSecretSearchAppState extends ConsumerState<NoteSecretSearchApp> {
+  late final ProviderSubscription<LockSessionState> _lockSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    final invalidator = ref.read(sensitiveStateInvalidatorProvider);
+    final initialSession = ref.read(lockSessionControllerProvider);
+    if (initialSession.isUnlocked) {
+      invalidator.allowSensitiveStateAccess();
+    } else {
+      scheduleMicrotask(() {
+        if (mounted && !ref.read(lockSessionControllerProvider).isUnlocked) {
+          invalidator.clearForLock();
+        }
+      });
+    }
+
+    _lockSubscription = ref.listenManual(
+      lockSessionControllerProvider,
+      (previous, next) {
+        if (next.isUnlocked) {
+          invalidator.allowSensitiveStateAccess();
+          return;
+        }
+        if (previous?.isUnlocked == true ||
+            previous?.lockEpoch != next.lockEpoch) {
+          invalidator.clearForLock();
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _lockSubscription.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final bootstrapState = ref.watch(appBootstrapProvider);
     final router = ref.watch(appRouterProvider);
 

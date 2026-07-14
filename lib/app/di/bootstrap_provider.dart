@@ -54,6 +54,8 @@ final lockSessionControllerProvider = StateNotifierProvider<LockSessionControlle
   (ref) => LockSessionController(),
 );
 
+final sensitiveStateAccessAllowedProvider = StateProvider<bool>((ref) => false);
+
 final pinStateControllerProvider = StateNotifierProvider<PinStateController, PinState>(
   (ref) => PinStateController(),
 );

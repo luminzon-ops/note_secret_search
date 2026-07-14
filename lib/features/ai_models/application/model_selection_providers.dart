@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
@@ -7,6 +8,9 @@ import 'package:note_secret_search/features/search/domain/embedding_engine.dart'
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const ActiveModelSelection(activeEmbeddingModelId: null);
+  }
   final preferences = await ref.watch(sharedPreferencesProvider.future);
   final storedModelId = preferences.getString(_activeEmbeddingModelIdKey);
   if (storedModelId == null || storedModelId.isEmpty) {
@@ -31,11 +35,17 @@ final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((ref) 
 });
 
 final activeEmbeddingModelProvider = FutureProvider<ModelRegistryEntry?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   final selectedRuntime = await ref.watch(activeEmbeddingRuntimeSelectionProvider.future);
   return selectedRuntime?.entry.isInstalled == true ? selectedRuntime!.entry : null;
 });
 
 final activeEmbeddingRuntimeSelectionProvider = FutureProvider<SelectedEmbeddingRuntime?>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return null;
+  }
   final selection = await ref.watch(activeModelSelectionProvider.future);
   final entries = await ref.watch(modelRegistryEntriesProvider.future);
   final runtimeStates = await ref.watch(embeddingRuntimeStatesProvider.future);
@@ -57,6 +67,12 @@ final activeEmbeddingRuntimeSelectionProvider = FutureProvider<SelectedEmbedding
 });
 
 final semanticSearchReadinessProvider = FutureProvider<SemanticSearchReadiness>((ref) async {
+  if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+    return const SemanticSearchReadiness(
+      ready: false,
+      reason: '应用已锁定。',
+    );
+  }
   final selectedRuntime = await ref.watch(activeEmbeddingRuntimeSelectionProvider.future);
   final scope = await ref.watch(searchScopeConfigProvider.future);
 
