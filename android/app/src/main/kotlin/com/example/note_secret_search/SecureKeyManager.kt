@@ -11,6 +11,8 @@ interface SecureKeyOperations {
 }
 
 internal interface SecureKeyPreferenceStore {
+    fun isPersistenceAvailable(): Boolean
+
     fun isInitialized(): Boolean
 
     fun readDatabasePasswordMaterial(): String?
@@ -21,6 +23,10 @@ internal interface SecureKeyPreferenceStore {
 private class SharedPreferencesSecureKeyPreferenceStore(
     private val preferences: SharedPreferences,
 ) : SecureKeyPreferenceStore {
+    override fun isPersistenceAvailable(): Boolean {
+        return !persistenceUnavailable
+    }
+
     override fun isInitialized(): Boolean {
         return preferences.getBoolean(ROOT_KEY_INITIALIZED, false)
     }
@@ -30,13 +36,30 @@ private class SharedPreferencesSecureKeyPreferenceStore(
     }
 
     override fun persistInitializedMaterial(material: String): Boolean {
-        return preferences.edit()
-            .putString(DB_PASSWORD_KEY, material)
-            .putBoolean(ROOT_KEY_INITIALIZED, true)
-            .commit()
+        if (persistenceUnavailable) {
+            return false
+        }
+
+        return try {
+            preferences.edit()
+                .putString(DB_PASSWORD_KEY, material)
+                .putBoolean(ROOT_KEY_INITIALIZED, true)
+                .commit()
+                .also { persisted ->
+                    if (!persisted) {
+                        persistenceUnavailable = true
+                    }
+                }
+        } catch (error: Exception) {
+            persistenceUnavailable = true
+            throw error
+        }
     }
 
     companion object {
+        @Volatile
+        private var persistenceUnavailable = false
+
         private const val ROOT_KEY_INITIALIZED = "root_key_initialized"
         private const val DB_PASSWORD_KEY = "database_password_material"
     }
@@ -52,6 +75,10 @@ class SecureKeyManager internal constructor(
     )
 
     override fun ensureRootKey() {
+        if (!store.isPersistenceAvailable()) {
+            throw IllegalStateException("Database key material is unavailable.")
+        }
+
         // MVP skeleton:
         // 1. Here we will generate/load a Keystore-backed root key.
         // 2. Prefer StrongBox when available.
@@ -66,7 +93,12 @@ class SecureKeyManager internal constructor(
 
         val material = existingMaterial?.takeIf { it.isNotBlank() }
             ?: "${UUID.randomUUID()}-db-key"
-        if (!store.persistInitializedMaterial(material)) {
+        val persisted = try {
+            store.persistInitializedMaterial(material)
+        } catch (_: Exception) {
+            throw IllegalStateException("Database key material could not be persisted.")
+        }
+        if (!persisted) {
             throw IllegalStateException("Database key material could not be persisted.")
         }
     }

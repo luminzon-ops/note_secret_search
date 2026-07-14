@@ -66,6 +66,26 @@ class SecureKeyManagerTest {
     }
 
     @Test
+    fun `failed persistence stays closed after manager reconstruction`() {
+        val store = FakeSecureKeyPreferenceStore(
+            persistResult = false,
+            exposeValuesOnFailedPersistence = true,
+        )
+        var failures = 0
+
+        repeat(2) {
+            val manager = SecureKeyManager(store)
+            try {
+                manager.ensureRootKey()
+            } catch (_: IllegalStateException) {
+                failures += 1
+            }
+        }
+
+        assertEquals(2, failures)
+    }
+
+    @Test
     fun `native handler maps key failures without exposing exception details`() {
         val operations = object : SecureKeyOperations {
             override fun ensureRootKey() {
@@ -91,8 +111,12 @@ private class FakeSecureKeyPreferenceStore(
     var initialized: Boolean = false,
     var material: String? = null,
     private val persistResult: Boolean = true,
+    private val exposeValuesOnFailedPersistence: Boolean = false,
 ) : SecureKeyPreferenceStore {
     var persistCalls = 0
+    var persistenceAvailable = true
+
+    override fun isPersistenceAvailable(): Boolean = persistenceAvailable
 
     override fun isInitialized(): Boolean = initialized
 
@@ -100,12 +124,14 @@ private class FakeSecureKeyPreferenceStore(
 
     override fun persistInitializedMaterial(material: String): Boolean {
         persistCalls += 1
-        if (!persistResult) {
-            return false
+        if (persistResult || exposeValuesOnFailedPersistence) {
+            this.material = material
+            initialized = true
         }
-        this.material = material
-        initialized = true
-        return true
+        if (!persistResult) {
+            persistenceAvailable = false
+        }
+        return persistResult
     }
 }
 
