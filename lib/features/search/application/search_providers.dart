@@ -242,13 +242,30 @@ class SearchIndexController {
   final Ref _ref;
 
   Future<void> indexPending() async {
+    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
+
     final status = await _ref.read(searchIndexStatusProvider.future);
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     final activeModel = await _ref.read(activeEmbeddingModelProvider.future);
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     final settings = await _ref.read(searchIndexSettingsProvider.future);
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     if (!status.readyForIndexing || activeModel == null) {
       return;
     }
 
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     _ref.read(searchIndexTaskStateProvider.notifier).state = status.taskState.copyWith(
           running: true,
           clearLastError: true,
@@ -261,13 +278,22 @@ class SearchIndexController {
             settings: settings,
           );
 
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.read(searchIndexTaskStateProvider.notifier).state = const SearchIndexTaskState.idle()
           .copyWith(
             lastCompletedAt: DateTime.now(),
             lastIndexedCount: status.pendingItems.length,
           );
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.invalidate(searchIndexStatusProvider);
     } catch (error) {
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.read(searchIndexTaskStateProvider.notifier).state = const SearchIndexTaskState.idle()
           .copyWith(
             lastCompletedAt: DateTime.now(),
@@ -279,14 +305,28 @@ class SearchIndexController {
   }
 
   Future<void> indexPendingAndRefresh() async {
+    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
+
     final query = _ref.read(searchQueryProvider).trim();
     final beforeResults = await _ref.read(unifiedSearchResultsProvider.future);
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     final beforeIds = beforeResults.map((item) => item.id).toList(growable: false);
 
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
     _ref.read(searchRefreshFeedbackProvider.notifier).state =
         const SearchRefreshFeedbackState.hidden();
 
     await indexPending();
+    if (!_canContinue(lockEpoch)) {
+      return;
+    }
 
     _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
         .copyWith(
@@ -295,13 +335,31 @@ class SearchIndexController {
         );
 
     try {
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.invalidate(searchIndexStatusProvider);
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.invalidate(semanticSearchResultsProvider);
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.invalidate(unifiedSearchResultsProvider);
 
       await _ref.read(searchIndexStatusProvider.future);
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       await _ref.read(semanticSearchResultsProvider.future);
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       final afterResults = await _ref.read(unifiedSearchResultsProvider.future);
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
 
       _ref.read(searchRefreshFeedbackProvider.notifier).state = _buildRefreshFeedback(
         query: query,
@@ -309,14 +367,28 @@ class SearchIndexController {
         afterIds: afterResults.map((item) => item.id).toList(growable: false),
       );
 
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
           .copyWith(lastCompletedAt: DateTime.now());
     } catch (_) {
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.read(searchRefreshFeedbackProvider.notifier).state =
           const SearchRefreshFeedbackState.hidden();
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
       _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle();
       rethrow;
     }
+  }
+
+  bool _canContinue(int lockEpoch) {
+    return _ref.read(lockSessionControllerProvider).lockEpoch == lockEpoch &&
+        _ref.read(sensitiveStateAccessAllowedProvider);
   }
 
   SearchRefreshFeedbackState _buildRefreshFeedback({

@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
@@ -134,6 +135,10 @@ void main() {
   test('indexPendingAndRefresh writes empty-query feedback after refresh completes', () async {
     final container = ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
         searchQueryProvider.overrideWith((ref) => ''),
         searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -159,6 +164,10 @@ void main() {
   test('indexPendingAndRefresh writes unchanged feedback when unified result ids stay the same', () async {
     final container = ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
         searchQueryProvider.overrideWith((ref) => 'bank'),
         searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -184,6 +193,10 @@ void main() {
     var callCount = 0;
     final container = ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
         searchQueryProvider.overrideWith((ref) => 'bank'),
         searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -212,6 +225,10 @@ void main() {
     var callCount = 0;
     final container = ProviderContainer(
       overrides: [
+        lockSessionControllerProvider.overrideWith(
+          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+        ),
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
         searchQueryProvider.overrideWith((ref) => 'bank'),
         searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
