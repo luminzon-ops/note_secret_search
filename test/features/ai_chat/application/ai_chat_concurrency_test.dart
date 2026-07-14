@@ -15,6 +15,7 @@ import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.da
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 
 part 'ai_chat_concurrency_test_fakes.dart';
+part 'ai_chat_concurrency_additional_tests.dart';
 
 const _llmModel = ModelRegistryEntry(
   id: 'llm-concurrency',
@@ -182,6 +183,175 @@ void main() {
     },
   );
 
+  test(
+    'existing-session send synchronously activates its shared origin',
+    () async {
+      final readiness = _ControllableReadiness();
+      final repository = _ChatTestRepository(
+        sessions: [
+          _session('session-a', ChatMode.freeChat),
+          _session('session-b', ChatMode.privateQa),
+        ],
+        messagesBySession: {
+          'session-a': [_message('message-a', 'session-a', 'free A')],
+          'session-b': [_message('message-b', 'session-b', 'private B')],
+        },
+      );
+      final container = _buildContainer(
+        repository: repository,
+        readiness: readiness,
+      );
+      addTearDown(container.dispose);
+
+      final freeController = container.read(
+        freeChatControllerProvider.notifier,
+      );
+      final privateController = container.read(
+        privateQaChatControllerProvider.notifier,
+      );
+      await freeController.selectSession('session-a');
+      await privateController.selectSession('session-b');
+
+      final send = freeController.send('activate A');
+      await readiness.waitForRequest();
+      final selectedDuringReadiness = container.read(
+        currentChatSessionIdProvider,
+      );
+      final intentDuringReadiness = container.read(
+        chatSessionSelectionIntentProvider,
+      );
+
+      readiness.complete(_ready);
+      await send;
+
+      expect(selectedDuringReadiness, 'session-a');
+      expect(intentDuringReadiness.sessionId, 'session-a');
+      expect(intentDuringReadiness.mode, ChatMode.freeChat);
+      expect(container.read(currentChatSessionIdProvider), 'session-a');
+      expect(
+        repository.messageWrites.map((message) => message.sessionId).toSet(),
+        {'session-a'},
+      );
+      _expectSelected(
+        privateController,
+        sessionId: 'session-b',
+        text: 'private B',
+      );
+    },
+  );
+
+  test(
+    'new session remains unpublished until its session save succeeds',
+    () async {
+      final repository = _ChatTestRepository(delaySessionSave: true);
+      final container = _buildContainer(repository: repository);
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      final send = controller.send('new session');
+      final pendingSession = await repository.waitForSessionSave();
+
+      final controllerIdBeforeSave = controller.state.currentSessionId;
+      final selectedIdBeforeSave = container.read(currentChatSessionIdProvider);
+      final intentBeforeSave = container.read(
+        chatSessionSelectionIntentProvider,
+      );
+      final providerSessionBeforeSave = await container.read(
+        currentChatSessionProvider.future,
+      );
+      final providerMessagesBeforeSave = await container.read(
+        currentChatMessagesProvider.future,
+      );
+
+      repository.completeSessionSave();
+      await send;
+
+      expect(controllerIdBeforeSave, isNull);
+      expect(selectedIdBeforeSave, isNull);
+      expect(intentBeforeSave.sessionId, isNull);
+      expect(providerSessionBeforeSave, isNull);
+      expect(providerMessagesBeforeSave, isEmpty);
+      expect(controller.state.currentSessionId, pendingSession.id);
+      expect(container.read(currentChatSessionIdProvider), pendingSession.id);
+    },
+  );
+
+  test('readiness failure leaves no phantom new-session selection', () async {
+    final readiness = _ControllableReadiness();
+    final repository = _ChatTestRepository();
+    final container = _buildContainer(
+      repository: repository,
+      readiness: readiness,
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(freeChatControllerProvider.notifier);
+    final send = controller.send('readiness failure');
+    await readiness.waitForRequest();
+
+    final controllerIdDuringReadiness = controller.state.currentSessionId;
+    final selectedIdDuringReadiness = container.read(
+      currentChatSessionIdProvider,
+    );
+    final intentDuringReadiness = container.read(
+      chatSessionSelectionIntentProvider,
+    );
+    readiness.completeError(StateError('readiness unavailable'));
+
+    await expectLater(send, throwsStateError);
+
+    expect(controllerIdDuringReadiness, isNull);
+    expect(selectedIdDuringReadiness, isNull);
+    expect(intentDuringReadiness.sessionId, isNull);
+    expect(controller.state.currentSessionId, isNull);
+    expect(container.read(currentChatSessionIdProvider), isNull);
+    expect(
+      container.read(chatSessionSelectionIntentProvider).sessionId,
+      isNull,
+    );
+    expect(await container.read(currentChatSessionProvider.future), isNull);
+    expect(await container.read(currentChatMessagesProvider.future), isEmpty);
+    expect(repository.sessionWrites, isEmpty);
+    expect(repository.messageWrites, isEmpty);
+  });
+
+  test(
+    'selecting B during new-session readiness keeps B selected and writes only A',
+    () async {
+      final readiness = _ControllableReadiness();
+      final repository = _ChatTestRepository(
+        sessions: [_session('session-b', ChatMode.freeChat)],
+        messagesBySession: {
+          'session-b': [_message('message-b', 'session-b', 'selected B')],
+        },
+        delaySessionSave: true,
+      );
+      final container = _buildContainer(
+        repository: repository,
+        readiness: readiness,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      final send = controller.send('new A');
+      await readiness.waitForRequest();
+      await controller.selectSession('session-b');
+
+      readiness.complete(_ready);
+      final pendingSession = await repository.waitForSessionSave();
+      repository.completeSessionSave();
+      await send;
+
+      expect(pendingSession.id, isNot('session-b'));
+      expect(
+        repository.messageWrites.map((message) => message.sessionId).toSet(),
+        {pendingSession.id},
+      );
+      expect(container.read(currentChatSessionIdProvider), 'session-b');
+      _expectCleanSelectedB(controller);
+    },
+  );
+
   test('late successful send persists only to A and leaves B clean', () async {
     final llmEngine = _ControllableLlmEngine();
     final repository = _repositoryForLateSend();
@@ -267,85 +437,6 @@ void main() {
       expect(controller.state.sending, isFalse);
     },
   );
-}
 
-ProviderContainer _buildContainer({
-  required _ChatTestRepository repository,
-  LlmEngine? llmEngine,
-  _ControllableReadiness? readiness,
-}) {
-  return ProviderContainer(
-    overrides: [
-      sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-      chatSessionRepositoryProvider.overrideWithValue(repository),
-      llmEngineProvider.overrideWithValue(
-        llmEngine ?? const _ImmediateLlmEngine(),
-      ),
-      localLlmReadinessProvider.overrideWith(
-        (ref) => readiness?.load() ?? Future.value(_ready),
-      ),
-    ],
-  );
-}
-
-_ChatTestRepository _repositoryForLateSend() {
-  return _ChatTestRepository(
-    sessions: [
-      _session('session-a', ChatMode.freeChat),
-      _session('session-b', ChatMode.freeChat),
-    ],
-    messagesBySession: {
-      'session-a': [_message('message-a', 'session-a', 'origin A')],
-      'session-b': [_message('message-b', 'session-b', 'selected B')],
-    },
-  );
-}
-
-void _expectSelected(
-  AiChatConversationController controller, {
-  required String sessionId,
-  required String text,
-}) {
-  expect(controller.state.currentSessionId, sessionId);
-  expect(controller.state.messages, hasLength(1));
-  expect(controller.state.messages.single.text, text);
-}
-
-void _expectCleanSelectedB(AiChatConversationController controller) {
-  _expectSelected(controller, sessionId: 'session-b', text: 'selected B');
-  expect(controller.state.sending, isFalse);
-  expect(controller.state.errorMessage, isNull);
-}
-
-void _expectWritesOnlySessionA(_ChatTestRepository repository) {
-  expect(repository.messageWrites, hasLength(2));
-  expect(repository.messageWrites.map((message) => message.sessionId).toSet(), {
-    'session-a',
-  });
-  expect(repository.sessionWrites.map((session) => session.id).toSet(), {
-    'session-a',
-  });
-}
-
-ChatSession _session(String id, ChatMode mode) {
-  return ChatSession(
-    id: id,
-    mode: mode,
-    title: id,
-    allowPrivateContext: false,
-    archived: false,
-    createdAt: DateTime(2026, 7, 15, 9),
-    updatedAt: DateTime(2026, 7, 15, 9, 1),
-  );
-}
-
-ChatStoredMessage _message(String id, String sessionId, String content) {
-  return ChatStoredMessage(
-    id: id,
-    sessionId: sessionId,
-    role: ChatStoredMessageRole.user,
-    content: content,
-    status: ChatStoredMessageStatus.completed,
-    createdAt: DateTime(2026, 7, 15, 9, 2),
-  );
+  _registerAdditionalChatConcurrencyTests();
 }

@@ -20,6 +20,7 @@ import 'package:note_secret_search/features/search/domain/search_result_item.dar
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
+part 'ai_chat_conversation_state.dart';
 part 'ai_chat_conversation_controller.dart';
 part 'ai_chat_conversation_mapping.dart';
 part 'ai_chat_sensitive_providers.dart';

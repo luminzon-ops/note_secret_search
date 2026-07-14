@@ -1,5 +1,86 @@
 part of 'ai_chat_concurrency_test.dart';
 
+ProviderContainer _buildContainer({
+  required _ChatTestRepository repository,
+  LlmEngine? llmEngine,
+  _ControllableReadiness? readiness,
+}) {
+  return ProviderContainer(
+    overrides: [
+      sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+      chatSessionRepositoryProvider.overrideWithValue(repository),
+      llmEngineProvider.overrideWithValue(
+        llmEngine ?? const _ImmediateLlmEngine(),
+      ),
+      localLlmReadinessProvider.overrideWith(
+        (ref) => readiness?.load() ?? Future.value(_ready),
+      ),
+    ],
+  );
+}
+
+_ChatTestRepository _repositoryForLateSend() {
+  return _ChatTestRepository(
+    sessions: [
+      _session('session-a', ChatMode.freeChat),
+      _session('session-b', ChatMode.freeChat),
+    ],
+    messagesBySession: {
+      'session-a': [_message('message-a', 'session-a', 'origin A')],
+      'session-b': [_message('message-b', 'session-b', 'selected B')],
+    },
+  );
+}
+
+void _expectSelected(
+  AiChatConversationController controller, {
+  required String sessionId,
+  required String text,
+}) {
+  expect(controller.state.currentSessionId, sessionId);
+  expect(controller.state.messages, hasLength(1));
+  expect(controller.state.messages.single.text, text);
+}
+
+void _expectCleanSelectedB(AiChatConversationController controller) {
+  _expectSelected(controller, sessionId: 'session-b', text: 'selected B');
+  expect(controller.state.sending, isFalse);
+  expect(controller.state.errorMessage, isNull);
+}
+
+void _expectWritesOnlySessionA(_ChatTestRepository repository) {
+  expect(repository.messageWrites, hasLength(2));
+  expect(repository.messageWrites.map((message) => message.sessionId).toSet(), {
+    'session-a',
+  });
+  expect(repository.sessionWrites.map((session) => session.id).toSet(), {
+    'session-a',
+  });
+}
+
+ChatSession _session(String id, ChatMode mode) {
+  return ChatSession(
+    id: id,
+    mode: mode,
+    title: id,
+    allowPrivateContext: false,
+    archived: false,
+    createdAt: DateTime(2026, 7, 15, 9),
+    updatedAt: DateTime(2026, 7, 15, 9, 1),
+  );
+}
+
+ChatStoredMessage _message(String id, String sessionId, String content) {
+  return ChatStoredMessage(
+    id: id,
+    sessionId: sessionId,
+    role: ChatStoredMessageRole.user,
+    content: content,
+    status: ChatStoredMessageStatus.completed,
+    createdAt: DateTime(2026, 7, 15, 9, 2),
+  );
+}
+
 class _ChatTestRepository implements ChatSessionRepository {
   _ChatTestRepository({
     List<ChatSession> sessions = const <ChatSession>[],
@@ -7,6 +88,7 @@ class _ChatTestRepository implements ChatSessionRepository {
         const <String, List<ChatStoredMessage>>{},
     Set<String> blockedMessageSessionIds = const <String>{},
     bool delaySessionList = false,
+    bool delaySessionSave = false,
   }) : _sessions = {for (final session in sessions) session.id: session},
        _messagesBySession = {
          for (final entry in messagesBySession.entries)
@@ -15,16 +97,19 @@ class _ChatTestRepository implements ChatSessionRepository {
        _blockedMessageSessionIds = Set<String>.from(blockedMessageSessionIds),
        _sessionListResult = delaySessionList
            ? Completer<List<ChatSession>>()
-           : null;
+           : null,
+       _sessionSaveResult = delaySessionSave ? Completer<void>() : null;
 
   final Map<String, ChatSession> _sessions;
   final Map<String, List<ChatStoredMessage>> _messagesBySession;
   final Set<String> _blockedMessageSessionIds;
   final Completer<List<ChatSession>>? _sessionListResult;
+  final Completer<void>? _sessionSaveResult;
   final Map<String, Completer<void>> _messageListRequests = {};
   final Map<String, Completer<List<ChatStoredMessage>>> _messageListResults =
       {};
   final Completer<void> _sessionListRequest = Completer<void>();
+  final Completer<ChatSession> _sessionSaveRequest = Completer<ChatSession>();
 
   final List<ChatSession> sessionWrites = <ChatSession>[];
   final List<ChatStoredMessage> messageWrites = <ChatStoredMessage>[];
@@ -36,6 +121,8 @@ class _ChatTestRepository implements ChatSessionRepository {
   }
 
   Future<void> waitForSessionList() => _sessionListRequest.future;
+
+  Future<ChatSession> waitForSessionSave() => _sessionSaveRequest.future;
 
   void completeMessageList(String sessionId) {
     final result = _messageListResults[sessionId];
@@ -55,6 +142,13 @@ class _ChatTestRepository implements ChatSessionRepository {
       return;
     }
     result.complete(List<ChatSession>.from(_sessions.values));
+  }
+
+  void completeSessionSave() {
+    final result = _sessionSaveResult;
+    if (result != null && !result.isCompleted) {
+      result.complete();
+    }
   }
 
   @override
@@ -109,6 +203,13 @@ class _ChatTestRepository implements ChatSessionRepository {
 
   @override
   Future<void> saveSession(ChatSession session) async {
+    final result = _sessionSaveResult;
+    if (result != null) {
+      if (!_sessionSaveRequest.isCompleted) {
+        _sessionSaveRequest.complete(session);
+      }
+      await result.future;
+    }
     sessionWrites.add(session);
     _sessions[session.id] = session;
   }
@@ -129,6 +230,10 @@ class _ControllableReadiness {
 
   void complete(LocalLlmReadiness readiness) {
     _result.complete(readiness);
+  }
+
+  void completeError(Object error) {
+    _result.completeError(error);
   }
 }
 
@@ -184,5 +289,47 @@ class _ControllableLlmEngine extends _ImmediateLlmEngine {
       _request.complete();
     }
     return _result.future;
+  }
+}
+
+class _QueuedControllableLlmEngine extends _ImmediateLlmEngine {
+  final List<Completer<LlmInferenceResponse>> _results = [
+    Completer<LlmInferenceResponse>(),
+    Completer<LlmInferenceResponse>(),
+  ];
+  final Map<int, Completer<void>> _requestWaiters = {};
+
+  var requestCount = 0;
+
+  Future<void> waitForRequestCount(int count) {
+    if (requestCount >= count) {
+      return Future.value();
+    }
+    return _requestWaiters.putIfAbsent(count, Completer<void>.new).future;
+  }
+
+  void complete(int index, String text) {
+    _results[index].complete(
+      LlmInferenceResponse(
+        text: text,
+        finishReason: 'stop',
+        usedPrivateContext: false,
+      ),
+    );
+  }
+
+  @override
+  Future<LlmInferenceResponse> generate(LlmInferenceRequest request) {
+    final index = requestCount;
+    requestCount++;
+    for (final entry in _requestWaiters.entries) {
+      if (requestCount >= entry.key && !entry.value.isCompleted) {
+        entry.value.complete();
+      }
+    }
+    if (index < _results.length) {
+      return _results[index].future;
+    }
+    return super.generate(request);
   }
 }

@@ -1,56 +1,5 @@
 part of 'ai_chat_providers.dart';
 
-class AiChatConversationState {
-  const AiChatConversationState({
-    required this.mode,
-    this.messages = const <ChatMessage>[],
-    this.sending = false,
-    this.allowPrivateContext = false,
-    this.manualItems = const <ChatContextItem>[],
-    this.currentSessionId,
-    this.errorMessage,
-    this.suppressSessionRestore = false,
-  });
-
-  final ChatMode mode;
-  final List<ChatMessage> messages;
-  final bool sending;
-  final bool allowPrivateContext;
-  final List<ChatContextItem> manualItems;
-  final String? currentSessionId;
-  final String? errorMessage;
-  final bool suppressSessionRestore;
-
-  AiChatConversationState copyWith({
-    ChatMode? mode,
-    List<ChatMessage>? messages,
-    bool? sending,
-    bool? allowPrivateContext,
-    List<ChatContextItem>? manualItems,
-    String? currentSessionId,
-    bool clearCurrentSessionId = false,
-    String? errorMessage,
-    bool clearErrorMessage = false,
-    bool? suppressSessionRestore,
-  }) {
-    return AiChatConversationState(
-      mode: mode ?? this.mode,
-      messages: messages ?? this.messages,
-      sending: sending ?? this.sending,
-      allowPrivateContext: allowPrivateContext ?? this.allowPrivateContext,
-      manualItems: manualItems ?? this.manualItems,
-      currentSessionId: clearCurrentSessionId
-          ? null
-          : (currentSessionId ?? this.currentSessionId),
-      errorMessage: clearErrorMessage
-          ? null
-          : (errorMessage ?? this.errorMessage),
-      suppressSessionRestore:
-          suppressSessionRestore ?? this.suppressSessionRestore,
-    );
-  }
-}
-
 class AiChatConversationController
     extends StateNotifier<AiChatConversationState> {
   AiChatConversationController({required Ref ref, required ChatMode mode})
@@ -60,7 +9,7 @@ class AiChatConversationController
   final Ref _ref;
   final AppLogger _logger = const AppLogger();
   static const _uuid = Uuid();
-  final Set<String> _sendingSessionIds = <String>{};
+  final Map<String, Object> _sendingOperations = <String, Object>{};
   var _generation = 0;
 
   Future<void> restoreSessionIfNeeded() async {
@@ -138,7 +87,7 @@ class AiChatConversationController
       currentSessionId: sessionId,
       allowPrivateContext: session.allowPrivateContext,
       messages: messages.map(_mapStoredChatMessageToUi).toList(growable: false),
-      sending: _sendingSessionIds.contains(sessionId),
+      sending: _sendingOperations.containsKey(sessionId),
       clearErrorMessage: true,
       suppressSessionRestore: false,
     );
@@ -163,7 +112,7 @@ class AiChatConversationController
   }
 
   void _resetConversation() {
-    _sendingSessionIds.clear();
+    _sendingOperations.clear();
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
     _ref.read(currentChatSessionIdProvider.notifier).state = null;
     state = AiChatConversationState(
@@ -187,14 +136,22 @@ class AiChatConversationController
       state.manualItems,
       growable: false,
     );
-    final originSessionId = state.currentSessionId ?? _uuid.v4();
-    if (_sendingSessionIds.contains(originSessionId)) {
+    final existingSessionId = state.currentSessionId;
+    final originSessionId = existingSessionId ?? _uuid.v4();
+    final publicationIntent = existingSessionId == null
+        ? _ref.read(chatSessionSelectionIntentProvider)
+        : null;
+    final publicationSessionId = existingSessionId == null
+        ? _ref.read(currentChatSessionIdProvider)
+        : null;
+    if (_sendingOperations.containsKey(originSessionId)) {
       return;
     }
-    if (state.currentSessionId == null) {
-      _bindNewOriginSession(originSessionId);
+    if (existingSessionId != null) {
+      _activateExistingOriginSession(originSessionId);
     }
-    _sendingSessionIds.add(originSessionId);
+    final sendingOperation = Object();
+    _sendingOperations[originSessionId] = sendingOperation;
 
     try {
       final repository = _ref.read(chatSessionRepositoryProvider);
@@ -241,6 +198,10 @@ class AiChatConversationController
       await repository.saveSession(session);
       if (!_canContinue(generation)) {
         return;
+      }
+      if (publicationIntent != null &&
+          _canPublishNewOrigin(publicationIntent, publicationSessionId)) {
+        _publishNewOriginSession(originSessionId);
       }
       await repository.saveMessage(
         ChatStoredMessage(
@@ -400,11 +361,16 @@ class AiChatConversationController
         }
       }
     } finally {
-      _sendingSessionIds.remove(originSessionId);
-      if (_canContinue(generation) &&
-          _isOriginSelected(originSessionId, conversationMode) &&
-          state.sending) {
-        state = state.copyWith(sending: false);
+      if (identical(
+        _sendingOperations[originSessionId],
+        sendingOperation,
+      )) {
+        _sendingOperations.remove(originSessionId);
+        if (_canContinue(generation) &&
+            _isOriginSelected(originSessionId, conversationMode) &&
+            state.sending) {
+          state = state.copyWith(sending: false);
+        }
       }
     }
   }
@@ -434,7 +400,7 @@ class AiChatConversationController
     return next;
   }
 
-  void _bindNewOriginSession(String sessionId) {
+  void _publishNewOriginSession(String sessionId) {
     _claimSelectionIntent(sessionId);
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
@@ -443,6 +409,22 @@ class AiChatConversationController
       clearErrorMessage: true,
       suppressSessionRestore: false,
     );
+    _invalidateSelectedChatSession(_ref);
+  }
+
+  bool _canPublishNewOrigin(
+    ChatSessionSelectionIntent startingIntent,
+    String? startingSessionId,
+  ) {
+    return state.currentSessionId == null &&
+        _intentIsCurrent(startingIntent) &&
+        _ref.read(currentChatSessionIdProvider) == startingSessionId;
+  }
+
+  void _activateExistingOriginSession(String sessionId) {
+    _claimSelectionIntent(sessionId);
+    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
+    _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
     _invalidateSelectedChatSession(_ref);
   }
 
