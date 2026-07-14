@@ -1,0 +1,496 @@
+part of 'ai_chat_providers.dart';
+
+class AiChatConversationState {
+  const AiChatConversationState({
+    required this.mode,
+    this.messages = const <ChatMessage>[],
+    this.sending = false,
+    this.allowPrivateContext = false,
+    this.manualItems = const <ChatContextItem>[],
+    this.currentSessionId,
+    this.errorMessage,
+    this.suppressSessionRestore = false,
+  });
+
+  final ChatMode mode;
+  final List<ChatMessage> messages;
+  final bool sending;
+  final bool allowPrivateContext;
+  final List<ChatContextItem> manualItems;
+  final String? currentSessionId;
+  final String? errorMessage;
+  final bool suppressSessionRestore;
+
+  AiChatConversationState copyWith({
+    ChatMode? mode,
+    List<ChatMessage>? messages,
+    bool? sending,
+    bool? allowPrivateContext,
+    List<ChatContextItem>? manualItems,
+    String? currentSessionId,
+    bool clearCurrentSessionId = false,
+    String? errorMessage,
+    bool clearErrorMessage = false,
+    bool? suppressSessionRestore,
+  }) {
+    return AiChatConversationState(
+      mode: mode ?? this.mode,
+      messages: messages ?? this.messages,
+      sending: sending ?? this.sending,
+      allowPrivateContext: allowPrivateContext ?? this.allowPrivateContext,
+      manualItems: manualItems ?? this.manualItems,
+      currentSessionId: clearCurrentSessionId
+          ? null
+          : (currentSessionId ?? this.currentSessionId),
+      errorMessage: clearErrorMessage
+          ? null
+          : (errorMessage ?? this.errorMessage),
+      suppressSessionRestore:
+          suppressSessionRestore ?? this.suppressSessionRestore,
+    );
+  }
+}
+
+class AiChatConversationController
+    extends StateNotifier<AiChatConversationState> {
+  AiChatConversationController({required Ref ref, required ChatMode mode})
+    : _ref = ref,
+      super(AiChatConversationState(mode: mode));
+
+  final Ref _ref;
+  final AppLogger _logger = const AppLogger();
+  static const _uuid = Uuid();
+  final Set<String> _sendingSessionIds = <String>{};
+  var _generation = 0;
+
+  Future<void> restoreSessionIfNeeded() async {
+    final generation = _generation;
+    final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
+    if (!_restoreCanContinue(generation, startingIntent)) {
+      return;
+    }
+
+    final selectedSessionId = _ref.read(currentChatSessionIdProvider);
+    if (selectedSessionId != null && selectedSessionId.isNotEmpty) {
+      if (!_intentAllowsTarget(startingIntent, selectedSessionId)) {
+        return;
+      }
+      if (state.currentSessionId != selectedSessionId) {
+        await _selectSession(selectedSessionId, generation, startingIntent);
+      }
+      return;
+    }
+
+    if (state.currentSessionId != null && state.messages.isNotEmpty) {
+      return;
+    }
+    if (state.suppressSessionRestore) {
+      return;
+    }
+
+    final sessions = await _ref.read(chatSessionsProvider.future);
+    if (!_restoreCanContinue(generation, startingIntent)) {
+      return;
+    }
+    final matchingSession = sessions
+        .where((session) => session.mode == state.mode)
+        .firstOrNull;
+    if (matchingSession == null) {
+      return;
+    }
+
+    final restoreIntent = _claimSelectionIntent(matchingSession.id);
+    await _selectSession(matchingSession.id, generation, restoreIntent);
+  }
+
+  Future<void> selectSession(String sessionId) async {
+    final generation = _generation;
+    if (!_canContinue(generation)) {
+      return;
+    }
+    final intent = _claimSelectionIntent(sessionId);
+    await _selectSession(sessionId, generation, intent);
+  }
+
+  Future<void> _selectSession(
+    String sessionId,
+    int generation,
+    ChatSessionSelectionIntent intent,
+  ) async {
+    if (!_selectionCanContinue(generation, intent, sessionId)) {
+      return;
+    }
+    final repository = _ref.read(chatSessionRepositoryProvider);
+    final messages = await repository.listMessages(sessionId);
+    if (!_selectionCanContinue(generation, intent, sessionId)) {
+      return;
+    }
+    final session = await repository.getSession(sessionId);
+    if (!_selectionCanContinue(generation, intent, sessionId)) {
+      return;
+    }
+    if (session == null || session.mode != state.mode) {
+      return;
+    }
+
+    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
+    state = state.copyWith(
+      currentSessionId: sessionId,
+      allowPrivateContext: session.allowPrivateContext,
+      messages: messages.map(_mapStoredChatMessageToUi).toList(growable: false),
+      sending: _sendingSessionIds.contains(sessionId),
+      clearErrorMessage: true,
+      suppressSessionRestore: false,
+    );
+
+    if (_ref.read(currentChatSessionIdProvider) != sessionId) {
+      _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
+    }
+    _ref.invalidate(currentChatMessagesProvider);
+    _ref.invalidate(currentChatSessionProvider);
+  }
+
+  Future<void> startNewSession() async {
+    _generation++;
+    _claimSelectionIntent(null);
+    _resetConversation();
+  }
+
+  void resetForLock() {
+    _generation++;
+    _claimSelectionIntent(null);
+    _resetConversation();
+  }
+
+  void _resetConversation() {
+    _sendingSessionIds.clear();
+    _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
+    _ref.read(currentChatSessionIdProvider.notifier).state = null;
+    state = AiChatConversationState(
+      mode: state.mode,
+      suppressSessionRestore: true,
+    );
+    _ref.invalidate(currentChatMessagesProvider);
+    _ref.invalidate(currentChatSessionProvider);
+  }
+
+  Future<void> send(String input) async {
+    final normalized = input.trim();
+    final generation = _generation;
+    if (normalized.isEmpty || !_canContinue(generation)) {
+      return;
+    }
+
+    final conversationMode = state.mode;
+    final allowPrivateContext = state.allowPrivateContext;
+    final manualItems = List<ChatContextItem>.of(
+      state.manualItems,
+      growable: false,
+    );
+    final originSessionId = state.currentSessionId ?? _uuid.v4();
+    if (_sendingSessionIds.contains(originSessionId)) {
+      return;
+    }
+    if (state.currentSessionId == null) {
+      _bindNewOriginSession(originSessionId);
+    }
+    _sendingSessionIds.add(originSessionId);
+
+    try {
+      final repository = _ref.read(chatSessionRepositoryProvider);
+      final llmReadiness = await _ref.read(localLlmReadinessProvider.future);
+      if (!_canContinue(generation)) {
+        return;
+      }
+      final timestamp = DateTime.now();
+      final correlationId = timestamp.microsecondsSinceEpoch;
+      final sessionTitle = normalized.length <= 20
+          ? normalized
+          : '${normalized.substring(0, 20)}…';
+
+      _logger.info(
+        '[ai_chat_send] event=start correlation_id=$correlationId '
+        'session_id=$originSessionId mode=${conversationMode.name} '
+        'input_len=${normalized.length}',
+      );
+
+      final session = ChatSession(
+        id: originSessionId,
+        mode: conversationMode,
+        title: sessionTitle,
+        allowPrivateContext: allowPrivateContext,
+        lastModelId: llmReadiness.activeModel?.id,
+        archived: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      );
+      final userMessage = ChatMessage(
+        id: 'user-${timestamp.microsecondsSinceEpoch}',
+        role: ChatMessageRole.user,
+        text: normalized,
+        createdAt: timestamp,
+      );
+      final loadingMessage = ChatMessage(
+        id: 'assistant-${timestamp.microsecondsSinceEpoch}',
+        role: ChatMessageRole.assistant,
+        text: '正在生成回答…',
+        createdAt: timestamp,
+        status: ChatMessageStatus.loading,
+      );
+
+      await repository.saveSession(session);
+      if (!_canContinue(generation)) {
+        return;
+      }
+      await repository.saveMessage(
+        ChatStoredMessage(
+          id: userMessage.id,
+          sessionId: originSessionId,
+          role: ChatStoredMessageRole.user,
+          content: userMessage.text,
+          status: ChatStoredMessageStatus.completed,
+          createdAt: userMessage.createdAt,
+        ),
+      );
+      if (!_canContinue(generation)) {
+        return;
+      }
+      _logger.info(
+        '[ai_chat_send] event=user_saved correlation_id=$correlationId '
+        'message_id=${userMessage.id}',
+      );
+
+      if (_isOriginSelected(originSessionId, conversationMode)) {
+        state = state.copyWith(
+          messages: [...state.messages, userMessage, loadingMessage],
+          sending: true,
+          currentSessionId: originSessionId,
+          clearErrorMessage: true,
+          suppressSessionRestore: false,
+        );
+      }
+
+      try {
+        final response = await _ref
+            .read(aiChatOrchestratorProvider)
+            .send(
+              AiChatRequest(
+                mode: conversationMode,
+                userInput: normalized,
+                allowPrivateContext: allowPrivateContext,
+                manualItems: manualItems,
+              ),
+            );
+        if (!_canContinue(generation)) {
+          return;
+        }
+        final assistantMessage = ChatMessage(
+          id: loadingMessage.id,
+          role: ChatMessageRole.assistant,
+          text: response.text,
+          createdAt: DateTime.now(),
+          status: ChatMessageStatus.completed,
+          usedPrivateContext: response.usedPrivateContext,
+          contextSummary: response.contextSummary,
+          sourceType: response.sourceType,
+        );
+        await repository.saveSession(
+          session.copyWith(
+            title: sessionTitle,
+            allowPrivateContext: allowPrivateContext,
+            lastModelId: llmReadiness.activeModel?.id,
+            updatedAt: assistantMessage.createdAt,
+          ),
+        );
+        if (!_canContinue(generation)) {
+          return;
+        }
+        await repository.saveMessage(
+          ChatStoredMessage(
+            id: assistantMessage.id,
+            sessionId: originSessionId,
+            role: ChatStoredMessageRole.assistant,
+            content: assistantMessage.text,
+            status: ChatStoredMessageStatus.completed,
+            usedPrivateContext: assistantMessage.usedPrivateContext,
+            autoRetrievedContextSummary: assistantMessage.contextSummary.isEmpty
+                ? null
+                : assistantMessage.contextSummary.join('；'),
+            manualContextItemIds: manualItems
+                .map((item) => item.id)
+                .toList(growable: false),
+            relatedSourceIds: response.contextItems
+                .map((item) => item.id)
+                .toList(growable: false),
+            createdAt: assistantMessage.createdAt,
+          ),
+        );
+        if (!_canContinue(generation)) {
+          return;
+        }
+        _logger.info(
+          '[ai_chat_send] event=assistant_saved '
+          'correlation_id=$correlationId '
+          'message_id=${assistantMessage.id} status=completed',
+        );
+        _ref.invalidate(chatSessionsProvider);
+        if (_isOriginSelected(originSessionId, conversationMode)) {
+          state = state.copyWith(
+            messages: _replaceChatMessageById(
+              messages: state.messages,
+              targetId: loadingMessage.id,
+              replacement: assistantMessage,
+            ),
+            sending: false,
+          );
+          _invalidateSelectedChatSession(_ref);
+        }
+      } catch (error) {
+        if (!_canContinue(generation)) {
+          return;
+        }
+        final failedMessage = ChatMessage(
+          id: loadingMessage.id,
+          role: ChatMessageRole.system,
+          text: error.toString().replaceFirst('Bad state: ', ''),
+          createdAt: DateTime.now(),
+          status: ChatMessageStatus.error,
+        );
+        await repository.saveSession(
+          session.copyWith(
+            title: sessionTitle,
+            allowPrivateContext: allowPrivateContext,
+            lastModelId: llmReadiness.activeModel?.id,
+            updatedAt: failedMessage.createdAt,
+          ),
+        );
+        if (!_canContinue(generation)) {
+          return;
+        }
+        await repository.saveMessage(
+          ChatStoredMessage(
+            id: failedMessage.id,
+            sessionId: originSessionId,
+            role: ChatStoredMessageRole.system,
+            content: failedMessage.text,
+            status: ChatStoredMessageStatus.failed,
+            createdAt: failedMessage.createdAt,
+          ),
+        );
+        if (!_canContinue(generation)) {
+          return;
+        }
+        _logger.info(
+          '[ai_chat_send] event=assistant_saved '
+          'correlation_id=$correlationId '
+          'message_id=${failedMessage.id} status=failed',
+        );
+        _ref.invalidate(chatSessionsProvider);
+        if (_isOriginSelected(originSessionId, conversationMode)) {
+          state = state.copyWith(
+            messages: _replaceChatMessageById(
+              messages: state.messages,
+              targetId: loadingMessage.id,
+              replacement: failedMessage,
+            ),
+            sending: false,
+            errorMessage: failedMessage.text,
+          );
+          _invalidateSelectedChatSession(_ref);
+        }
+      }
+    } finally {
+      _sendingSessionIds.remove(originSessionId);
+      if (_canContinue(generation) &&
+          _isOriginSelected(originSessionId, conversationMode) &&
+          state.sending) {
+        state = state.copyWith(sending: false);
+      }
+    }
+  }
+
+  void setAllowPrivateContext(bool value) {
+    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+      return;
+    }
+    state = state.copyWith(allowPrivateContext: value);
+  }
+
+  void setManualItems(List<ChatContextItem> items) {
+    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+      return;
+    }
+    state = state.copyWith(manualItems: items);
+  }
+
+  ChatSessionSelectionIntent _claimSelectionIntent(String? sessionId) {
+    final current = _ref.read(chatSessionSelectionIntentProvider);
+    final next = ChatSessionSelectionIntent(
+      revision: current.revision + 1,
+      sessionId: sessionId,
+      mode: state.mode,
+    );
+    _ref.read(chatSessionSelectionIntentProvider.notifier).state = next;
+    return next;
+  }
+
+  void _bindNewOriginSession(String sessionId) {
+    _claimSelectionIntent(sessionId);
+    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
+    _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
+    state = state.copyWith(
+      currentSessionId: sessionId,
+      clearErrorMessage: true,
+      suppressSessionRestore: false,
+    );
+    _invalidateSelectedChatSession(_ref);
+  }
+
+  bool _restoreCanContinue(int generation, ChatSessionSelectionIntent intent) {
+    return _canContinue(generation) && _intentIsCurrent(intent);
+  }
+
+  bool _selectionCanContinue(
+    int generation,
+    ChatSessionSelectionIntent intent,
+    String sessionId,
+  ) {
+    return _restoreCanContinue(generation, intent) &&
+        _intentAllowsTarget(intent, sessionId);
+  }
+
+  bool _intentIsCurrent(ChatSessionSelectionIntent expected) {
+    final current = _ref.read(chatSessionSelectionIntentProvider);
+    return current.revision == expected.revision &&
+        current.sessionId == expected.sessionId &&
+        current.mode == expected.mode;
+  }
+
+  bool _intentAllowsTarget(
+    ChatSessionSelectionIntent intent,
+    String sessionId,
+  ) {
+    if (intent.revision == 0) {
+      return true;
+    }
+    return intent.sessionId == sessionId &&
+        (intent.mode == null || intent.mode == state.mode);
+  }
+
+  bool _isOriginSelected(String sessionId, ChatMode mode) {
+    if (state.mode != mode ||
+        state.currentSessionId != sessionId ||
+        _ref.read(currentChatSessionIdProvider) != sessionId) {
+      return false;
+    }
+    final intent = _ref.read(chatSessionSelectionIntentProvider);
+    return intent.revision == 0 ||
+        (intent.sessionId == sessionId &&
+            (intent.mode == null || intent.mode == mode));
+  }
+
+  bool _canContinue(int generation) {
+    return generation == _generation &&
+        _ref.read(sensitiveStateAccessAllowedProvider);
+  }
+}

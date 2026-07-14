@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
 import 'package:note_secret_search/features/ai_chat/infrastructure/sqlite_chat_session_repository.dart';
@@ -33,6 +34,23 @@ final restoredChatSessionIdProvider = FutureProvider<String?>((ref) {
 final currentChatSessionIdProvider = StateProvider<String?>((ref) => null);
 
 final suppressRestoredChatSessionProvider = StateProvider<bool>((ref) => false);
+
+final chatSessionSelectionIntentProvider =
+    StateProvider<ChatSessionSelectionIntent>(
+      (ref) => const ChatSessionSelectionIntent(revision: 0),
+    );
+
+class ChatSessionSelectionIntent {
+  const ChatSessionSelectionIntent({
+    required this.revision,
+    this.sessionId,
+    this.mode,
+  });
+
+  final int revision;
+  final String? sessionId;
+  final ChatMode? mode;
+}
 
 final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) {
   return guardSensitiveFuture<ChatSession?>(
@@ -90,6 +108,12 @@ class ChatSessionController {
   final Ref _ref;
 
   Future<void> selectSession(String? sessionId) async {
+    final currentIntent = _ref.read(chatSessionSelectionIntentProvider);
+    _ref.read(chatSessionSelectionIntentProvider.notifier).state =
+        ChatSessionSelectionIntent(
+          revision: currentIntent.revision + 1,
+          sessionId: sessionId,
+        );
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
     _ref.invalidate(currentChatSessionProvider);

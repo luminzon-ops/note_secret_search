@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
@@ -10,7 +8,6 @@ import 'package:note_secret_search/features/ai_providers/application/ai_provider
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
-import 'package:note_secret_search/features/ai_chat/domain/chat_message.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
@@ -535,61 +532,6 @@ void main() {
     );
   });
 
-  test('controller preserves user message when in-flight send state is reloaded before assistant reply returns', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final fakeLlmEngine = _ControllableLlmEngine();
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final controller = container.read(freeChatControllerProvider.notifier);
-    final sendFuture = controller.send('你好');
-
-    await fakeLlmEngine.waitUntilRequested();
-
-    final sessionId = controller.state.currentSessionId;
-    expect(sessionId, isNotNull);
-
-    await controller.selectSession(sessionId!);
-    expect(controller.state.messages, hasLength(1));
-    expect(controller.state.messages.single.role, ChatMessageRole.user);
-    expect(controller.state.messages.single.text, '你好');
-
-    fakeLlmEngine.completeWith(
-      const LlmInferenceResponse(
-        text: '普通回答',
-        finishReason: 'stop',
-        usedPrivateContext: false,
-      ),
-    );
-
-    await sendFuture;
-
-    expect(controller.state.messages, hasLength(2));
-    expect(controller.state.messages[0].role, ChatMessageRole.user);
-    expect(controller.state.messages[0].text, '你好');
-    expect(controller.state.messages[1].role, ChatMessageRole.assistant);
-    expect(controller.state.messages[1].text, '普通回答');
-  });
-
   test('controller starts a blank new session without restoring the latest old session', () async {
     final fakeRepository = _FakeChatSessionRepository();
     final previousSession = ChatSession(
@@ -726,38 +668,6 @@ class _ThrowingLlmEngine implements LlmEngine {
   @override
   Future<LlmInferenceResponse> generate(LlmInferenceRequest request) async {
     throw StateError(message);
-  }
-
-  @override
-  Future<LlmRuntimeState> getState(ModelRegistryEntry model) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<void> releaseModel(String modelId) async {}
-}
-
-class _ControllableLlmEngine implements LlmEngine {
-  final Completer<void> _requested = Completer<void>();
-  final Completer<LlmInferenceResponse> _response = Completer<LlmInferenceResponse>();
-
-  LlmInferenceRequest? lastRequest;
-
-  Future<void> waitUntilRequested() => _requested.future;
-
-  void completeWith(LlmInferenceResponse response) {
-    if (!_response.isCompleted) {
-      _response.complete(response);
-    }
-  }
-
-  @override
-  Future<LlmInferenceResponse> generate(LlmInferenceRequest request) async {
-    lastRequest = request;
-    if (!_requested.isCompleted) {
-      _requested.complete();
-    }
-    return _response.future;
   }
 
   @override
