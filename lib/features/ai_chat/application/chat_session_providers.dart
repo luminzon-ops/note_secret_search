@@ -42,6 +42,10 @@ final chatSessionSelectionIntentProvider =
 
 final chatSessionSelectionAttemptProvider = StateProvider<int>((ref) => 0);
 
+final chatSessionSelectionPendingAttemptProvider = StateProvider<int?>(
+  (ref) => null,
+);
+
 class ChatSessionSelectionIntent {
   const ChatSessionSelectionIntent({
     required this.revision,
@@ -115,6 +119,7 @@ class ChatSessionController {
     final currentAttempt = _ref.read(chatSessionSelectionAttemptProvider);
     _ref.read(chatSessionSelectionAttemptProvider.notifier).state =
         currentAttempt + 1;
+    _ref.read(chatSessionSelectionPendingAttemptProvider.notifier).state = null;
     final currentIntent = _ref.read(chatSessionSelectionIntentProvider);
     _ref
         .read(chatSessionSelectionIntentProvider.notifier)

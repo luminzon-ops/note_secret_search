@@ -16,6 +16,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 
 part 'ai_chat_concurrency_test_fakes.dart';
 part 'ai_chat_concurrency_additional_tests.dart';
+part 'ai_chat_restore_selection_race_tests.dart';
 
 const _llmModel = ModelRegistryEntry(
   id: 'llm-concurrency',
@@ -439,4 +440,5 @@ void main() {
   );
 
   _registerAdditionalChatConcurrencyTests();
+  _registerRestoreSelectionRaceTests();
 }

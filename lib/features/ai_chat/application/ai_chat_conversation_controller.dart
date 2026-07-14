@@ -18,7 +18,9 @@ class AiChatConversationController
   Future<void> restoreSessionIfNeeded() async {
     final generation = _generation;
     final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
-    if (!_restoreCanContinue(generation, startingIntent)) {
+    final startingAttempt = _ref.read(chatSessionSelectionAttemptProvider);
+    if (!_restoreCanContinue(generation, startingIntent) ||
+        _hasPendingSelectionAttempt) {
       return;
     }
     if (startingIntent.revision > 0 && startingIntent.sessionId == null) {
@@ -44,7 +46,9 @@ class AiChatConversationController
     }
 
     final sessions = await _ref.read(chatSessionsProvider.future);
-    if (!_restoreCanContinue(generation, startingIntent)) {
+    if (!_restoreCanContinue(generation, startingIntent) ||
+        !_selectionAttemptIsCurrent(startingAttempt) ||
+        _hasPendingSelectionAttempt) {
       return;
     }
     final newestSession = sessions.firstOrNull;
@@ -59,33 +63,37 @@ class AiChatConversationController
   Future<void> selectSession(String sessionId) async {
     final selectionAttempt = _claimSelectionAttempt();
     final generation = _generation;
-    if (!_canContinue(generation)) {
-      return;
+    try {
+      if (!_canContinue(generation)) {
+        return;
+      }
+      final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
+      final repository = _ref.read(chatSessionRepositoryProvider);
+      final messages = await repository.listMessages(sessionId);
+      if (!_canContinue(generation) ||
+          !_selectionAttemptIsCurrent(selectionAttempt) ||
+          !_intentIsCurrent(startingIntent)) {
+        return;
+      }
+      final session = await repository.getSession(sessionId);
+      if (!_canContinue(generation) ||
+          !_selectionAttemptIsCurrent(selectionAttempt) ||
+          !_intentIsCurrent(startingIntent) ||
+          session == null ||
+          session.mode != state.mode) {
+        return;
+      }
+      final intent = _claimSelectionIntent(sessionId);
+      await _selectSession(
+        sessionId,
+        generation,
+        intent,
+        validatedSession: session,
+        validatedMessages: messages,
+      );
+    } finally {
+      _completeSelectionAttempt(selectionAttempt);
     }
-    final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
-    final repository = _ref.read(chatSessionRepositoryProvider);
-    final messages = await repository.listMessages(sessionId);
-    if (!_canContinue(generation) ||
-        !_selectionAttemptIsCurrent(selectionAttempt) ||
-        !_intentIsCurrent(startingIntent)) {
-      return;
-    }
-    final session = await repository.getSession(sessionId);
-    if (!_canContinue(generation) ||
-        !_selectionAttemptIsCurrent(selectionAttempt) ||
-        !_intentIsCurrent(startingIntent) ||
-        session == null ||
-        session.mode != state.mode) {
-      return;
-    }
-    final intent = _claimSelectionIntent(sessionId);
-    await _selectSession(
-      sessionId,
-      generation,
-      intent,
-      validatedSession: session,
-      validatedMessages: messages,
-    );
   }
 
   Future<void> _selectSession(
@@ -130,12 +138,14 @@ class AiChatConversationController
   }
 
   Future<void> startNewSession() async {
+    _cancelPendingSelectionAttempts();
     _generation++;
     _claimSelectionIntent(null);
     _resetConversation();
   }
 
   void resetForLock() {
+    _cancelPendingSelectionAttempts();
     _generation++;
     _claimSelectionIntent(null);
     _resetConversation();
@@ -173,6 +183,9 @@ class AiChatConversationController
         : null;
     final publicationSessionId = existingSessionId == null
         ? _ref.read(currentChatSessionIdProvider)
+        : null;
+    final publicationAttempt = existingSessionId == null
+        ? _ref.read(chatSessionSelectionAttemptProvider)
         : null;
     if (_sendingOperations.containsKey(originSessionId)) {
       return;
@@ -230,7 +243,11 @@ class AiChatConversationController
         return;
       }
       if (publicationIntent != null &&
-          _canPublishNewOrigin(publicationIntent, publicationSessionId)) {
+          _canPublishNewOrigin(
+            publicationIntent,
+            publicationSessionId,
+            publicationAttempt!,
+          )) {
         _publishNewOriginSession(originSessionId);
       }
       await repository.saveMessage(
@@ -431,9 +448,12 @@ class AiChatConversationController
   bool _canPublishNewOrigin(
     ChatSessionSelectionIntent startingIntent,
     String? startingSessionId,
+    int startingAttempt,
   ) {
     return state.currentSessionId == null &&
         _intentIsCurrent(startingIntent) &&
+        _selectionAttemptIsCurrent(startingAttempt) &&
+        !_hasPendingSelectionAttempt &&
         _ref.read(currentChatSessionIdProvider) == startingSessionId;
   }
 

@@ -8,11 +8,29 @@ mixin _AiChatConversationSelection on StateNotifier<AiChatConversationState> {
     final current = _ref.read(chatSessionSelectionAttemptProvider);
     final next = current + 1;
     _ref.read(chatSessionSelectionAttemptProvider.notifier).state = next;
+    _ref.read(chatSessionSelectionPendingAttemptProvider.notifier).state = next;
     return next;
   }
 
   bool _selectionAttemptIsCurrent(int expected) {
     return _ref.read(chatSessionSelectionAttemptProvider) == expected;
+  }
+
+  bool get _hasPendingSelectionAttempt {
+    return _ref.read(chatSessionSelectionPendingAttemptProvider) != null;
+  }
+
+  void _completeSelectionAttempt(int expected) {
+    if (_ref.read(chatSessionSelectionPendingAttemptProvider) == expected) {
+      _ref.read(chatSessionSelectionPendingAttemptProvider.notifier).state =
+          null;
+    }
+  }
+
+  void _cancelPendingSelectionAttempts() {
+    final current = _ref.read(chatSessionSelectionAttemptProvider);
+    _ref.read(chatSessionSelectionAttemptProvider.notifier).state = current + 1;
+    _ref.read(chatSessionSelectionPendingAttemptProvider.notifier).state = null;
   }
 
   ChatSessionSelectionIntent _claimSelectionIntent(String? sessionId) {
