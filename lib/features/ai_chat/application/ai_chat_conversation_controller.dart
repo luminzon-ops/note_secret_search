@@ -1,21 +1,28 @@
 part of 'ai_chat_providers.dart';
 
 class AiChatConversationController
-    extends StateNotifier<AiChatConversationState> {
+    extends StateNotifier<AiChatConversationState>
+    with _AiChatConversationSelection {
   AiChatConversationController({required Ref ref, required ChatMode mode})
     : _ref = ref,
       super(AiChatConversationState(mode: mode));
 
+  @override
   final Ref _ref;
   final AppLogger _logger = const AppLogger();
   static const _uuid = Uuid();
   final Map<String, Object> _sendingOperations = <String, Object>{};
+  @override
   var _generation = 0;
+  var _selectionAttempt = 0;
 
   Future<void> restoreSessionIfNeeded() async {
     final generation = _generation;
     final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
     if (!_restoreCanContinue(generation, startingIntent)) {
+      return;
+    }
+    if (startingIntent.revision > 0 && startingIntent.sessionId == null) {
       return;
     }
 
@@ -41,40 +48,64 @@ class AiChatConversationController
     if (!_restoreCanContinue(generation, startingIntent)) {
       return;
     }
-    final matchingSession = sessions
-        .where((session) => session.mode == state.mode)
-        .firstOrNull;
-    if (matchingSession == null) {
+    final newestSession = sessions.firstOrNull;
+    if (newestSession == null || newestSession.mode != state.mode) {
       return;
     }
 
-    final restoreIntent = _claimSelectionIntent(matchingSession.id);
-    await _selectSession(matchingSession.id, generation, restoreIntent);
+    final restoreIntent = _claimSelectionIntent(newestSession.id);
+    await _selectSession(newestSession.id, generation, restoreIntent);
   }
 
   Future<void> selectSession(String sessionId) async {
+    final selectionAttempt = ++_selectionAttempt;
     final generation = _generation;
     if (!_canContinue(generation)) {
       return;
     }
+    final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
+    final repository = _ref.read(chatSessionRepositoryProvider);
+    final messages = await repository.listMessages(sessionId);
+    if (!_canContinue(generation) ||
+        selectionAttempt != _selectionAttempt ||
+        !_intentIsCurrent(startingIntent)) {
+      return;
+    }
+    final session = await repository.getSession(sessionId);
+    if (!_canContinue(generation) ||
+        selectionAttempt != _selectionAttempt ||
+        !_intentIsCurrent(startingIntent) ||
+        session == null ||
+        session.mode != state.mode) {
+      return;
+    }
     final intent = _claimSelectionIntent(sessionId);
-    await _selectSession(sessionId, generation, intent);
+    await _selectSession(
+      sessionId,
+      generation,
+      intent,
+      validatedSession: session,
+      validatedMessages: messages,
+    );
   }
 
   Future<void> _selectSession(
     String sessionId,
     int generation,
-    ChatSessionSelectionIntent intent,
-  ) async {
+    ChatSessionSelectionIntent intent, {
+    ChatSession? validatedSession,
+    List<ChatStoredMessage>? validatedMessages,
+  }) async {
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
     final repository = _ref.read(chatSessionRepositoryProvider);
-    final messages = await repository.listMessages(sessionId);
+    final messages =
+        validatedMessages ?? await repository.listMessages(sessionId);
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
-    final session = await repository.getSession(sessionId);
+    final session = validatedSession ?? await repository.getSession(sessionId);
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
@@ -361,10 +392,7 @@ class AiChatConversationController
         }
       }
     } finally {
-      if (identical(
-        _sendingOperations[originSessionId],
-        sendingOperation,
-      )) {
+      if (identical(_sendingOperations[originSessionId], sendingOperation)) {
         _sendingOperations.remove(originSessionId);
         if (_canContinue(generation) &&
             _isOriginSelected(originSessionId, conversationMode) &&
@@ -387,17 +415,6 @@ class AiChatConversationController
       return;
     }
     state = state.copyWith(manualItems: items);
-  }
-
-  ChatSessionSelectionIntent _claimSelectionIntent(String? sessionId) {
-    final current = _ref.read(chatSessionSelectionIntentProvider);
-    final next = ChatSessionSelectionIntent(
-      revision: current.revision + 1,
-      sessionId: sessionId,
-      mode: state.mode,
-    );
-    _ref.read(chatSessionSelectionIntentProvider.notifier).state = next;
-    return next;
   }
 
   void _publishNewOriginSession(String sessionId) {
@@ -426,53 +443,5 @@ class AiChatConversationController
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
     _invalidateSelectedChatSession(_ref);
-  }
-
-  bool _restoreCanContinue(int generation, ChatSessionSelectionIntent intent) {
-    return _canContinue(generation) && _intentIsCurrent(intent);
-  }
-
-  bool _selectionCanContinue(
-    int generation,
-    ChatSessionSelectionIntent intent,
-    String sessionId,
-  ) {
-    return _restoreCanContinue(generation, intent) &&
-        _intentAllowsTarget(intent, sessionId);
-  }
-
-  bool _intentIsCurrent(ChatSessionSelectionIntent expected) {
-    final current = _ref.read(chatSessionSelectionIntentProvider);
-    return current.revision == expected.revision &&
-        current.sessionId == expected.sessionId &&
-        current.mode == expected.mode;
-  }
-
-  bool _intentAllowsTarget(
-    ChatSessionSelectionIntent intent,
-    String sessionId,
-  ) {
-    if (intent.revision == 0) {
-      return true;
-    }
-    return intent.sessionId == sessionId &&
-        (intent.mode == null || intent.mode == state.mode);
-  }
-
-  bool _isOriginSelected(String sessionId, ChatMode mode) {
-    if (state.mode != mode ||
-        state.currentSessionId != sessionId ||
-        _ref.read(currentChatSessionIdProvider) != sessionId) {
-      return false;
-    }
-    final intent = _ref.read(chatSessionSelectionIntentProvider);
-    return intent.revision == 0 ||
-        (intent.sessionId == sessionId &&
-            (intent.mode == null || intent.mode == mode));
-  }
-
-  bool _canContinue(int generation) {
-    return generation == _generation &&
-        _ref.read(sensitiveStateAccessAllowedProvider);
   }
 }

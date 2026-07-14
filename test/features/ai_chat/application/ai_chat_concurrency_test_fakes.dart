@@ -86,6 +86,7 @@ class _ChatTestRepository implements ChatSessionRepository {
     List<ChatSession> sessions = const <ChatSession>[],
     Map<String, List<ChatStoredMessage>> messagesBySession =
         const <String, List<ChatStoredMessage>>{},
+    Set<String> blockedSessionGetIds = const <String>{},
     Set<String> blockedMessageSessionIds = const <String>{},
     bool delaySessionList = false,
     bool delaySessionSave = false,
@@ -94,6 +95,7 @@ class _ChatTestRepository implements ChatSessionRepository {
          for (final entry in messagesBySession.entries)
            entry.key: List<ChatStoredMessage>.from(entry.value),
        },
+       _blockedSessionGetIds = Set<String>.from(blockedSessionGetIds),
        _blockedMessageSessionIds = Set<String>.from(blockedMessageSessionIds),
        _sessionListResult = delaySessionList
            ? Completer<List<ChatSession>>()
@@ -102,9 +104,12 @@ class _ChatTestRepository implements ChatSessionRepository {
 
   final Map<String, ChatSession> _sessions;
   final Map<String, List<ChatStoredMessage>> _messagesBySession;
+  final Set<String> _blockedSessionGetIds;
   final Set<String> _blockedMessageSessionIds;
   final Completer<List<ChatSession>>? _sessionListResult;
   final Completer<void>? _sessionSaveResult;
+  final Map<String, Completer<void>> _sessionGetRequests = {};
+  final Map<String, Completer<ChatSession?>> _sessionGetResults = {};
   final Map<String, Completer<void>> _messageListRequests = {};
   final Map<String, Completer<List<ChatStoredMessage>>> _messageListResults =
       {};
@@ -120,9 +125,23 @@ class _ChatTestRepository implements ChatSessionRepository {
         .future;
   }
 
+  Future<void> waitForSessionGet(String sessionId) {
+    return _sessionGetRequests
+        .putIfAbsent(sessionId, Completer<void>.new)
+        .future;
+  }
+
   Future<void> waitForSessionList() => _sessionListRequest.future;
 
   Future<ChatSession> waitForSessionSave() => _sessionSaveRequest.future;
+
+  void completeSessionGet(String sessionId) {
+    final result = _sessionGetResults[sessionId];
+    if (result == null || result.isCompleted) {
+      return;
+    }
+    result.complete(_sessions[sessionId]);
+  }
 
   void completeMessageList(String sessionId) {
     final result = _messageListResults[sessionId];
@@ -152,8 +171,21 @@ class _ChatTestRepository implements ChatSessionRepository {
   }
 
   @override
-  Future<ChatSession?> getSession(String sessionId) async {
-    return _sessions[sessionId];
+  Future<ChatSession?> getSession(String sessionId) {
+    if (!_blockedSessionGetIds.contains(sessionId)) {
+      return Future.value(_sessions[sessionId]);
+    }
+
+    final request = _sessionGetRequests.putIfAbsent(
+      sessionId,
+      Completer<void>.new,
+    );
+    if (!request.isCompleted) {
+      request.complete();
+    }
+    return _sessionGetResults
+        .putIfAbsent(sessionId, Completer<ChatSession?>.new)
+        .future;
   }
 
   @override

@@ -22,6 +22,7 @@ import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 part 'ai_chat_conversation_state.dart';
 part 'ai_chat_conversation_controller.dart';
+part 'ai_chat_conversation_selection.dart';
 part 'ai_chat_conversation_mapping.dart';
 part 'ai_chat_sensitive_providers.dart';
 
