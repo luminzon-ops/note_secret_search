@@ -14,7 +14,6 @@ class AiChatConversationController
   final Map<String, Object> _sendingOperations = <String, Object>{};
   @override
   var _generation = 0;
-  var _selectionAttempt = 0;
 
   Future<void> restoreSessionIfNeeded() async {
     final generation = _generation;
@@ -58,7 +57,7 @@ class AiChatConversationController
   }
 
   Future<void> selectSession(String sessionId) async {
-    final selectionAttempt = ++_selectionAttempt;
+    final selectionAttempt = _claimSelectionAttempt();
     final generation = _generation;
     if (!_canContinue(generation)) {
       return;
@@ -67,13 +66,13 @@ class AiChatConversationController
     final repository = _ref.read(chatSessionRepositoryProvider);
     final messages = await repository.listMessages(sessionId);
     if (!_canContinue(generation) ||
-        selectionAttempt != _selectionAttempt ||
+        !_selectionAttemptIsCurrent(selectionAttempt) ||
         !_intentIsCurrent(startingIntent)) {
       return;
     }
     final session = await repository.getSession(sessionId);
     if (!_canContinue(generation) ||
-        selectionAttempt != _selectionAttempt ||
+        !_selectionAttemptIsCurrent(selectionAttempt) ||
         !_intentIsCurrent(startingIntent) ||
         session == null ||
         session.mode != state.mode) {

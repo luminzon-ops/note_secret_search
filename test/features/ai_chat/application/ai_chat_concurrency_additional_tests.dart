@@ -247,6 +247,52 @@ void _registerAdditionalChatConcurrencyTests() {
     },
   );
 
+  test(
+    'later cross-controller call wins even when its validation finishes last',
+    () async {
+      final repository = _ChatTestRepository(
+        sessions: [
+          _session('session-a', ChatMode.freeChat),
+          _session('session-b', ChatMode.privateQa),
+        ],
+        messagesBySession: {
+          'session-a': [_message('message-a', 'session-a', 'free A')],
+          'session-b': [_message('message-b', 'session-b', 'private B')],
+        },
+        blockedSessionGetIds: const {'session-a', 'session-b'},
+      );
+      final container = _buildContainer(repository: repository);
+      addTearDown(container.dispose);
+
+      final freeController = container.read(
+        freeChatControllerProvider.notifier,
+      );
+      final privateController = container.read(
+        privateQaChatControllerProvider.notifier,
+      );
+      final selectA = freeController.selectSession('session-a');
+      await repository.waitForSessionGet('session-a');
+      final selectB = privateController.selectSession('session-b');
+      await repository.waitForSessionGet('session-b');
+
+      repository.completeSessionGet('session-a');
+      await selectA;
+      repository.completeSessionGet('session-b');
+      await selectB;
+
+      expect(freeController.state.currentSessionId, isNull);
+      _expectSelected(
+        privateController,
+        sessionId: 'session-b',
+        text: 'private B',
+      );
+      expect(container.read(currentChatSessionIdProvider), 'session-b');
+      final intent = container.read(chatSessionSelectionIntentProvider);
+      expect(intent.sessionId, 'session-b');
+      expect(intent.mode, ChatMode.privateQa);
+    },
+  );
+
   test('stale rejected selection cannot revive its previous intent', () async {
     final repository = _ChatTestRepository(
       sessions: [

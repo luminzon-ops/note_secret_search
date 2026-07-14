@@ -40,6 +40,8 @@ final chatSessionSelectionIntentProvider =
       (ref) => const ChatSessionSelectionIntent(revision: 0),
     );
 
+final chatSessionSelectionAttemptProvider = StateProvider<int>((ref) => 0);
+
 class ChatSessionSelectionIntent {
   const ChatSessionSelectionIntent({
     required this.revision,
@@ -62,8 +64,9 @@ final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) {
         if (ref.watch(suppressRestoredChatSessionProvider)) {
           return null;
         }
-        final restoredId =
-            await ref.watch(restoredChatSessionIdProvider.future);
+        final restoredId = await ref.watch(
+          restoredChatSessionIdProvider.future,
+        );
         if (restoredId == null || restoredId.isEmpty) {
           return null;
         }
@@ -75,8 +78,9 @@ final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) {
   );
 });
 
-final currentChatMessagesProvider =
-    FutureProvider<List<ChatStoredMessage>>((ref) {
+final currentChatMessagesProvider = FutureProvider<List<ChatStoredMessage>>((
+  ref,
+) {
   return guardSensitiveFuture<List<ChatStoredMessage>>(
     ref,
     lockedValue: const <ChatStoredMessage>[],
@@ -108,12 +112,16 @@ class ChatSessionController {
   final Ref _ref;
 
   Future<void> selectSession(String? sessionId) async {
+    final currentAttempt = _ref.read(chatSessionSelectionAttemptProvider);
+    _ref.read(chatSessionSelectionAttemptProvider.notifier).state =
+        currentAttempt + 1;
     final currentIntent = _ref.read(chatSessionSelectionIntentProvider);
-    _ref.read(chatSessionSelectionIntentProvider.notifier).state =
-        ChatSessionSelectionIntent(
-          revision: currentIntent.revision + 1,
-          sessionId: sessionId,
-        );
+    _ref
+        .read(chatSessionSelectionIntentProvider.notifier)
+        .state = ChatSessionSelectionIntent(
+      revision: currentIntent.revision + 1,
+      sessionId: sessionId,
+    );
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
     _ref.invalidate(currentChatSessionProvider);

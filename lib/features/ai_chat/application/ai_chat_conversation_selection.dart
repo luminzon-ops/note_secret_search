@@ -4,6 +4,17 @@ mixin _AiChatConversationSelection on StateNotifier<AiChatConversationState> {
   Ref get _ref;
   int get _generation;
 
+  int _claimSelectionAttempt() {
+    final current = _ref.read(chatSessionSelectionAttemptProvider);
+    final next = current + 1;
+    _ref.read(chatSessionSelectionAttemptProvider.notifier).state = next;
+    return next;
+  }
+
+  bool _selectionAttemptIsCurrent(int expected) {
+    return _ref.read(chatSessionSelectionAttemptProvider) == expected;
+  }
+
   ChatSessionSelectionIntent _claimSelectionIntent(String? sessionId) {
     final current = _ref.read(chatSessionSelectionIntentProvider);
     final next = ChatSessionSelectionIntent(
