@@ -37,6 +37,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
@@ -104,6 +105,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
           sharedPreferencesProvider.overrideWith((ref) async {

@@ -43,6 +43,7 @@ class LockSessionController extends StateNotifier<LockSessionState> {
   LockSessionController() : super(const LockSessionState.initial());
 
   bool get isUnlocked => state.isUnlocked;
+  int get lockEpoch => state.lockEpoch;
 
   void markUnlocked(UnlockMethod method) {
     state = state.copyWith(isUnlocked: true, lastUnlockMethod: method);

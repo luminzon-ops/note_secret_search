@@ -113,10 +113,26 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
             .updateRecentTaskProtection(obscured: false);
         if (mounted) {
           final latestSession = ref.read(lockSessionControllerProvider);
-          if (!latestSession.isUnlocked &&
-              latestSession.lockEpoch == lockEpoch) {
-            _revealedLockEpoch = lockEpoch;
+          final latestLifecycleState =
+              WidgetsBinding.instance.lifecycleState;
+          final revealStillValid =
+              !latestSession.isUnlocked &&
+              latestSession.lockEpoch == lockEpoch &&
+              (latestLifecycleState == null ||
+                  latestLifecycleState == AppLifecycleState.resumed);
+          if (!revealStillValid) {
+            final appNotForeground =
+                latestLifecycleState != null &&
+                latestLifecycleState != AppLifecycleState.resumed;
+            if (!latestSession.isUnlocked ||
+                appNotForeground) {
+              await ref
+                  .read(screenshotProtectionGatewayProvider)
+                  .updateRecentTaskProtection(obscured: true);
+            }
+            return;
           }
+          _revealedLockEpoch = lockEpoch;
         }
       } catch (_) {
         return;

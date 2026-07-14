@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
@@ -65,6 +66,11 @@ final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
     sessionController: ref.watch(lockSessionControllerProvider.notifier),
     pinStateController: ref.watch(pinStateControllerProvider.notifier),
     logger: ref.watch(loggerProvider),
+    appIsForeground: () {
+      final lifecycleState = WidgetsBinding.instance.lifecycleState;
+      return lifecycleState == null ||
+          lifecycleState == AppLifecycleState.resumed;
+    },
   );
 });
 

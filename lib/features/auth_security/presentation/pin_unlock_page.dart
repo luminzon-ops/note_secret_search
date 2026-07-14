@@ -103,6 +103,9 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
     });
 
     try {
+      final expectedLockEpoch = ref
+          .read(lockSessionControllerProvider)
+          .lockEpoch;
       final matched = await ref
           .read(securitySettingsControllerProvider.notifier)
           .verifyPin(_pinController.text.trim());
@@ -110,7 +113,7 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
       if (matched) {
         final unlocked = await ref
             .read(securityOrchestratorProvider)
-            .unlockWithPin();
+            .unlockWithPin(expectedLockEpoch: expectedLockEpoch);
         if (!unlocked) {
           if (mounted) {
             setState(() {

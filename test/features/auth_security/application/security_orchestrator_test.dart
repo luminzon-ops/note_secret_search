@@ -49,6 +49,33 @@ void main() {
   });
 
   test(
+    'biometric result is discarded after a newer lock epoch',
+    () async {
+      final sessionController = LockSessionController();
+      final authenticationBlocker = Completer<bool>();
+      final biometricGateway = _BlockingBiometricGateway(
+        authenticationBlocker.future,
+      );
+      final screenshotGateway = _RecordingScreenshotProtectionGateway();
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: screenshotGateway,
+        biometricGateway: biometricGateway,
+      );
+
+      final unlockFuture = orchestrator.unlockWithBiometrics();
+      await biometricGateway.started.future;
+
+      sessionController.lock();
+      authenticationBlocker.complete(true);
+
+      expect(await unlockFuture, isFalse);
+      expect(screenshotGateway.obscuredUpdates, isEmpty);
+      expect(sessionController.state.isUnlocked, isFalse);
+    },
+  );
+
+  test(
     'pin unlock waits for shield removal before marking session unlocked',
     () async {
       final sessionController = LockSessionController();
@@ -67,7 +94,9 @@ void main() {
 
       unawaited(
         Future<void>(() {
-          orchestrator.unlockWithPin();
+          orchestrator.unlockWithPin(
+            expectedLockEpoch: sessionController.state.lockEpoch,
+          );
         }),
       );
       await _waitUntil(() => screenshotGateway.obscuredUpdates.isNotEmpty);
@@ -93,7 +122,9 @@ void main() {
 
     unawaited(
       Future<void>(() {
-        orchestrator.unlockWithPin();
+        orchestrator.unlockWithPin(
+          expectedLockEpoch: sessionController.state.lockEpoch,
+        );
       }),
     );
     await _drainEventQueue();
@@ -101,25 +132,81 @@ void main() {
     expect(screenshotGateway.obscuredUpdates, [false]);
     expect(sessionController.state.isUnlocked, isFalse);
   });
+
+  test(
+    'pin unlock re-obscures when a newer lock arrives during shield removal',
+    () async {
+      final sessionController = LockSessionController();
+      final shieldBlocker = Completer<void>();
+      final screenshotGateway = _RecordingScreenshotProtectionGateway(
+        onUpdate: (obscured) async {
+          if (!obscured) {
+            await shieldBlocker.future;
+          }
+        },
+      );
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: screenshotGateway,
+      );
+      final expectedLockEpoch = sessionController.state.lockEpoch;
+
+      final unlockFuture = orchestrator.unlockWithPin(
+        expectedLockEpoch: expectedLockEpoch,
+      );
+      await _waitUntil(
+        () =>
+            screenshotGateway.obscuredUpdates.length == 1 &&
+            screenshotGateway.obscuredUpdates.single == false,
+      );
+
+      sessionController.lock();
+      shieldBlocker.complete();
+
+      expect(await unlockFuture, isFalse);
+      expect(screenshotGateway.obscuredUpdates, [false, true]);
+      expect(sessionController.state.isUnlocked, isFalse);
+    },
+  );
 }
 
 SecurityOrchestrator _buildOrchestrator({
   required LockSessionController sessionController,
   required ScreenshotProtectionGateway screenshotGateway,
+  BiometricGateway? biometricGateway,
 }) {
   return SecurityOrchestrator(
-    biometricGateway: _SuccessfulBiometricGateway(),
+    biometricGateway: biometricGateway ?? _SuccessfulBiometricGateway(),
     screenshotProtectionGateway: screenshotGateway,
     secureKeyGateway: _FakeSecureKeyGateway(),
     sessionController: sessionController,
     pinStateController: PinStateController(),
     logger: const AppLogger(),
+    appIsForeground: () => true,
   );
 }
 
 class _SuccessfulBiometricGateway implements BiometricGateway {
   @override
   Future<bool> authenticate() async => true;
+
+  @override
+  Future<BiometricAvailability> getAvailability() async {
+    return BiometricAvailability.available;
+  }
+}
+
+class _BlockingBiometricGateway implements BiometricGateway {
+  _BlockingBiometricGateway(this._result);
+
+  final Future<bool> _result;
+  final Completer<void> started = Completer<void>();
+
+  @override
+  Future<bool> authenticate() {
+    started.complete();
+    return _result;
+  }
 
   @override
   Future<BiometricAvailability> getAvailability() async {

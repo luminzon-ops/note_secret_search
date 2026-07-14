@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +43,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
         ],
@@ -162,6 +165,72 @@ void main() {
   });
 
   testWidgets(
+    'locked gate re-obscures when the app becomes inactive during reveal',
+    (tester) async {
+      final sessionController = LockSessionController();
+      final pinStateController = PinStateController();
+      final revealBlocker = Completer<void>();
+      final screenshotGateway = _FakeScreenshotProtectionGateway(
+        onUpdate: (obscured) async {
+          if (!obscured) {
+            await revealBlocker.future;
+          }
+        },
+      );
+      final router = GoRouter(
+        initialLocation: '/vault',
+        routes: [
+          GoRoute(
+            path: '/vault',
+            builder: (context, state) =>
+                const Scaffold(body: Text('sensitive vault content')),
+          ),
+        ],
+      );
+      addTearDown(() async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+        router.dispose();
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appRouterProvider.overrideWithValue(router),
+            lockSessionControllerProvider.overrideWith(
+              (ref) => sessionController,
+            ),
+            pinStateControllerProvider.overrideWith(
+              (ref) => pinStateController,
+            ),
+            screenshotProtectionGatewayProvider.overrideWithValue(
+              screenshotGateway,
+            ),
+          ],
+          child: MaterialApp.router(
+            routerConfig: router,
+            builder: (context, child) =>
+                AppLockGate(child: child ?? const SizedBox.shrink()),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(screenshotGateway.obscuredUpdates, [false]);
+
+      tester.binding.handleAppLifecycleStateChanged(
+        AppLifecycleState.inactive,
+      );
+      revealBlocker.complete();
+      await tester.pumpAndSettle();
+
+      expect(screenshotGateway.obscuredUpdates, [false, true]);
+      expect(sessionController.state.isUnlocked, isFalse);
+    },
+  );
+
+  testWidgets(
     'existing pin lock screen shows biometric and pin unlock actions',
     (tester) async {
       final sessionController = LockSessionController();
@@ -188,6 +257,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 logger: const AppLogger(),
+                appIsForeground: () => true,
               ),
             ),
           ],
@@ -234,6 +304,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 logger: const AppLogger(),
+                appIsForeground: () => true,
               ),
             ),
           ],
@@ -423,6 +494,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 logger: const AppLogger(),
+                appIsForeground: () => true,
               ),
             ),
             securitySettingsRepositoryProvider.overrideWith(
@@ -540,6 +612,9 @@ class _FakeBiometricGateway implements BiometricGateway {
 }
 
 class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
+  _FakeScreenshotProtectionGateway({this.onUpdate});
+
+  final Future<void> Function(bool obscured)? onUpdate;
   final List<bool> obscuredUpdates = [];
 
   @override
@@ -548,6 +623,7 @@ class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
   @override
   Future<void> updateRecentTaskProtection({required bool obscured}) async {
     obscuredUpdates.add(obscured);
+    await onUpdate?.call(obscured);
   }
 }
 

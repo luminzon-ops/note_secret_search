@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -46,6 +48,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
@@ -109,6 +112,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
@@ -155,6 +159,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
@@ -179,13 +184,77 @@ void main() {
     expect(find.text('PIN 错误'), findsOneWidget);
     expect(sessionController.state.isUnlocked, isFalse);
   });
+
+  testWidgets('pin verification result cannot override a newer lock', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController()..markPinMaterialReady();
+    final verificationBlocker = Completer<bool>();
+    final repository = _FakeSecuritySettingsRepository(
+      pin: '2468',
+      verificationResult: verificationBlocker.future,
+    );
+    final screenshotGateway = _FakeScreenshotProtectionGateway();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securityOrchestratorProvider.overrideWith(
+            (ref) => SecurityOrchestrator(
+              biometricGateway: _FakeBiometricGateway(),
+              screenshotProtectionGateway: screenshotGateway,
+              secureKeyGateway: _FakeSecureKeyGateway(),
+              sessionController: sessionController,
+              pinStateController: pinStateController,
+              logger: const AppLogger(),
+              appIsForeground: () => true,
+            ),
+          ),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
+          securitySettingsControllerProvider.overrideWith(
+            (ref) => SecuritySettingsController(
+              repository: repository,
+              securityOrchestrator: ref.read(securityOrchestratorProvider),
+              pinStateController: pinStateController,
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: PinUnlockPage()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), '2468');
+    await tester.tap(find.text('解锁'));
+    await tester.pump();
+
+    sessionController.lock();
+    verificationBlocker.complete(true);
+    await tester.pumpAndSettle();
+
+    expect(find.text('安全解锁失败，请重试'), findsOneWidget);
+    expect(sessionController.state.isUnlocked, isFalse);
+    expect(screenshotGateway.obscuredUpdates, isEmpty);
+  });
 }
 
 class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
-  _FakeSecuritySettingsRepository({required String pin}) : _pin = pin;
+  _FakeSecuritySettingsRepository({
+    required String pin,
+    Future<bool>? verificationResult,
+  }) : _pin = pin,
+       _verificationResult = verificationResult;
 
   SecuritySettings _settings = const SecuritySettings.defaults().copyWith(pinEnabled: true);
   String _pin;
+  final Future<bool>? _verificationResult;
 
   @override
   Future<bool> hasPinMaterial() async => _pin.isNotEmpty;
@@ -207,7 +276,13 @@ class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
   }
 
   @override
-  Future<bool> verifyPin(String pin) async => _pin == pin;
+  Future<bool> verifyPin(String pin) async {
+    final verificationResult = _verificationResult;
+    if (verificationResult != null) {
+      return verificationResult;
+    }
+    return _pin == pin;
+  }
 }
 
 class _FakeBiometricGateway implements BiometricGateway {
@@ -219,11 +294,15 @@ class _FakeBiometricGateway implements BiometricGateway {
 }
 
 class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
+  final List<bool> obscuredUpdates = [];
+
   @override
   Future<void> enableSensitiveWindowProtection() async {}
 
   @override
-  Future<void> updateRecentTaskProtection({required bool obscured}) async {}
+  Future<void> updateRecentTaskProtection({required bool obscured}) async {
+    obscuredUpdates.add(obscured);
+  }
 }
 
 class _FakeSecureKeyGateway implements SecureKeyGateway {
