@@ -160,14 +160,12 @@ void main() {
     final catalogFile = File(
       '${projectRoot.path}${Platform.pathSeparator}assets${Platform.pathSeparator}model_catalog${Platform.pathSeparator}built_in_catalog.json',
     );
-    final repository = AssetModelCatalogRepository(
-      assetBundle: _FakeAssetBundle(await catalogFile.readAsString()),
-    );
+    final decoded = jsonDecode(await catalogFile.readAsString());
 
-    final catalog = await repository.loadCatalog();
-
-    expect(catalog.any((entry) => entry.id == 'minicpm_v_4_6_q4_k_m'), isFalse);
-    expect(catalog.any((entry) => entry.type == 'multimodal_llm'), isFalse);
+    expect(decoded, isA<List<dynamic>>());
+    final entries = (decoded as List<dynamic>).whereType<Map<String, dynamic>>();
+    expect(entries.any((entry) => entry['id'] == 'minicpm_v_4_6_q4_k_m'), isFalse);
+    expect(entries.any((entry) => entry['type'] == 'multimodal_llm'), isFalse);
   });
 
   test('built-in BGE embedding runtime declares token_type_ids input', () async {
