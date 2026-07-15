@@ -107,7 +107,11 @@ class AiChatOrchestrator {
       throw StateError('请输入问题或消息。');
     }
 
-    final backend = await _resolveBackend(request.backendPreference);
+    final backend = await _resolveBackend(
+      request.backendPreference,
+      includesPrivateContext:
+          request.mode == ChatMode.privateQa || request.allowPrivateContext,
+    );
 
     return switch (request.mode) {
       ChatMode.privateQa => _runPrivateQa(
@@ -124,11 +128,14 @@ class AiChatOrchestrator {
   }
 
   Future<_ResolvedChatBackend> _resolveBackend(
-    ChatBackendPreference preference,
-  ) async {
+    ChatBackendPreference preference, {
+    required bool includesPrivateContext,
+  }) async {
     return switch (preference) {
       ChatBackendPreference.local => _resolveLocalBackend(),
-      ChatBackendPreference.external => _resolveExternalBackend(),
+      ChatBackendPreference.external => _resolveExternalBackend(
+        includesPrivateContext: includesPrivateContext,
+      ),
     };
   }
 
@@ -144,7 +151,9 @@ class AiChatOrchestrator {
     );
   }
 
-  Future<_ResolvedChatBackend> _resolveExternalBackend() async {
+  Future<_ResolvedChatBackend> _resolveExternalBackend({
+    required bool includesPrivateContext,
+  }) async {
     final externalStatus = await _ref.read(
       externalProviderStatusProvider.future,
     );
@@ -154,7 +163,10 @@ class AiChatOrchestrator {
     final config = externalStatus.config!;
     final acknowledged = await _ref
         .read(externalPrivacyConfirmationControllerProvider)
-        .hasAcknowledged(config);
+        .hasAcknowledged(
+          config,
+          includesPrivateContext: includesPrivateContext,
+        );
     if (!acknowledged) {
       throw StateError('外部模型配置尚未确认。');
     }

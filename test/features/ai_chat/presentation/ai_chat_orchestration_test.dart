@@ -285,7 +285,7 @@ void main() {
   );
 
   testWidgets(
-    'free chat requires explicit external selection and config-bound confirmation',
+    'free chat requires fresh consent when external context becomes private',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final externalClient = _RecordingExternalProviderClient();
@@ -381,9 +381,10 @@ void main() {
       expect(find.textContaining('secret-key'), findsNothing);
       expect(externalClient.generateCallCount, 0);
 
-      await tester.tap(find.text('取消'));
+      await tester.tap(find.text('继续发送'));
       await tester.pumpAndSettle();
-      expect(externalClient.generateCallCount, 0);
+      expect(externalClient.generateCallCount, 1);
+      expect(externalClient.lastUsedPrivateContext, isFalse);
 
       await tester.tap(find.text('允许参考私密内容'));
       await tester.pump();
@@ -394,12 +395,12 @@ void main() {
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
       expect(find.text('包含私密上下文：是'), findsOneWidget);
-      expect(externalClient.generateCallCount, 0);
+      expect(externalClient.generateCallCount, 1);
 
       await tester.tap(find.text('继续发送'));
       await tester.pumpAndSettle();
 
-      expect(externalClient.generateCallCount, 1);
+      expect(externalClient.generateCallCount, 2);
       expect(externalClient.lastUsedPrivateContext, isTrue);
     },
   );

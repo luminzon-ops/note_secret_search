@@ -159,17 +159,46 @@ void main() {
         externalPrivacyConfirmationControllerProvider,
       );
 
-      expect(await controller.hasAcknowledged(_provider), isFalse);
-      await controller.markAcknowledged(_provider);
-      expect(await controller.hasAcknowledged(_provider), isTrue);
+      expect(
+        await controller.hasAcknowledged(
+          _provider,
+          includesPrivateContext: false,
+        ),
+        isFalse,
+      );
+      await controller.markAcknowledged(
+        _provider,
+        includesPrivateContext: false,
+      );
+      expect(
+        await controller.hasAcknowledged(
+          _provider,
+          includesPrivateContext: false,
+        ),
+        isTrue,
+      );
+      expect(
+        await controller.hasAcknowledged(
+          _provider,
+          includesPrivateContext: true,
+        ),
+        isFalse,
+      );
       expect(
         await controller.hasAcknowledged(
           _provider.copyWith(modelName: 'gpt-4.1'),
+          includesPrivateContext: false,
         ),
         isFalse,
       );
       await controller.revoke(_provider);
-      expect(await controller.hasAcknowledged(_provider), isFalse);
+      expect(
+        await controller.hasAcknowledged(
+          _provider,
+          includesPrivateContext: false,
+        ),
+        isFalse,
+      );
     },
   );
 
@@ -202,15 +231,36 @@ void main() {
       );
       final updated = _provider.copyWith(modelName: 'gpt-4.1');
 
-      await confirmation.markAcknowledged(_provider);
-      expect(await confirmation.hasAcknowledged(_provider), isTrue);
+      await confirmation.markAcknowledged(
+        _provider,
+        includesPrivateContext: true,
+      );
+      expect(
+        await confirmation.hasAcknowledged(
+          _provider,
+          includesPrivateContext: true,
+        ),
+        isTrue,
+      );
 
       await controller.save(updated);
       await controller.testConnection(updated);
 
       expect(repository.saved.single.id, 'provider-1');
-      expect(await confirmation.hasAcknowledged(_provider), isFalse);
-      expect(await confirmation.hasAcknowledged(updated), isFalse);
+      expect(
+        await confirmation.hasAcknowledged(
+          _provider,
+          includesPrivateContext: true,
+        ),
+        isFalse,
+      );
+      expect(
+        await confirmation.hasAcknowledged(
+          updated,
+          includesPrivateContext: true,
+        ),
+        isFalse,
+      );
       expect(client.lastTested?.baseUrl, 'https://example.com/v1');
     },
   );

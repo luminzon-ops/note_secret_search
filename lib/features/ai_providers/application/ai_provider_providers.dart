@@ -94,23 +94,54 @@ class ExternalPrivacyConfirmationController {
 
   final Ref _ref;
 
-  Future<bool> hasAcknowledged(ExternalProviderConfig config) async {
+  Future<bool> hasAcknowledged(
+    ExternalProviderConfig config, {
+    required bool includesPrivateContext,
+  }) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    return preferences.getBool(_providerAcknowledgementKey(config)) ?? false;
+    return preferences.getBool(
+          _providerAcknowledgementKey(
+            config,
+            includesPrivateContext: includesPrivateContext,
+          ),
+        ) ??
+        false;
   }
 
-  Future<void> markAcknowledged(ExternalProviderConfig config) async {
+  Future<void> markAcknowledged(
+    ExternalProviderConfig config, {
+    required bool includesPrivateContext,
+  }) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.setBool(_providerAcknowledgementKey(config), true);
+    await preferences.setBool(
+      _providerAcknowledgementKey(
+        config,
+        includesPrivateContext: includesPrivateContext,
+      ),
+      true,
+    );
   }
 
   Future<void> revoke(ExternalProviderConfig config) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.remove(_providerAcknowledgementKey(config));
+    await preferences.remove(
+      _providerAcknowledgementKey(config, includesPrivateContext: false),
+    );
+    await preferences.remove(
+      _providerAcknowledgementKey(config, includesPrivateContext: true),
+    );
+    await preferences.remove(
+      'ai.external_privacy_ack.v2.'
+      '${externalProviderConsentFingerprint(config)}',
+    );
   }
 
-  String _providerAcknowledgementKey(ExternalProviderConfig config) {
-    return 'ai.external_privacy_ack.v2.'
+  String _providerAcknowledgementKey(
+    ExternalProviderConfig config, {
+    required bool includesPrivateContext,
+  }) {
+    final contextScope = includesPrivateContext ? 'private' : 'standard';
+    return 'ai.external_privacy_ack.v3.$contextScope.'
         '${externalProviderConsentFingerprint(config)}';
   }
 }

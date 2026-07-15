@@ -212,7 +212,7 @@ void main() {
       final orchestrator = container.read(aiChatOrchestratorProvider);
       await container
           .read(externalPrivacyConfirmationControllerProvider)
-          .markAcknowledged(blockedConfig);
+          .markAcknowledged(blockedConfig, includesPrivateContext: true);
 
       await expectLater(
         () => orchestrator.send(

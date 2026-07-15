@@ -18,7 +18,10 @@ Future<bool> confirmExternalProviderSend({
   final confirmationController = ref.read(
     externalPrivacyConfirmationControllerProvider,
   );
-  final acknowledged = await confirmationController.hasAcknowledged(config);
+  final acknowledged = await confirmationController.hasAcknowledged(
+    config,
+    includesPrivateContext: includesPrivateContext,
+  );
   if (acknowledged) {
     return true;
   }
@@ -64,7 +67,10 @@ Future<bool> confirmExternalProviderSend({
     return false;
   }
 
-  await confirmationController.markAcknowledged(config);
+  await confirmationController.markAcknowledged(
+    config,
+    includesPrivateContext: includesPrivateContext,
+  );
   return true;
 }
 

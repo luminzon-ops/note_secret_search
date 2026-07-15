@@ -89,7 +89,7 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(externalPrivacyConfirmationControllerProvider)
-          .markAcknowledged(_externalConfig);
+          .markAcknowledged(_externalConfig, includesPrivateContext: false);
 
       final response = await container
           .read(aiChatOrchestratorProvider)
@@ -108,6 +108,42 @@ void main() {
     },
   );
 
+  test(
+    'standard external consent does not authorize private context',
+    () async {
+      final externalClient = _RecordingExternalClient();
+      final container = await _buildContainer(
+        externalClient: externalClient,
+        config: _externalConfig,
+      );
+      addTearDown(container.dispose);
+      await container
+          .read(externalPrivacyConfirmationControllerProvider)
+          .markAcknowledged(_externalConfig, includesPrivateContext: false);
+
+      await expectLater(
+        () => container
+            .read(aiChatOrchestratorProvider)
+            .send(
+              const AiChatRequest(
+                mode: ChatMode.freeChat,
+                userInput: 'private question',
+                backendPreference: ChatBackendPreference.external,
+                allowPrivateContext: true,
+              ),
+            ),
+        throwsA(
+          predicate(
+            (error) =>
+                error is StateError && error.toString().contains('外部模型配置尚未确认'),
+          ),
+        ),
+      );
+
+      expect(externalClient.generateCallCount, 0);
+    },
+  );
+
   test('acknowledgement does not survive an external config change', () async {
     final externalClient = _RecordingExternalClient();
     final changedConfig = _externalConfig.copyWith(modelName: 'gpt-4.1');
@@ -118,7 +154,7 @@ void main() {
     addTearDown(container.dispose);
     await container
         .read(externalPrivacyConfirmationControllerProvider)
-        .markAcknowledged(_externalConfig);
+        .markAcknowledged(_externalConfig, includesPrivateContext: false);
 
     await expectLater(
       () => container
@@ -177,7 +213,7 @@ void main() {
     addTearDown(container.dispose);
     await container
         .read(externalPrivacyConfirmationControllerProvider)
-        .markAcknowledged(blockedConfig);
+        .markAcknowledged(blockedConfig, includesPrivateContext: true);
 
     await expectLater(
       () => container
@@ -208,7 +244,7 @@ void main() {
       addTearDown(container.dispose);
       await container
           .read(externalPrivacyConfirmationControllerProvider)
-          .markAcknowledged(_externalConfig);
+          .markAcknowledged(_externalConfig, includesPrivateContext: false);
 
       final response = await container
           .read(aiChatOrchestratorProvider)
