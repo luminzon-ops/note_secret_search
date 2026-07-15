@@ -530,7 +530,7 @@ void main() {
     expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
   });
 
-  test('startDownload downloads all required multimodal artifacts before saving registry entry', () async {
+  test('startDownload fails closed for multimodal entries without downloader or runtime calls', () async {
     final downloadRepository = _MemoryDownloadRepository();
     final registryRepository = _MemoryRegistryRepository();
     final downloadService = _FakeDownloadService();
@@ -602,17 +602,15 @@ void main() {
           source: entry.sources.first,
         );
 
-    expect(downloadService.invocations.map((item) => item.sourceUrl), containsAll(<String>[modelUrl, mmprojUrl]));
-    final saved = registryRepository.entries['minicpm_v_4_6_q4_k_m'];
-    expect(saved, isNotNull);
-    expect(saved!.localPath, '/models/minicpm/MiniCPM-V-4_6-Q4_K_M.gguf');
-    expect(saved.artifactPathForRole('model'), '/models/minicpm/MiniCPM-V-4_6-Q4_K_M.gguf');
-    expect(saved.artifactPathForRole('mmproj'), '/models/minicpm/mmproj-model-f16.gguf');
-    expect(runtimeBridge.ensureCalls, 1);
-    expect(runtimeBridge.lastModelPath, '/models/minicpm/MiniCPM-V-4_6-Q4_K_M.gguf');
-    expect(runtimeBridge.lastMmprojPath, '/models/minicpm/mmproj-model-f16.gguf');
-    expect(saved.enabled, isFalse);
-    expect(saved.isInstalled, isFalse);
+    expect(downloadService.invocations, isEmpty);
+    expect(runtimeBridge.ensureCalls, 0);
+    expect(registryRepository.entries['minicpm_v_4_6_q4_k_m'], isNull);
+    final task = downloadRepository.tasksByModelAndSource(
+      'minicpm_v_4_6_q4_k_m',
+      'minicpm-v-4-6-q4-k-m-llm',
+    );
+    expect(task?.status, ModelDownloadStatus.failed);
+    expect(task?.errorMessage, contains('multimodal_llm'));
   });
 
   test('startDownload persists downloading status before first progress callback', () async {

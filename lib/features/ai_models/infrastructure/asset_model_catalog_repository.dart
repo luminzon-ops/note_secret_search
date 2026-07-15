@@ -22,6 +22,7 @@ class AssetModelCatalogRepository implements ModelCatalogRepository {
 
     return decoded
         .whereType<Map<String, dynamic>>()
+        .where((entry) => entry['type'] != 'multimodal_llm')
         .map(ModelCatalogEntry.fromJson)
         .toList(growable: false);
   }

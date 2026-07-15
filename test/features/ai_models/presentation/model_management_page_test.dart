@@ -265,49 +265,46 @@ void main() {
     expect(find.text('可下载模型目录'), findsOneWidget);
   });
 
-  testWidgets('ModelManagementPage shows MiniCPM multimodal artifacts and enabled download action', (
+  testWidgets('ModelManagementPage independently filters multimodal catalog entries', (
     tester,
   ) async {
-    late _RecordingModelDownloadController controller;
-    const entry = ModelCatalogEntry(
-      id: 'minicpm_v_4_6_q4_k_m',
-      type: 'multimodal_llm',
-      tier: 'local_multimodal',
-      displayName: 'MiniCPM-V 4.6 Q4_K_M Multimodal',
-      description: 'Requires LLM GGUF plus mmproj-model-f16.gguf.',
-      sizeBytes: 1516275776,
-      minRamMb: 6144,
-      recommendedTier: 'vision_language_local',
-      sources: <ModelSourceEntry>[
-        ModelSourceEntry(
-          id: 'minicpm-v-4-6-q4-k-m-llm',
-          label: 'MiniCPM-V 4.6 Q4_K_M 主模型',
-          role: 'model',
-          url: 'https://example.com/MiniCPM-V-4_6-Q4_K_M.gguf',
-        ),
-        ModelSourceEntry(
-          id: 'minicpm-v-4-6-mmproj-f16',
-          label: 'mmproj-model-f16.gguf',
-          role: 'mmproj',
-          url: 'https://example.com/mmproj-model-f16.gguf',
-        ),
-      ],
-    );
-
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          modelCatalogEntriesProvider.overrideWith((ref) async => const <ModelCatalogEntry>[entry]),
+          modelCatalogEntriesProvider.overrideWith(
+            (ref) async => const <ModelCatalogEntry>[
+              ModelCatalogEntry(
+                id: 'embed-1',
+                type: 'embedding',
+                tier: 'mvp',
+                displayName: 'Visible Embedding',
+                description: 'Supported catalog entry.',
+                sizeBytes: 1024,
+                minRamMb: 512,
+                recommendedTier: 'mvp',
+                sources: <ModelSourceEntry>[],
+              ),
+              ModelCatalogEntry(
+                id: 'multimodal-1',
+                type: 'multimodal_llm',
+                tier: 'local_multimodal',
+                displayName: 'Hidden Multimodal Catalog Entry',
+                description: 'Unavailable catalog entry.',
+                sizeBytes: 2048,
+                minRamMb: 1024,
+                recommendedTier: 'vision_language_local',
+                sources: <ModelSourceEntry>[],
+              ),
+            ],
+          ),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
           ),
           embeddingRuntimeStatesProvider.overrideWith((ref) async => const <String, EmbeddingEngineState>{}),
-          modelDownloadControllerProvider.overrideWith((ref) {
-            controller = _RecordingModelDownloadController(ref: ref);
-            return controller;
-          }),
+          llmRuntimeStatesProvider.overrideWith((ref) async => const <String, LlmRuntimeState>{}),
+          modelDownloadControllerProvider.overrideWith((ref) => _FakeModelDownloadController(ref: ref)),
         ],
         child: const MaterialApp(home: ModelManagementPage()),
       ),
@@ -315,19 +312,77 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('主模型：MiniCPM-V 4.6 Q4_K_M 主模型'), findsOneWidget);
-    expect(find.text('视觉投影：mmproj-model-f16.gguf'), findsOneWidget);
-    expect(find.textContaining('本地多模态推理'), findsOneWidget);
-    final startDownload = find.widgetWithText(FilledButton, '开始下载');
-    expect(startDownload, findsOneWidget);
+    expect(find.text('Visible Embedding'), findsOneWidget);
+    expect(find.text('Hidden Multimodal Catalog Entry'), findsNothing);
+  });
 
-    await scrollUntilFound(tester, startDownload);
+  testWidgets('ModelManagementPage independently filters multimodal registry entries', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          modelCatalogEntriesProvider.overrideWith((ref) async => const <ModelCatalogEntry>[]),
+          modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
+          modelRegistryEntriesProvider.overrideWith(
+            (ref) async => const <ModelRegistryEntry>[
+              ModelRegistryEntry(
+                id: 'embed-1',
+                type: 'embedding',
+                provider: 'builtin',
+                name: 'Visible Installed Embedding',
+                version: null,
+                sizeBytes: null,
+                quantization: null,
+                minRamMb: null,
+                recommendedTier: null,
+                localPath: '/models/embed.onnx',
+                checksum: 'sha256:embed',
+                enabled: true,
+                installedAt: null,
+                filePresent: true,
+              ),
+              ModelRegistryEntry(
+                id: 'multimodal-1',
+                type: 'multimodal_llm',
+                provider: 'builtin',
+                name: 'Hidden Installed Multimodal',
+                version: null,
+                sizeBytes: null,
+                quantization: null,
+                minRamMb: null,
+                recommendedTier: null,
+                localPath: '/models/multimodal.gguf',
+                checksum: 'sha256:multimodal',
+                enabled: true,
+                installedAt: null,
+                filePresent: true,
+              ),
+            ],
+          ),
+          activeModelSelectionProvider.overrideWith(
+            (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
+          ),
+          embeddingRuntimeStatesProvider.overrideWith(
+            (ref) async => {
+              'embed-1': const EmbeddingEngineState(
+                ready: true,
+                reason: 'ready',
+                status: EmbeddingRuntimeStatus.ready,
+              ),
+            },
+          ),
+          llmRuntimeStatesProvider.overrideWith((ref) async => const <String, LlmRuntimeState>{}),
+          modelDownloadControllerProvider.overrideWith((ref) => _FakeModelDownloadController(ref: ref)),
+        ],
+        child: const MaterialApp(home: ModelManagementPage()),
+      ),
+    );
+
     await tester.pumpAndSettle();
-    await tester.tap(startDownload);
-    await tester.pump();
 
-    expect(controller.startedEntry?.id, 'minicpm_v_4_6_q4_k_m');
-    expect(controller.startedSource?.id, 'minicpm-v-4-6-q4-k-m-llm');
+    expect(find.text('Visible Installed Embedding'), findsOneWidget);
+    expect(find.text('Hidden Installed Multimodal'), findsNothing);
   });
 
   testWidgets('ModelManagementPage shows 已安装模型 for an installed but inactive model', (
@@ -2122,12 +2177,9 @@ void main() {
     });
   });
 
-  testWidgets('catalog source list uses formatSourceLabelWithTrust for source titles and removes duplicate trailing trust hint', (
+  testWidgets('catalog source list keeps plain labels when signature metadata is present', (
     tester,
   ) async {
-    // Milestone 6: 推荐来源 ListTile rows should use formatSourceLabelWithTrust for title.
-    // The trust suffix "(已签名)" moves into the title; the standalone trailing "已签名" is removed.
-    // This avoids showing trust twice in the same row.
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -2179,21 +2231,12 @@ void main() {
     // Verify the 推荐来源 section renders
     expect(find.text('推荐来源'), findsOneWidget);
 
-    // Title uses formatSourceLabelWithTrust: signed source shows trust suffix in title.
-    // Multiple widgets may show the trust label (dropdown + list tile title) — verify at least one.
-    expect(find.text('Signed Source (已签名)'), findsWidgets);
-    // Unsigned source remains plain (no trust suffix in title)
+    expect(find.text('Signed Source'), findsWidgets);
     expect(find.text('Unsigned Source'), findsWidgets);
-
-    // The standalone trailing "已签名" text is removed from the ListTile row.
-    // Trust is now only shown in the title, not as a separate trailing widget.
-    // We verify the old duplicate pattern is gone by checking the row does not contain
-    // a standalone "已签名" after the title (only the download-status text remains in trailing).
-    expect(find.text('已签名'), findsNothing);
+    expect(find.textContaining('已签名'), findsNothing);
   });
 
-  testWidgets('current-source text shows trust suffix for signed source', (tester) async {
-    // This test verifies Milestone 6: signed sources show trust hint in selector/current-source text
+  testWidgets('current-source text stays plain when signature metadata is present', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -2236,8 +2279,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // The section header appears, and the source label appears.
-    expect(find.textContaining('Signed Source (已签名)'), findsAtLeast(2));
+    expect(find.text('Signed Source'), findsAtLeast(2));
+    expect(find.textContaining('已签名'), findsNothing);
   });
 
   testWidgets('current-source text shows no trust suffix for unsigned source', (tester) async {
@@ -2289,7 +2332,7 @@ void main() {
     expect(find.textContaining('已签名'), findsNothing);
   });
 
-  testWidgets('dropdown item shows trust suffix for signed source in selector', (tester) async {
+  testWidgets('dropdown items never show trust suffixes from signature metadata', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -2347,19 +2390,14 @@ void main() {
     await tester.tap(dropdownFinder);
     await tester.pumpAndSettle();
 
-    // Signed source in dropdown should show trust suffix (may appear multiple times in dropdown overlay)
-    final signedItemFinder = find.textContaining(RegExp(r'Signed Source.*已签名'));
-    expect(signedItemFinder, findsWidgets);
-    // Unsigned source in dropdown should NOT show trust suffix
-    final unsignedItemWithTrust = find.textContaining(RegExp(r'Unsigned Source.*已签名'));
-    expect(unsignedItemWithTrust, findsNothing);
+    expect(find.text('Signed Source'), findsWidgets);
+    expect(find.text('Unsigned Source'), findsWidgets);
+    expect(find.textContaining('已签名'), findsNothing);
   });
 
-  testWidgets('catalog entry shows trust explainer caption when at least one source declares artifact trust', (
+  testWidgets('catalog entry omits trust explainer when signature metadata is present', (
     tester,
   ) async {
-    // When a catalog entry has at least one source that declares artifact trust,
-    // an explanatory caption about "已签名" meaning should appear near the source selector area.
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -2408,20 +2446,12 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // The trust explainer caption must appear because at least one source declares artifact trust.
-    // The copy clarifies that "已签名" only means the source declares signature metadata
-    // and the current version has not completed signature verification.
-    expect(
-      find.textContaining(RegExp(r'已签名.*仅表示|说明：.*已签名')),
-      findsOneWidget,
-    );
+    expect(find.textContaining('已签名'), findsNothing);
   });
 
-  testWidgets('ModelManagementPage shows trust-aware source label in status card for signed source', (
+  testWidgets('ModelManagementPage shows plain source label in status card despite signature metadata', (
     tester,
   ) async {
-    // Milestone 6: The status card's "当前来源：..." line should show trust suffix for signed sources.
-    // This mirrors the selector/current-source trust behavior.
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -2480,10 +2510,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // The status card source label must include trust suffix for signed source
-    expect(find.text('当前来源：Signed Mirror (已签名)'), findsOneWidget);
-    // Plain label without trust suffix should NOT appear
-    expect(find.text('当前来源：Signed Mirror'), findsNothing);
+    expect(find.text('当前来源：Signed Mirror'), findsOneWidget);
+    expect(find.textContaining('已签名'), findsNothing);
   });
 
   testWidgets('ModelManagementPage shows plain source label in status card for unsigned source', (
@@ -2550,14 +2578,10 @@ void main() {
     expect(find.textContaining('当前来源：Unsigned Mirror (已签名)'), findsNothing);
   });
 
-  group('local contextual trust caption for current effective source', () {
-    testWidgets('shows local trust caption below source selector when effective source is signed', (
+  group('signature metadata trust UI suppression', () {
+    testWidgets('omits local trust caption when effective source has signature metadata', (
       tester,
     ) async {
-      // Milestone 6: When the current/effective source declares artifact trust,
-      // a local contextual caption appears directly below the source selector row.
-      // This caption is tied to the current source, distinct from the generic explainer.
-      // The caption should be a concise Chinese note about the current source's trust status.
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -2600,10 +2624,7 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // The local trust caption should appear as a concise Chinese note tied to current source.
-      // Expected caption: "已签名来源声明" or similar - short, local to current source.
-      // This is distinct from the generic explainer which contains "仅表示" and "不代表".
-      expect(find.text('已签名来源声明'), findsOneWidget);
+      expect(find.textContaining('已签名'), findsNothing);
     });
 
     testWidgets('omits local trust caption when effective source is unsigned', (
@@ -2655,12 +2676,9 @@ void main() {
       expect(find.text('已签名来源声明'), findsNothing);
     });
 
-    testWidgets('shows local caption for current signed source alongside generic explainer for mixed sources', (
+    testWidgets('omits all trust captions for mixed sources with signature metadata', (
       tester,
     ) async {
-      // When there are multiple sources and the current one is signed,
-      // both the local caption (for current) and generic explainer (for any signed) should appear.
-      // The local caption is tied to current source; generic explains broader context.
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -2709,20 +2727,14 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // Local caption appears for current (signed) source
-      expect(find.text('已签名来源声明'), findsOneWidget);
-      // Generic explainer also appears (explains trust for any signed source)
-      expect(find.textContaining(RegExp(r'已签名仅表示来源')), findsOneWidget);
+      expect(find.textContaining('已签名'), findsNothing);
     });
   });
 
-  group('Milestone 6b: trust caption deduplication — single signed source hides generic explainer', () {
-    testWidgets('(a) single signed source → shows only local caption, hides generic explainer', (
+  group('signature metadata never produces trust captions', () {
+    testWidgets('(a) single source with signature metadata shows no trust caption', (
       tester,
     ) async {
-      // When an entry has exactly ONE source and that source is signed,
-      // the UI should show only the short local caption ("已签名来源声明")
-      // and suppress the generic explainer to avoid redundant copy.
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -2765,17 +2777,12 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // Local caption shows for the signed source
-      expect(find.text('已签名来源声明'), findsOneWidget);
-      // Generic explainer is HIDDEN in the single-signed-source case
-      expect(find.textContaining(RegExp(r'已签名仅表示来源')), findsNothing);
+      expect(find.textContaining('已签名'), findsNothing);
     });
 
-    testWidgets('(b) multiple sources with at least one signed → generic explainer shown', (
+    testWidgets('(b) multiple sources with signature metadata show no trust explainer', (
       tester,
     ) async {
-      // When multiple sources exist and at least one is signed,
-      // the generic explainer should appear (even though only one is signed).
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -2824,15 +2831,12 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // Generic explainer must appear in multi-source case
-      expect(find.textContaining(RegExp(r'已签名仅表示来源')), findsOneWidget);
+      expect(find.textContaining('已签名'), findsNothing);
     });
 
-    testWidgets('(c) mixed sources, effective signed → both local caption AND generic explainer', (
+    testWidgets('(c) effective source with signature metadata shows no trust text', (
       tester,
     ) async {
-      // When the effective/current source is signed in a mixed-source entry,
-      // BOTH the short local caption and the generic explainer should appear.
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -2881,16 +2885,12 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // Both captions appear in this case
-      expect(find.text('已签名来源声明'), findsOneWidget);
-      expect(find.textContaining(RegExp(r'已签名仅表示来源')), findsOneWidget);
+      expect(find.textContaining('已签名'), findsNothing);
     });
 
-    testWidgets('(d) effective unsigned but another source signed → ONLY generic explainer', (
+    testWidgets('(d) signature metadata on another source produces no trust text', (
       tester,
     ) async {
-      // When the effective/current source is unsigned but another source is signed,
-      // ONLY the generic explainer should appear (no local caption since current is unsigned).
       await tester.binding.setSurfaceSize(const Size(1000, 1600));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -2942,10 +2942,7 @@ void main() {
 
       await tester.pumpAndSettle();
 
-      // The unsigned effective source shows generic explainer but NOT the local caption.
-      // Note: the unsigned source is first so it's selected by default.
-      expect(find.text('已签名来源声明'), findsNothing);
-      expect(find.textContaining(RegExp(r'已签名仅表示来源')), findsOneWidget);
+      expect(find.textContaining('已签名'), findsNothing);
     });
   });
 

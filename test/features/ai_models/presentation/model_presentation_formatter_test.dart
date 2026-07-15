@@ -194,7 +194,7 @@ void main() {
     );
   });
 
-  test('formatCatalogRuntimeSupportStatus explains deployable multimodal entries', () {
+  test('formatCatalogRuntimeSupportStatus rejects unavailable multimodal entries', () {
     const entry = ModelCatalogEntry(
       id: 'minicpm_v_4_6_q4_k_m',
       type: 'multimodal_llm',
@@ -207,63 +207,44 @@ void main() {
       sources: <ModelSourceEntry>[],
     );
 
-    expect(isCatalogEntryDownloadSupported(entry), isTrue);
+    expect(isCatalogEntryDownloadSupported(entry), isFalse);
     expect(
       formatCatalogRuntimeSupportStatus(entry),
-      '运行时支持：需要下载主模型和视觉投影文件，部署后可进行本地多模态推理。',
+      '运行时支持：当前版本尚不支持 multimodal_llm；需要专用 runtime 后才能下载部署。',
     );
   });
 
-  group('shouldShowGenericTrustExplainer', () {
-    test('returns false for a single signed source entry', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'signed-only',
-          label: 'Signed Only Source',
-          url: 'https://example.com/signed.onnx',
-          checksum: 'sha256:signed',
-          signature: 'base64:sig',
-          signatureAlgorithm: 'RSA-SHA256',
-          keyId: 'key-1',
-        ),
-      ];
+  group('signature metadata trust UI suppression', () {
+    const signedSource = ModelSourceEntry(
+      id: 'signed-src',
+      label: 'Signed Source',
+      url: 'https://example.com/signed.onnx',
+      checksum: 'sha256:signed',
+      signature: 'base64:sig',
+      signatureAlgorithm: 'RSA-SHA256',
+      keyId: 'key-1',
+    );
+    const unsignedSource = ModelSourceEntry(
+      id: 'unsigned-src',
+      label: 'Unsigned Source',
+      url: 'https://example.com/unsigned.onnx',
+      checksum: 'sha256:unsigned',
+    );
 
-      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    test('keeps source labels plain', () {
+      expect(formatSourceLabelWithTrust(signedSource), 'Signed Source');
     });
 
-    test('returns true for a mixed-source entry with signed metadata', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'signed-src',
-          label: 'Signed Source',
-          url: 'https://example.com/signed.onnx',
-          checksum: 'sha256:signed',
-          signature: 'base64:sig',
-          signatureAlgorithm: 'RSA-SHA256',
-          keyId: 'key-1',
-        ),
-        ModelSourceEntry(
-          id: 'unsigned-src',
-          label: 'Unsigned Source',
-          url: 'https://example.com/unsigned.onnx',
-          checksum: 'sha256:unsigned',
-        ),
-      ];
-
-      expect(shouldShowGenericTrustExplainer(sources), isTrue);
-    });
-
-    test('returns false when no source declares artifact trust', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'unsigned-src',
-          label: 'Unsigned Source',
-          url: 'https://example.com/unsigned.onnx',
-          checksum: 'sha256:unsigned',
-        ),
-      ];
-
-      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    test('omits local and generic trust captions', () {
+      expect(formatEffectiveSourceTrustCaption(signedSource), isNull);
+      expect(
+        formatGenericTrustExplainer(const <ModelSourceEntry>[signedSource, unsignedSource]),
+        isNull,
+      );
+      expect(
+        shouldShowGenericTrustExplainer(const <ModelSourceEntry>[signedSource, unsignedSource]),
+        isFalse,
+      );
     });
   });
 }

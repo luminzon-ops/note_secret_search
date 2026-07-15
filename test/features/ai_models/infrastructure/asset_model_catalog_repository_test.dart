@@ -90,7 +90,72 @@ void main() {
     expect(lighterEntry.sources.single.checksum, startsWith('sha256:'));
   });
 
-  test('built-in catalog exposes MiniCPM-V 4_6 as deployable multimodal model artifacts', () async {
+  test('loadCatalog filters multimodal entries while preserving supported entries', () async {
+    final repository = AssetModelCatalogRepository(
+      assetBundle: _FakeAssetBundle('''
+[
+  {
+    "id": "embed-1",
+    "type": "embedding",
+    "tier": "minimum",
+    "display_name": "Embedding",
+    "description": "Supported embedding.",
+    "size_bytes": 1024,
+    "min_ram_mb": 512,
+    "recommended_tier": "tier_1",
+    "source_list": []
+  },
+  {
+    "id": "multimodal-1",
+    "type": "multimodal_llm",
+    "tier": "local_multimodal",
+    "display_name": "Multimodal",
+    "description": "Unavailable multimodal model.",
+    "size_bytes": 2048,
+    "min_ram_mb": 1024,
+    "recommended_tier": "vision_language_local",
+    "source_list": []
+  }
+]
+'''),
+    );
+
+    final catalog = await repository.loadCatalog();
+
+    expect(catalog.map((entry) => entry.id), <String>['embed-1']);
+    expect(catalog.any((entry) => entry.type == 'multimodal_llm'), isFalse);
+  });
+
+  test('loadCatalog filters malformed multimodal entries before parsing', () async {
+    final repository = AssetModelCatalogRepository(
+      assetBundle: _FakeAssetBundle('''
+[
+  {
+    "id": "malformed-multimodal",
+    "type": "multimodal_llm",
+    "size_bytes": "invalid"
+  },
+  {
+    "id": "llm-1",
+    "type": "llm",
+    "tier": "local",
+    "display_name": "Supported LLM",
+    "description": "Supported entry.",
+    "size_bytes": 1024,
+    "min_ram_mb": 512,
+    "recommended_tier": "local",
+    "source_list": []
+  }
+]
+'''),
+    );
+
+    final catalog = await repository.loadCatalog();
+
+    expect(catalog.map((entry) => entry.id), <String>['llm-1']);
+  });
+
+  test('built-in catalog does not expose MiniCPM multimodal entries', () async {
     final projectRoot = Directory.current;
     final catalogFile = File(
       '${projectRoot.path}${Platform.pathSeparator}assets${Platform.pathSeparator}model_catalog${Platform.pathSeparator}built_in_catalog.json',
@@ -100,22 +165,9 @@ void main() {
     );
 
     final catalog = await repository.loadCatalog();
-    final miniCpmEntry = catalog.firstWhere((entry) => entry.id == 'minicpm_v_4_6_q4_k_m');
 
-    expect(miniCpmEntry.type, 'multimodal_llm');
-    expect(miniCpmEntry.tier, 'local_multimodal');
-    expect(miniCpmEntry.recommendedTier, 'vision_language_local');
-    expect(miniCpmEntry.description, contains('mmproj-model-f16.gguf'));
-    expect(miniCpmEntry.sources, hasLength(2));
-    expect(miniCpmEntry.sources.map((source) => source.role), containsAll(<String>['model', 'mmproj']));
-    expect(miniCpmEntry.sources.every((source) => source.required), isTrue);
-    expect(
-      miniCpmEntry.sources.map((source) => source.url),
-      containsAll(<String>[
-        'https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/MiniCPM-V-4_6-Q4_K_M.gguf',
-        'https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/mmproj-model-f16.gguf',
-      ]),
-    );
+    expect(catalog.any((entry) => entry.id == 'minicpm_v_4_6_q4_k_m'), isFalse);
+    expect(catalog.any((entry) => entry.type == 'multimodal_llm'), isFalse);
   });
 
   test('built-in BGE embedding runtime declares token_type_ids input', () async {
@@ -468,7 +520,7 @@ void main() {
     expect(source.declaresArtifactTrust(), isFalse);
   });
 
-  test('built_in_catalog includes signature metadata on at least one source entry', () async {
+  test('built_in_catalog omits placeholder signature metadata', () async {
     final file = File('assets/model_catalog/built_in_catalog.json');
     final decoded = jsonDecode(await file.readAsString());
 
@@ -480,17 +532,21 @@ void main() {
     for (final entry in entries) {
       final sources = (entry['source_list'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList(growable: false) ?? [];
       for (final source in sources) {
-        if (source.containsKey('signature') || source.containsKey('signatureAlgorithm') || source.containsKey('keyId')) {
+        if (source.containsKey('signature') ||
+            source.containsKey('signatureAlgorithm') ||
+            source.containsKey('signature_algorithm') ||
+            source.containsKey('keyId') ||
+            source.containsKey('key_id')) {
           hasSignatureField = true;
           break;
         }
       }
       if (hasSignatureField) break;
     }
-    expect(hasSignatureField, isTrue, reason: 'At least one source entry in built_in_catalog.json should have signature metadata');
+    expect(hasSignatureField, isFalse);
   });
 
-  test('built_in_catalog source entry with signature has trust metadata', () async {
+  test('built_in_catalog keeps BGE checksum metadata after removing signature metadata', () async {
     final file = File('assets/model_catalog/built_in_catalog.json');
     final decoded = jsonDecode(await file.readAsString());
 
@@ -499,6 +555,10 @@ void main() {
 
     final sources = (entry['source_list'] as List<dynamic>).whereType<Map<String, dynamic>>().toList(growable: false);
     expect(sources.first, contains('checksum'));
+    expect(sources.first['checksum'], startsWith('sha256:'));
+    expect(sources.first, isNot(contains('signature')));
+    expect(sources.first, isNot(contains('signature_algorithm')));
+    expect(sources.first, isNot(contains('key_id')));
   });
 
   group('ModelSourceEntry trust stub semantic', () {

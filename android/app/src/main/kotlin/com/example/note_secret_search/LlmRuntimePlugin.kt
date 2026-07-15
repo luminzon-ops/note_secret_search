@@ -70,37 +70,19 @@ class LlmRuntimePlugin(
                 }
 
                 "ensureMultimodalModelReady" -> {
-                    val modelId = requiredString(call, "modelId")
-                    val modelPath = requiredString(call, "modelPath")
-                    val mmprojPath = requiredString(call, "mmprojPath")
-                    runAsync(result) {
-                        multimodalRuntime.ensureModelReady(
-                            modelId = modelId,
-                            modelPath = modelPath,
-                            mmprojPath = mmprojPath,
-                        )
-                    }
+                    result.error(
+                        "UNSUPPORTED_CAPABILITY",
+                        "UNSUPPORTED_CAPABILITY",
+                        null,
+                    )
                 }
 
                 "generateMultimodalText" -> {
-                    val modelId = requiredString(call, "modelId")
-                    val modelPath = requiredString(call, "modelPath")
-                    val mmprojPath = requiredString(call, "mmprojPath")
-                    val imagePath = requiredString(call, "imagePath")
-                    val prompt = requiredString(call, "prompt")
-                    val config = readGenerationConfig(call)
-                    val reasoningEnabled = call.argument<Boolean>("reasoningEnabled") ?: false
-                    runAsync(result) {
-                        multimodalRuntime.generateMultimodalText(
-                            modelId = modelId,
-                            modelPath = modelPath,
-                            mmprojPath = mmprojPath,
-                            imagePath = imagePath,
-                            prompt = prompt,
-                            config = config,
-                            reasoningEnabled = reasoningEnabled,
-                        )
-                    }
+                    result.error(
+                        "UNSUPPORTED_CAPABILITY",
+                        "UNSUPPORTED_CAPABILITY",
+                        null,
+                    )
                 }
 
                 "releaseModel" -> {

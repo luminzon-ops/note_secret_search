@@ -36,26 +36,28 @@ class ModelManagementPage extends ConsumerWidget {
           const SizedBox(height: 16),
           registryAsync.when(
             data: (entries) {
+              final supportedEntries =
+                  entries.where((entry) => entry.type != 'multimodal_llm').toList(growable: false);
               final runtimeStates = runtimeStatesAsync.valueOrNull ?? const <String, EmbeddingEngineState>{};
               final llmRuntimeStates = llmRuntimeStatesAsync.valueOrNull ?? const <String, LlmRuntimeState>{};
               final activeLlmModelId = activeLlmAsync.valueOrNull?.id;
               return selectionAsync.when(
                 data: (selection) => _InstalledModelsCard(
-                  entries: entries,
+                  entries: supportedEntries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: selection.activeEmbeddingModelId,
                   activeLlmModelId: activeLlmModelId,
                 ),
                 loading: () => _InstalledModelsCard(
-                  entries: entries,
+                  entries: supportedEntries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: null,
                   activeLlmModelId: activeLlmModelId,
                 ),
                 error: (error, stackTrace) => _InstalledModelsCard(
-                  entries: entries,
+                  entries: supportedEntries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: null,
@@ -74,7 +76,12 @@ class ModelManagementPage extends ConsumerWidget {
           const SizedBox(height: 16),
           catalogAsync.when(
             data: (entries) => taskAsync.when(
-              data: (tasks) => _CatalogSection(entries: entries, tasks: tasks),
+              data: (tasks) => _CatalogSection(
+                entries: entries
+                    .where((entry) => entry.type != 'multimodal_llm')
+                    .toList(growable: false),
+                tasks: tasks,
+              ),
               loading: () => const Card(
                 child: Padding(
                   padding: EdgeInsets.all(16),

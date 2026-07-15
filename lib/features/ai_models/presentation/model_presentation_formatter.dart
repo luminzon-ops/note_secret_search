@@ -118,13 +118,10 @@ String formatCatalogDeploymentStatus(
 }
 
 bool isCatalogEntryDownloadSupported(ModelCatalogEntry entry) {
-  return entry.type == 'embedding' || entry.type == 'llm' || entry.type == 'multimodal_llm';
+  return entry.type == 'embedding' || entry.type == 'llm';
 }
 
 String formatCatalogRuntimeSupportStatus(ModelCatalogEntry entry) {
-  if (entry.type == 'multimodal_llm') {
-    return '运行时支持：需要下载主模型和视觉投影文件，部署后可进行本地多模态推理。';
-  }
   if (isCatalogEntryDownloadSupported(entry)) {
     return '运行时支持：当前版本支持下载部署。';
   }
@@ -139,56 +136,22 @@ String _formatModelSize(int bytes) {
   return '${mb.toStringAsFixed(1)} MB';
 }
 
-/// Formats a source label with trust suffix if the source declares artifact trust.
-/// Returns the label with " (已签名)" appended if declaresArtifactTrust() is true,
-/// otherwise returns the plain label.
+/// Formats a source label without deriving trust UI from signature metadata.
 String formatSourceLabelWithTrust(ModelSourceEntry source) {
-  if (source.declaresArtifactTrust()) {
-    return '${source.label} (已签名)';
-  }
   return source.label;
 }
 
-/// Returns a short contextual caption for the current effective source when signed.
-/// Returns null when the effective source does not declare artifact trust.
-/// This is a local, source-specific trust note — distinct from the generic explainer.
+/// Signature verification is unavailable, so no source-specific trust caption is shown.
 String? formatEffectiveSourceTrustCaption(ModelSourceEntry? effectiveSource) {
-  if (effectiveSource != null && effectiveSource.declaresArtifactTrust()) {
-    return '已签名来源声明';
-  }
   return null;
 }
 
-/// Returns the generic trust explainer text when any source in the entry declares artifact trust.
-/// Returns null when no source declares trust.
-/// The generic explainer is the single full disclaimer about unverified signatures.
+/// Signature metadata does not produce explanatory trust copy.
 String? formatGenericTrustExplainer(List<ModelSourceEntry> sources) {
-  if (sources.any((s) => s.declaresArtifactTrust())) {
-    return '说明：已签名仅表示来源声明附带签名信息；当前版本尚未完成签名校验，不代表文件已验证。';
-  }
   return null;
 }
 
-/// Returns true when the generic trust explainer should be shown alongside
-/// the source selector area.
-///
-/// The generic explainer is suppressed when the entry has exactly one signed
-/// source (the local caption suffices). It is shown in all other cases where
-/// at least one source declares artifact trust, which currently means
-/// multi-source trust contexts.
-///
-/// Parameters:
-/// - [sources]: all sources in the catalog entry
+/// Signature metadata never enables trust UI until verification is implemented.
 bool shouldShowGenericTrustExplainer(List<ModelSourceEntry> sources) {
-  final hasAnySignedSource = sources.any((s) => s.declaresArtifactTrust());
-  if (!hasAnySignedSource) return false;
-
-  // Suppress generic explainer when there is exactly one source and it is signed.
-  // The local caption ("已签名来源声明") is sufficient in that case.
-  final signedSources = sources.where((s) => s.declaresArtifactTrust()).toList();
-  if (signedSources.length == 1 && sources.length == 1) {
-    return false;
-  }
-
-  return true;
+  return false;
 }

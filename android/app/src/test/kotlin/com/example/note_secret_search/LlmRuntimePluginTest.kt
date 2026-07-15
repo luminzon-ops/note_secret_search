@@ -344,16 +344,13 @@ class LlmRuntimePluginTest {
     }
 
     @Test
-    fun `generateMultimodalText forwards model projector image and reasoning flag`() {
+    fun `ensureMultimodalModelReady returns unsupported before reading arguments or calling runtime`() {
         val result = RecordingResult()
-        val executor = Executors.newSingleThreadExecutor()
-        var capturedModelPath: String? = null
-        var capturedMmprojPath: String? = null
-        var capturedImagePath: String? = null
-        var capturedReasoningEnabled: Boolean? = null
+        var runtimeCalls = 0
         val multimodalRuntime = object : MultimodalLlmRuntimeContract {
             override fun ensureModelReady(modelId: String, modelPath: String, mmprojPath: String): Map<String, Any?> {
-                throw UnsupportedOperationException("ensureModelReady should not be called in this test.")
+                runtimeCalls++
+                return emptyMap()
             }
 
             override fun generateMultimodalText(
@@ -365,49 +362,67 @@ class LlmRuntimePluginTest {
                 config: LocalLlmGenerationConfig,
                 reasoningEnabled: Boolean,
             ): Map<String, Any?> {
-                capturedModelPath = modelPath
-                capturedMmprojPath = mmprojPath
-                capturedImagePath = imagePath
-                capturedReasoningEnabled = reasoningEnabled
-                return mapOf(
-                    "status" to "ready",
-                    "ready" to true,
-                    "text" to "A cat",
-                )
+                runtimeCalls++
+                return emptyMap()
             }
         }
 
-        try {
-            val plugin = LlmRuntimePlugin(
-                runtime = throwingTextRuntime(),
-                multimodalRuntime = multimodalRuntime,
-                workerExecutor = executor,
-                resultDispatcher = ImmediateResultDispatcher(),
-            )
+        val plugin = LlmRuntimePlugin(
+            runtime = throwingTextRuntime(),
+            multimodalRuntime = multimodalRuntime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
 
-            plugin.onMethodCall(
-                MethodCall(
-                    "generateMultimodalText",
-                    mapOf(
-                        "modelId" to "minicpm_v_4_6_q4_k_m",
-                        "modelPath" to "/models/model.gguf",
-                        "mmprojPath" to "/models/mmproj-model-f16.gguf",
-                        "imagePath" to "/cache/input.jpg",
-                        "prompt" to "Describe it",
-                        "reasoningEnabled" to false,
-                    ),
-                ),
-                result,
-            )
+        plugin.onMethodCall(
+            MethodCall("ensureMultimodalModelReady", null),
+            result,
+        )
 
-            assertTrue("result.success should be invoked after multimodal generation.", result.successLatch.await(1, TimeUnit.SECONDS))
-            assertEquals("/models/model.gguf", capturedModelPath)
-            assertEquals("/models/mmproj-model-f16.gguf", capturedMmprojPath)
-            assertEquals("/cache/input.jpg", capturedImagePath)
-            assertEquals(false, capturedReasoningEnabled)
-        } finally {
-            executor.shutdownNow()
+        assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
+        assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
+        assertNull(result.errorDetails)
+        assertEquals(0, runtimeCalls)
+    }
+
+    @Test
+    fun `generateMultimodalText returns unsupported before reading arguments or calling runtime`() {
+        val result = RecordingResult()
+        var runtimeCalls = 0
+        val multimodalRuntime = object : MultimodalLlmRuntimeContract {
+            override fun ensureModelReady(modelId: String, modelPath: String, mmprojPath: String): Map<String, Any?> {
+                runtimeCalls++
+                return emptyMap()
+            }
+
+            override fun generateMultimodalText(
+                modelId: String,
+                modelPath: String,
+                mmprojPath: String,
+                imagePath: String,
+                prompt: String,
+                config: LocalLlmGenerationConfig,
+                reasoningEnabled: Boolean,
+            ): Map<String, Any?> {
+                runtimeCalls++
+                return emptyMap()
+            }
         }
+
+        val plugin = LlmRuntimePlugin(
+            runtime = throwingTextRuntime(),
+            multimodalRuntime = multimodalRuntime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall("generateMultimodalText", null),
+            result,
+        )
+
+        assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
+        assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
+        assertNull(result.errorDetails)
+        assertEquals(0, runtimeCalls)
     }
 }
 

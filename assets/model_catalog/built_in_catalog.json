@@ -27,10 +27,7 @@
         "id": "xenova-revision-pinned",
         "label": "HuggingFace Xenova（revision pinned）",
         "url": "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model.onnx",
-        "checksum": "sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a",
-        "signature": "base64:placeholder_signature_for_built_in_catalog",
-        "signature_algorithm": "RSA-SHA256",
-        "key_id": "builtin-catalog-signer"
+        "checksum": "sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a"
       },
       {
         "id": "xenova-main-fallback",
@@ -73,39 +70,6 @@
         "label": "HuggingFace jc-builds GGUF",
         "url": "https://hf-mirror.com/jc-builds/SmolLM2-360M-Instruct-Q4_K_M-GGUF/resolve/main/SmolLM2-360M-Instruct.Q4_K_M.gguf",
         "checksum": "sha256:ade7aee1e5bd7c3b8f1fedafc61a1a0be31e8afa64e006607cd202323e2ccce0"
-      }
-    ]
-  },
-  {
-    "id": "minicpm_v_4_6_q4_k_m",
-    "type": "multimodal_llm",
-    "tier": "local_multimodal",
-    "display_name": "MiniCPM-V 4.6 Q4_K_M Multimodal",
-    "description": "OpenBMB MiniCPM-V 4.6 端侧多模态 GGUF 模型。该模型需要 MiniCPM-V-4_6-Q4_K_M.gguf 与 mmproj-model-f16.gguf 双文件，并依赖支持 llama.cpp mtmd / MiniCPM-V 4.6 的本地 runtime 完成图片问答推理。",
-    "size_bytes": 1516275776,
-    "min_ram_mb": 6144,
-    "recommended_tier": "vision_language_local",
-    "runtime": {
-      "backend": "llama_cpp_mtmd",
-      "variant": "minicpm_v4_6",
-      "reasoning": "off"
-    },
-    "source_list": [
-      {
-        "id": "minicpm-v-4-6-q4-k-m-llm",
-        "label": "HuggingFace MiniCPM-V 4.6 GGUF LLM（Q4_K_M）",
-        "role": "model",
-        "required": true,
-        "url": "https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/MiniCPM-V-4_6-Q4_K_M.gguf",
-        "checksum": ""
-      },
-      {
-        "id": "minicpm-v-4-6-mmproj-f16",
-        "label": "HuggingFace MiniCPM-V 4.6 mmproj（f16）",
-        "role": "mmproj",
-        "required": true,
-        "url": "https://hf-mirror.com/openbmb/MiniCPM-V-4.6-gguf/resolve/main/mmproj-model-f16.gguf",
-        "checksum": ""
       }
     ]
   }

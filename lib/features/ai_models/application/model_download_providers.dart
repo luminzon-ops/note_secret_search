@@ -366,7 +366,7 @@ class ModelDownloadController {
   }
 
   bool _isDownloadRuntimeSupported(ModelCatalogEntry entry) {
-    return entry.type == 'embedding' || entry.type == 'llm' || entry.type == 'multimodal_llm';
+    return entry.type == 'embedding' || entry.type == 'llm';
   }
 
   Future<void> _startMultimodalDownload({
