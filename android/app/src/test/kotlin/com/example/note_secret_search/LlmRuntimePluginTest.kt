@@ -9,6 +9,7 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class LlmRuntimePluginTest {
     @Test
@@ -374,13 +375,14 @@ class LlmRuntimePluginTest {
         )
 
         plugin.onMethodCall(
-            MethodCall("ensureMultimodalModelReady", null),
+            MethodCall("ensureMultimodalModelReady", ThrowingArgumentsMap()),
             result,
         )
 
         assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
         assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
         assertNull(result.errorDetails)
+        assertEquals(1, result.callbackCount.get())
         assertEquals(0, runtimeCalls)
     }
 
@@ -415,13 +417,14 @@ class LlmRuntimePluginTest {
         )
 
         plugin.onMethodCall(
-            MethodCall("generateMultimodalText", null),
+            MethodCall("generateMultimodalText", ThrowingArgumentsMap()),
             result,
         )
 
         assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
         assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
         assertNull(result.errorDetails)
+        assertEquals(1, result.callbackCount.get())
         assertEquals(0, runtimeCalls)
     }
 }
@@ -457,9 +460,19 @@ private class ImmediateResultDispatcher : ResultDispatcher {
     }
 }
 
+private class ThrowingArgumentsMap : AbstractMap<String, Any?>() {
+    override val entries: Set<Map.Entry<String, Any?>>
+        get() = throw AssertionError("Multimodal arguments must not be inspected.")
+
+    override fun get(key: String): Any? {
+        throw AssertionError("Multimodal argument '$key' must not be read.")
+    }
+}
+
 private class RecordingResult : MethodChannel.Result {
     val successLatch = CountDownLatch(1)
     val errorLatch = CountDownLatch(1)
+    val callbackCount = AtomicInteger(0)
 
     @Volatile
     var successValue: Any? = null
@@ -474,11 +487,13 @@ private class RecordingResult : MethodChannel.Result {
     var errorDetails: Any? = null
 
     override fun success(result: Any?) {
+        callbackCount.incrementAndGet()
         successValue = result
         successLatch.countDown()
     }
 
     override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+        callbackCount.incrementAndGet()
         this.errorCode = errorCode
         this.errorMessage = errorMessage
         this.errorDetails = errorDetails
@@ -486,6 +501,7 @@ private class RecordingResult : MethodChannel.Result {
     }
 
     override fun notImplemented() {
+        callbackCount.incrementAndGet()
         errorCode = "NOT_IMPLEMENTED"
         errorLatch.countDown()
     }

@@ -102,6 +102,9 @@ class _FakeDownloadService extends ModelDownloadService {
   final List<String> inspectedKeys = <String>[];
   final List<_DownloadInvocation> invocations = <_DownloadInvocation>[];
   final List<String> deletedPaths = <String>[];
+  final List<String?> fileExistsPaths = <String?>[];
+  final List<String> verifiedPaths = <String>[];
+  final Set<String> checksumProbeFailurePaths = <String>{};
   Completer<void>? progressGate;
   int? lastResumeFromBytes;
   String? lastTaskId;
@@ -198,14 +201,20 @@ class _FakeDownloadService extends ModelDownloadService {
   }
 
   @override
-  Future<bool> fileExists(String? path) async =>
-      path != null && (existingPaths.contains(path) || path == result?.localPath);
+  Future<bool> fileExists(String? path) async {
+    fileExistsPaths.add(path);
+    return path != null && (existingPaths.contains(path) || path == result?.localPath);
+  }
 
   @override
   Future<String> verifyChecksum({
     required String filePath,
     required String expectedChecksum,
   }) async {
+    verifiedPaths.add(filePath);
+    if (checksumProbeFailurePaths.contains(filePath)) {
+      throw StateError('Unexpected checksum probe for $filePath');
+    }
     if (checksumMismatchPaths.contains(filePath)) {
       throw StateError('Checksum mismatch for $filePath');
     }
@@ -530,7 +539,7 @@ void main() {
     expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
   });
 
-  test('startDownload fails closed for multimodal entries without downloader or runtime calls', () async {
+  test('startDownload rejects repeated multimodal attempts without tasks or side effects', () async {
     final downloadRepository = _MemoryDownloadRepository();
     final registryRepository = _MemoryRegistryRepository();
     final downloadService = _FakeDownloadService();
@@ -597,20 +606,30 @@ void main() {
 
     addTearDown(container.dispose);
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: entry,
-          source: entry.sources.first,
-        );
+    final controller = container.read(modelDownloadControllerProvider);
+    final unsupportedError = isA<UnsupportedError>().having(
+      (error) => error.message,
+      'message',
+      contains('multimodal_llm'),
+    );
 
+    await expectLater(
+      controller.startDownload(entry: entry, source: entry.sources.first),
+      throwsA(unsupportedError),
+    );
+    await expectLater(
+      controller.startDownload(entry: entry, source: entry.sources.first),
+      throwsA(unsupportedError),
+    );
+
+    expect(downloadRepository.tasksById, isEmpty);
     expect(downloadService.invocations, isEmpty);
+    expect(downloadService.inspectedKeys, isEmpty);
+    expect(downloadService.fileExistsPaths, isEmpty);
+    expect(downloadService.verifiedPaths, isEmpty);
+    expect(downloadService.deletedPaths, isEmpty);
     expect(runtimeBridge.ensureCalls, 0);
     expect(registryRepository.entries['minicpm_v_4_6_q4_k_m'], isNull);
-    final task = downloadRepository.tasksByModelAndSource(
-      'minicpm_v_4_6_q4_k_m',
-      'minicpm-v-4-6-q4-k-m-llm',
-    );
-    expect(task?.status, ModelDownloadStatus.failed);
-    expect(task?.errorMessage, contains('multimodal_llm'));
   });
 
   test('startDownload persists downloading status before first progress callback', () async {
@@ -849,6 +868,132 @@ void main() {
     expect(entries.single.enabled, isFalse);
     expect(entries.single.integrityStatus, ModelIntegrityStatus.corrupted);
   });
+
+  test(
+    'modelRegistryEntriesProvider filters legacy multimodal registry and catalog entries before file probes',
+    () async {
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      const registryMultimodalPath = '/models/legacy-multimodal.gguf';
+      const catalogMultimodalPath = '/models/catalog-multimodal.gguf';
+      const catalogMultimodalUrl =
+          'https://example.com/catalog-multimodal.gguf';
+      const embeddingPath = '/models/embed-1.onnx';
+
+      registryRepository.entries['legacy-multimodal'] = const ModelRegistryEntry(
+        id: 'legacy-multimodal',
+        type: 'multimodal_llm',
+        provider: 'legacy',
+        name: 'Legacy Multimodal',
+        version: '1.0.0',
+        sizeBytes: 8192,
+        quantization: 'Q4',
+        minRamMb: 4096,
+        recommendedTier: 'local_multimodal',
+        localPath: registryMultimodalPath,
+        checksum: 'sha256:legacy-multimodal',
+        enabled: true,
+        installedAt: null,
+        filePresent: true,
+      );
+      registryRepository.entries['embed-1'] = const ModelRegistryEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'MiniLM Embedding',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
+        localPath: embeddingPath,
+        checksum: 'sha256:embed-1',
+        enabled: true,
+        installedAt: null,
+        filePresent: true,
+      );
+      downloadService.existingPaths.addAll(<String>[
+        registryMultimodalPath,
+        embeddingPath,
+      ]);
+      downloadService.setTarget(
+        modelId: 'catalog-multimodal',
+        sourceUrl: catalogMultimodalUrl,
+        existingBytes: 8192,
+        localPath: catalogMultimodalPath,
+      );
+      downloadService.checksumProbeFailurePaths.addAll(<String>{
+        registryMultimodalPath,
+        catalogMultimodalPath,
+      });
+
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(
+            _MemoryCatalogRepository(
+              const <ModelCatalogEntry>[
+                ModelCatalogEntry(
+                  id: 'catalog-multimodal',
+                  type: 'multimodal_llm',
+                  tier: 'local_multimodal',
+                  displayName: 'Catalog Multimodal',
+                  description: 'Legacy catalog entry.',
+                  sizeBytes: 8192,
+                  minRamMb: 4096,
+                  recommendedTier: 'local_multimodal',
+                  sources: <ModelSourceEntry>[
+                    ModelSourceEntry(
+                      id: 'catalog-multimodal-source',
+                      label: 'Catalog source',
+                      url: catalogMultimodalUrl,
+                      checksum: 'sha256:catalog-multimodal',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final entries = await container.read(modelRegistryEntriesProvider.future);
+
+      expect(
+        <String, bool>{
+          'returned multimodal': entries.any(
+            (entry) => entry.id == 'legacy-multimodal',
+          ),
+          'called fileExists': downloadService.fileExistsPaths.contains(
+            registryMultimodalPath,
+          ),
+          'called registry checksum': downloadService.verifiedPaths.contains(
+            registryMultimodalPath,
+          ),
+          'inspected catalog': downloadService.inspectedKeys.contains(
+            'catalog-multimodal|$catalogMultimodalUrl',
+          ),
+          'called catalog checksum': downloadService.verifiedPaths.contains(
+            catalogMultimodalPath,
+          ),
+        },
+        <String, bool>{
+          'returned multimodal': false,
+          'called fileExists': false,
+          'called registry checksum': false,
+          'inspected catalog': false,
+          'called catalog checksum': false,
+        },
+      );
+      expect(entries.map((entry) => entry.id), <String>['embed-1']);
+      expect(downloadService.fileExistsPaths, contains(embeddingPath));
+      expect(downloadService.verifiedPaths, contains(embeddingPath));
+    },
+  );
 
   test('modelRegistryEntriesProvider adopts a complete local llm file from catalog when registry entry is missing', () async {
     final registryRepository = _MemoryRegistryRepository();

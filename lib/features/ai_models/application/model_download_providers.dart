@@ -138,17 +138,9 @@ class ModelDownloadController {
     required ModelSourceEntry source,
   }) async {
     if (!_isDownloadRuntimeSupported(entry)) {
-      await enqueueDownload(
-        modelId: entry.id,
-        sourceId: source.id,
-        totalBytes: entry.sizeBytes,
+      throw UnsupportedError(
+        '当前版本尚不支持 ${entry.type} 模型下载部署；需要专用 runtime 后才能安装。',
       );
-      await markFailedForSource(
-        entry.id,
-        sourceId: source.id,
-        message: '当前版本尚不支持 ${entry.type} 模型下载部署；需要专用 runtime 后才能安装。',
-      );
-      return;
     }
 
     if (entry.type == 'multimodal_llm') {

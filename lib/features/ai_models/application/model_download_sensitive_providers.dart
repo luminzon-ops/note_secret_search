@@ -12,12 +12,17 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
       final catalogEntries = await ref.watch(
         modelCatalogEntriesProvider.future,
       );
-      final existingEntries = await repository.listInstalledModels();
+      final supportedCatalogEntries = catalogEntries
+          .where((entry) => entry.type != 'multimodal_llm')
+          .toList(growable: false);
+      final existingEntries = (await repository.listInstalledModels())
+          .where((entry) => entry.type != 'multimodal_llm')
+          .toList(growable: false);
       final entriesById = <String, ModelRegistryEntry>{
         for (final entry in existingEntries) entry.id: entry,
       };
 
-      for (final catalogEntry in catalogEntries) {
+      for (final catalogEntry in supportedCatalogEntries) {
         if (entriesById.containsKey(catalogEntry.id)) {
           continue;
         }
