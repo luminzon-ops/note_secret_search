@@ -1,8 +1,6 @@
 package com.example.note_secret_search
 
 import android.content.Context
-import android.os.Build
-import android.util.Log
 import java.io.File
 
 interface LocalLlmRuntimeContract {
@@ -36,10 +34,8 @@ class LocalLlmRuntime(
     )
 
     override fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
-        logInfo("inspectModel start modelId=$modelId path=$modelPath")
         val file = File(modelPath)
         if (!file.exists()) {
-            logWarning("inspectModel missing file modelId=$modelId path=$modelPath")
             return runtimeState(
                 status = "missing",
                 reason = "当前本地 LLM 模型文件缺失，请重新下载或切换模型。",
@@ -57,7 +53,6 @@ class LocalLlmRuntime(
             )
 
         val inspect = backend.inspect(file)
-        logInfo("inspectModel backend inspect modelId=$modelId supported=${inspect.supported} reason=${inspect.reason}")
         if (!inspect.supported) {
             return runtimeState(
                 status = "degraded",
@@ -69,7 +64,6 @@ class LocalLlmRuntime(
 
         val activeSession = sessionManager.get(modelId)
         if (activeSession != null && activeSession.modelPath == file.absolutePath) {
-            logInfo("inspectModel ready-from-session modelId=$modelId backend=${activeSession.backendName}")
             return runtimeState(
                 status = "ready",
                 reason = "本地 LLM runtime 已就绪。",
@@ -78,7 +72,6 @@ class LocalLlmRuntime(
             )
         }
 
-        logInfo("inspectModel installed_unverified modelId=$modelId")
         return runtimeState(
             status = "installed_unverified",
             reason = inspect.reason,
@@ -88,11 +81,8 @@ class LocalLlmRuntime(
     }
 
     override fun ensureModelReady(modelId: String, modelPath: String): Map<String, Any?> {
-        logInfo("ensureModelReady start modelId=$modelId path=$modelPath")
-        logDeviceFingerprint()
         val file = File(modelPath)
         if (!file.exists()) {
-            logWarning("ensureModelReady missing file modelId=$modelId path=$modelPath")
             return runtimeState(
                 status = "missing",
                 reason = "当前本地 LLM 模型文件缺失，请重新下载或切换模型。",
@@ -109,7 +99,6 @@ class LocalLlmRuntime(
             existingSession != null &&
             existingSession.modelPath == file.absolutePath
         ) {
-            logInfo("ensureModelReady reusing existing session modelId=$modelId backend=${existingSession.backendName}")
             return runtimeState(
                 status = "ready",
                 reason = "本地 LLM runtime 已就绪。",
@@ -136,14 +125,11 @@ class LocalLlmRuntime(
             )
 
         return try {
-            val session = backend.load(modelId, file).also { created ->
-                logInfo("ensureModelReady loaded session modelId=$modelId backend=${created.backendName}")
-            }
+            val session = backend.load(modelId, file)
             sessionManager.replace(modelId, session) { old ->
                 old.backend.release(old)
             }
 
-            logInfo("ensureModelReady ready-after-load modelId=$modelId backend=${session.backendName}")
             runtimeState(
                 status = "ready",
                 reason = "本地 LLM runtime 已加载完成，可在首轮请求中执行真实生成。",
@@ -157,10 +143,9 @@ class LocalLlmRuntime(
                 } catch (_: Throwable) {
                 }
             }
-            logError("ensureModelReady degraded modelId=$modelId error=${error.message}", error)
             runtimeState(
                 status = "degraded",
-                reason = "模型已安装但当前加载失败：${error.message ?: "unknown error"}",
+                reason = "模型已安装但当前加载失败，请重新加载或切换模型。",
                 modelPath = modelPath,
                 runtime = "failed",
             )
@@ -176,9 +161,6 @@ class LocalLlmRuntime(
     ): Map<String, Any?> {
         require(prompt.isNotBlank()) { "Prompt must not be blank." }
 
-        val failedWhileReusingExistingSession =
-            sessionManager.get(modelId)?.modelPath == File(modelPath).absolutePath
-
         return try {
             generateTextOnce(
                 modelId = modelId,
@@ -187,15 +169,9 @@ class LocalLlmRuntime(
                 usedPrivateContext = usedPrivateContext,
                 config = config,
             )
-        } catch (error: Throwable) {
+        } catch (_: Throwable) {
             releaseSessionQuietly(modelId)
-            if (failedWhileReusingExistingSession) {
-                logWarning(
-                    "generateText released stale session after reused-session failure modelId=$modelId error=${error.message}",
-                )
-            }
-
-            throw IllegalStateException(error.message ?: "Local LLM generation failed.")
+            throw IllegalStateException("Local LLM generation failed.")
         }
     }
 
@@ -263,44 +239,6 @@ class LocalLlmRuntime(
                 existing.backend.release(existing)
             } catch (_: Throwable) {
             }
-        }
-    }
-
-    companion object {
-        private const val TAG = "LocalLlmRuntime"
-    }
-
-    private fun logInfo(message: String) {
-        runLoggingSafely { Log.i(TAG, message) }
-    }
-
-    private fun logWarning(message: String) {
-        runLoggingSafely { Log.w(TAG, message) }
-    }
-
-    private fun logError(message: String, error: Throwable) {
-        runLoggingSafely { Log.e(TAG, message, error) }
-    }
-
-    private inline fun runLoggingSafely(block: () -> Unit) {
-        try {
-            block()
-        } catch (_: RuntimeException) {
-        }
-    }
-
-    private fun logDeviceFingerprint() {
-        runLoggingSafely {
-            val manufacturer = runCatching { Build.MANUFACTURER }.getOrNull() ?: "unknown"
-            val model = runCatching { Build.MODEL }.getOrNull() ?: "unknown"
-            val sdkInt = runCatching { Build.VERSION.SDK_INT }.getOrNull() ?: -1
-            val release = runCatching { Build.VERSION.RELEASE }.getOrNull() ?: "unknown"
-            val abis = runCatching { Build.SUPPORTED_ABIS?.joinToString(",") }.getOrNull() ?: "unknown"
-            Log.i(
-                TAG,
-                "device fingerprint manufacturer=$manufacturer model=$model " +
-                    "sdk=$sdkInt release=$release abis=$abis",
-            )
         }
     }
 }

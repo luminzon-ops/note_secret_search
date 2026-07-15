@@ -7,16 +7,16 @@ class AppBootstrapService {
     required AppDatabase database,
     required SecurityOrchestrator securityOrchestrator,
     required AppLogger logger,
-  })  : _database = database,
-        _securityOrchestrator = securityOrchestrator,
-        _logger = logger;
+  }) : _database = database,
+       _securityOrchestrator = securityOrchestrator,
+       _logger = logger;
 
   final AppDatabase _database;
   final SecurityOrchestrator _securityOrchestrator;
   final AppLogger _logger;
 
   Future<void> bootstrap() async {
-    _logger.info('Bootstrapping application');
+    _logger.info('app_bootstrap_started');
     await _securityOrchestrator.initialize();
     await _database.initialize();
     await _database.executeBatch(DatabaseMigrations.initial());

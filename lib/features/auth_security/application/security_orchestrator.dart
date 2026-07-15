@@ -31,8 +31,8 @@ class SecurityOrchestrator {
   Future<void> initialize() async {
     await _screenshotProtectionGateway.enableSensitiveWindowProtection();
     await _secureKeyGateway.ensureRootKey();
-    final availability = await _biometricGateway.getAvailability();
-    _logger.info('Biometric availability: ${availability.name}');
+    await _biometricGateway.getAvailability();
+    _logger.info('security_initialized');
     _sessionController.lock();
   }
 

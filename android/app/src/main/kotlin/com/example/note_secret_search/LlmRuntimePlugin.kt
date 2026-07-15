@@ -3,7 +3,6 @@ package com.example.note_secret_search
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -34,22 +33,22 @@ class LlmRuntimePlugin(
                 "inspectModel" -> {
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
-                    logInfo("inspectModel call modelId=$modelId path=$modelPath")
                     runAsync(result) {
-                        val payload = runtime.inspectModel(modelId = modelId, modelPath = modelPath)
-                        logInfo("inspectModel result modelId=$modelId status=${payload["status"]} ready=${payload["ready"]}")
-                        payload
+                        runtime.inspectModel(
+                            modelId = modelId,
+                            modelPath = modelPath,
+                        )
                     }
                 }
 
                 "ensureModelReady" -> {
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
-                    logInfo("ensureModelReady call modelId=$modelId path=$modelPath")
                     runAsync(result) {
-                        val payload = runtime.ensureModelReady(modelId = modelId, modelPath = modelPath)
-                        logInfo("ensureModelReady result modelId=$modelId status=${payload["status"]} ready=${payload["ready"]}")
-                        payload
+                        runtime.ensureModelReady(
+                            modelId = modelId,
+                            modelPath = modelPath,
+                        )
                     }
                 }
 
@@ -59,12 +58,6 @@ class LlmRuntimePlugin(
                     val prompt = requiredString(call, "prompt")
                     val usedPrivateContext = call.argument<Boolean>("usedPrivateContext") ?: false
                     val config = readGenerationConfig(call)
-                    logInfo(
-                        "generateText call modelId=$modelId path=$modelPath " +
-                            "usedPrivateContext=$usedPrivateContext maxOutputTokens=${config.maxOutputTokens} " +
-                            "maxPromptChars=${config.maxPromptChars} contextLength=${config.contextLength} " +
-                            "conservativeMode=${config.conservativeMode}",
-                    )
                     runAsync(result) {
                         runtime.generateText(
                             modelId = modelId,
@@ -80,7 +73,6 @@ class LlmRuntimePlugin(
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
                     val mmprojPath = requiredString(call, "mmprojPath")
-                    logInfo("ensureMultimodalModelReady call modelId=$modelId path=$modelPath mmproj=$mmprojPath")
                     runAsync(result) {
                         multimodalRuntime.ensureModelReady(
                             modelId = modelId,
@@ -98,10 +90,6 @@ class LlmRuntimePlugin(
                     val prompt = requiredString(call, "prompt")
                     val config = readGenerationConfig(call)
                     val reasoningEnabled = call.argument<Boolean>("reasoningEnabled") ?: false
-                    logInfo(
-                        "generateMultimodalText call modelId=$modelId path=$modelPath " +
-                            "mmproj=$mmprojPath image=$imagePath reasoningEnabled=$reasoningEnabled",
-                    )
                     runAsync(result) {
                         multimodalRuntime.generateMultimodalText(
                             modelId = modelId,
@@ -123,12 +111,24 @@ class LlmRuntimePlugin(
 
                 else -> result.notImplemented()
             }
-        } catch (error: IllegalArgumentException) {
-            result.error("INVALID_ARGUMENT", error.message, null)
-        } catch (error: IllegalStateException) {
-            result.error("RUNTIME_NOT_READY", error.message, null)
-        } catch (error: Throwable) {
-            result.error("LLM_RUNTIME_ERROR", error.message, null)
+        } catch (_: IllegalArgumentException) {
+            result.error(
+                "INVALID_ARGUMENT",
+                "Invalid LLM runtime request.",
+                null,
+            )
+        } catch (_: IllegalStateException) {
+            result.error(
+                "RUNTIME_NOT_READY",
+                "Local LLM runtime is not ready.",
+                null,
+            )
+        } catch (_: Throwable) {
+            result.error(
+                "LLM_RUNTIME_ERROR",
+                "Local LLM runtime failed.",
+                null,
+            )
         }
     }
 
@@ -160,30 +160,36 @@ class LlmRuntimePlugin(
             try {
                 val payload = block()
                 resultDispatcher.dispatch { result.success(payload) }
-            } catch (error: IllegalArgumentException) {
-                resultDispatcher.dispatch { result.error("INVALID_ARGUMENT", error.message, null) }
-            } catch (error: IllegalStateException) {
-                resultDispatcher.dispatch { result.error("RUNTIME_NOT_READY", error.message, null) }
-            } catch (error: Throwable) {
-                resultDispatcher.dispatch { result.error("LLM_RUNTIME_ERROR", error.message, null) }
+            } catch (_: IllegalArgumentException) {
+                resultDispatcher.dispatch {
+                    result.error(
+                        "INVALID_ARGUMENT",
+                        "Invalid LLM runtime request.",
+                        null,
+                    )
+                }
+            } catch (_: IllegalStateException) {
+                resultDispatcher.dispatch {
+                    result.error(
+                        "RUNTIME_NOT_READY",
+                        "Local LLM runtime is not ready.",
+                        null,
+                    )
+                }
+            } catch (_: Throwable) {
+                resultDispatcher.dispatch {
+                    result.error(
+                        "LLM_RUNTIME_ERROR",
+                        "Local LLM runtime failed.",
+                        null,
+                    )
+                }
             }
-        }
-    }
-
-    private fun logInfo(message: String) {
-        runLoggingSafely { Log.i(TAG, message) }
-    }
-
-    private inline fun runLoggingSafely(block: () -> Unit) {
-        try {
-            block()
-        } catch (_: RuntimeException) {
         }
     }
 
     companion object {
         private const val CHANNEL_NAME = "note_secret_search/llm_runtime"
-        private const val TAG = "LlmRuntimePlugin"
     }
 }
 

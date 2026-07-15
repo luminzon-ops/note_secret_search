@@ -43,6 +43,7 @@ app-debug.apk
 android/local.properties
 android/.gradle/
 android/.kotlin/
+.cxx/
 lib/arm64-v8a/
 
 # Trash / accidental files

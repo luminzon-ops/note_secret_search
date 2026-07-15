@@ -9,7 +9,6 @@ class AiChatConversationController
 
   @override
   final Ref _ref;
-  final AppLogger _logger = const AppLogger();
   static const _uuid = Uuid();
   final Map<String, Object> _sendingOperations = <String, Object>{};
   @override
@@ -204,16 +203,9 @@ class AiChatConversationController
         return;
       }
       final timestamp = DateTime.now();
-      final correlationId = timestamp.microsecondsSinceEpoch;
       final sessionTitle = normalized.length <= 20
           ? normalized
           : '${normalized.substring(0, 20)}…';
-
-      _logger.info(
-        '[ai_chat_send] event=start correlation_id=$correlationId '
-        'session_id=$originSessionId mode=${conversationMode.name} '
-        'input_len=${normalized.length}',
-      );
 
       final session = ChatSession(
         id: originSessionId,
@@ -264,10 +256,6 @@ class AiChatConversationController
       if (!_canContinue(generation)) {
         return;
       }
-      _logger.info(
-        '[ai_chat_send] event=user_saved correlation_id=$correlationId '
-        'message_id=${userMessage.id}',
-      );
 
       if (_isOriginSelected(originSessionId, conversationMode)) {
         state = state.copyWith(
@@ -338,11 +326,6 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        _logger.info(
-          '[ai_chat_send] event=assistant_saved '
-          'correlation_id=$correlationId '
-          'message_id=${assistantMessage.id} status=completed',
-        );
         _ref.invalidate(chatSessionsProvider);
         if (_isOriginSelected(originSessionId, conversationMode)) {
           state = state.copyWith(
@@ -390,11 +373,6 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        _logger.info(
-          '[ai_chat_send] event=assistant_saved '
-          'correlation_id=$correlationId '
-          'message_id=${failedMessage.id} status=failed',
-        );
         _ref.invalidate(chatSessionsProvider);
         if (_isOriginSelected(originSessionId, conversationMode)) {
           state = state.copyWith(

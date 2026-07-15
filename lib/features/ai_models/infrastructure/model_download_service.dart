@@ -54,11 +54,11 @@ class ModelDownloadService {
     required Dio dio,
     required AppLogger logger,
     Future<Directory> Function()? applicationSupportDirectoryProvider,
-  })
-      : _dio = dio,
-        _logger = logger,
-        _applicationSupportDirectoryProvider =
-            applicationSupportDirectoryProvider ?? getApplicationSupportDirectory;
+  }) : _dio = dio,
+       _logger = logger,
+       _applicationSupportDirectoryProvider =
+           applicationSupportDirectoryProvider ??
+           getApplicationSupportDirectory;
 
   final Dio _dio;
   final AppLogger _logger;
@@ -81,8 +81,11 @@ class ModelDownloadService {
     final cancelToken = CancelToken();
     _cancelTokens[taskId] = cancelToken;
     final startedAt = DateTime.now();
-    final effectiveResumeFromBytes =
-        target.exists ? (resumeFromBytes <= target.existingBytes ? resumeFromBytes : target.existingBytes) : 0;
+    final effectiveResumeFromBytes = target.exists
+        ? (resumeFromBytes <= target.existingBytes
+              ? resumeFromBytes
+              : target.existingBytes)
+        : 0;
     var resumed = false;
     var fellBackToRestart = false;
     var resumable = effectiveResumeFromBytes > 0;
@@ -149,7 +152,7 @@ class ModelDownloadService {
         filePath: targetFile.path,
         expectedChecksum: expectedChecksum,
       );
-      _logger.info('Downloaded model $modelId to ${targetFile.path}');
+      _logger.info('model_download_completed');
       return ModelDownloadResult(
         localPath: targetFile.path,
         totalBytes: fileLength,
@@ -219,7 +222,7 @@ class ModelDownloadService {
     final file = File(path);
     if (await file.exists()) {
       await file.delete();
-      _logger.info('Deleted local model file at $path');
+      _logger.info('model_file_deleted');
     }
   }
 
@@ -233,7 +236,9 @@ class ModelDownloadService {
       cancelToken: cancelToken,
       options: Options(
         responseType: ResponseType.stream,
-        headers: rangeStart == null ? null : <String, Object>{HttpHeaders.rangeHeader: 'bytes=$rangeStart-'},
+        headers: rangeStart == null
+            ? null
+            : <String, Object>{HttpHeaders.rangeHeader: 'bytes=$rangeStart-'},
       ),
     );
   }
@@ -251,9 +256,13 @@ class ModelDownloadService {
     }
 
     final totalBodyBytes = body.contentLength >= 0 ? body.contentLength : null;
-    final totalBytes = totalBodyBytes == null ? null : totalBodyBytes + existingBytes;
+    final totalBytes = totalBodyBytes == null
+        ? null
+        : totalBodyBytes + existingBytes;
     var receivedBytes = existingBytes;
-    final sink = targetFile.openWrite(mode: append ? FileMode.append : FileMode.writeOnly);
+    final sink = targetFile.openWrite(
+      mode: append ? FileMode.append : FileMode.writeOnly,
+    );
 
     try {
       await for (final chunk in body.stream) {
@@ -261,13 +270,15 @@ class ModelDownloadService {
         receivedBytes += chunk.length;
         final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
         final speed = elapsed <= 0 ? null : receivedBytes * 1000 / elapsed;
-        await Future.sync(() => onProgress(
-          ModelDownloadProgress(
-            receivedBytes: receivedBytes,
-            totalBytes: totalBytes,
-            averageSpeedBytesPerSecond: speed,
+        await Future.sync(
+          () => onProgress(
+            ModelDownloadProgress(
+              receivedBytes: receivedBytes,
+              totalBytes: totalBytes,
+              averageSpeedBytesPerSecond: speed,
+            ),
           ),
-        ));
+        );
       }
     } finally {
       await sink.flush();
@@ -284,7 +295,9 @@ class ModelDownloadService {
 
     final uri = Uri.parse(sourceUrl);
     final rawFileName = p.basename(uri.path);
-    final safeFileName = _sanitizeFileName(rawFileName.isEmpty ? '$modelId.bin' : rawFileName);
+    final safeFileName = _sanitizeFileName(
+      rawFileName.isEmpty ? '$modelId.bin' : rawFileName,
+    );
     return File(p.join(modelDir.path, safeFileName));
   }
 

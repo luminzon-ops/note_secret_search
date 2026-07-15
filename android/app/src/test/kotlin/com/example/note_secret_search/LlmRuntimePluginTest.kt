@@ -200,7 +200,70 @@ class LlmRuntimePluginTest {
 
             assertTrue("result.error should be invoked from async worker failures.", result.errorLatch.await(1, TimeUnit.SECONDS))
             assertEquals("RUNTIME_NOT_READY", result.errorCode)
-            assertEquals("runtime degraded", result.errorMessage)
+            assertEquals("Local LLM runtime is not ready.", result.errorMessage)
+            assertNull(result.errorDetails)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `invalid arguments return sanitized errors without details`() {
+        val result = RecordingResult()
+        val plugin = LlmRuntimePlugin(
+            runtime = throwingTextRuntime(),
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to " ",
+                ),
+            ),
+            result,
+        )
+
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("Invalid LLM runtime request.", result.errorMessage)
+        assertNull(result.errorDetails)
+    }
+
+    @Test
+    fun `unexpected worker failures return sanitized errors without details`() {
+        val result = RecordingResult()
+        val executor = Executors.newSingleThreadExecutor()
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
+                throw AssertionError("MODEL_PATH_SENTINEL=$modelPath")
+            }
+        }
+
+        try {
+            val plugin = LlmRuntimePlugin(
+                runtime = runtime,
+                workerExecutor = executor,
+                resultDispatcher = ImmediateResultDispatcher(),
+            )
+
+            plugin.onMethodCall(
+                MethodCall(
+                    "inspectModel",
+                    mapOf(
+                        "modelId" to "smollm2_360m_instruct_q4_k_m",
+                        "modelPath" to "/private/models/MODEL_PATH_SENTINEL.gguf",
+                    ),
+                ),
+                result,
+            )
+
+            assertTrue(result.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("LLM_RUNTIME_ERROR", result.errorCode)
+            assertEquals("Local LLM runtime failed.", result.errorMessage)
+            assertNull(result.errorDetails)
         } finally {
             executor.shutdownNow()
         }
@@ -392,6 +455,9 @@ private class RecordingResult : MethodChannel.Result {
     @Volatile
     var errorMessage: String? = null
 
+    @Volatile
+    var errorDetails: Any? = null
+
     override fun success(result: Any?) {
         successValue = result
         successLatch.countDown()
@@ -400,6 +466,7 @@ private class RecordingResult : MethodChannel.Result {
     override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
         this.errorCode = errorCode
         this.errorMessage = errorMessage
+        this.errorDetails = errorDetails
         errorLatch.countDown()
     }
 

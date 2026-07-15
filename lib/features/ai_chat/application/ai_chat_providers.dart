@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:uuid/uuid.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';

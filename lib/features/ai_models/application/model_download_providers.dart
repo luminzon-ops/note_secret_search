@@ -291,7 +291,7 @@ class ModelDownloadController {
         );
         return;
       } catch (error, stackTrace) {
-        _logger.error('Model download failed for ${entry.id} via ${candidate.id}', error, stackTrace);
+        _logger.error('model_download_failed', error, stackTrace);
         final hasFallback = index < candidates.length - 1;
         final eligibleForFailover = hasFallback && _isFailoverEligible(error);
         final message = eligibleForFailover
@@ -436,7 +436,7 @@ class ModelDownloadController {
           ),
         );
       } catch (error, stackTrace) {
-        _logger.error('Multimodal model artifact download failed for ${entry.id} via ${source.id}', error, stackTrace);
+        _logger.error('multimodal_model_download_failed', error, stackTrace);
         await markFailedForSource(entry.id, sourceId: source.id, message: error.toString());
         return;
       }
@@ -691,34 +691,24 @@ class ModelDownloadController {
   /// persists the resulting [filePresent], [enabled], and [integrityStatus],
   /// then invalidates the relevant providers.
   Future<void> revalidateInstalledModel(String modelId) async {
-    _logger.info('revalidateInstalledModel:start modelId=$modelId');
+    _logger.info('model_revalidation_started');
     final entry = await _registryRepository.getById(modelId);
     if (entry == null) {
-      _logger.warning('revalidateInstalledModel:missing-entry modelId=$modelId');
+      _logger.warning('model_revalidation_missing_entry');
       return;
     }
 
     var normalized = await _normalizeRegistryEntry(entry);
-    _logger.info(
-      'revalidateInstalledModel:normalized modelId=$modelId '
-      'type=${normalized.type} filePresent=${normalized.filePresent} '
-      'enabled=${normalized.enabled} integrity=${normalized.integrityStatus.name}',
-    );
+    _logger.info('model_revalidation_state_checked');
     if (normalized.filePresent && normalized.integrityStatus == ModelIntegrityStatus.valid) {
       if (normalized.type == 'llm' && normalized.localPath != null && normalized.localPath!.trim().isNotEmpty) {
-        _logger.info(
-          'revalidateInstalledModel:ensureModelReady modelId=$modelId path=${normalized.localPath}',
-        );
+        _logger.info('model_revalidation_runtime_check_started');
         final runtimeResult = await _ref.read(llmRuntimeBridgeProvider).ensureModelReady(
               modelId: normalized.id,
               modelPath: normalized.localPath!,
             );
         final runtimeState = mapLlmRuntimeState(runtimeResult, fallbackPath: normalized.localPath);
-        _logger.info(
-          'revalidateInstalledModel:ensureModelReady-result '
-          'modelId=$modelId status=${runtimeState.status.name} ready=${runtimeState.ready} '
-          'reason=${runtimeState.reason}',
-        );
+        _logger.info('model_revalidation_runtime_check_finished');
         normalized = normalized.copyWith(
           enabled: runtimeState.status == LlmRuntimeStatus.ready ||
               runtimeState.status == LlmRuntimeStatus.installedUnverified,
@@ -733,17 +723,13 @@ class ModelDownloadController {
         normalized.filePresent != entry.filePresent ||
         normalized.integrityStatus != entry.integrityStatus) {
       await _registryRepository.save(normalized);
-      _logger.info(
-        'revalidateInstalledModel:saved modelId=$modelId '
-        'filePresent=${normalized.filePresent} enabled=${normalized.enabled} '
-        'integrity=${normalized.integrityStatus.name}',
-      );
+      _logger.info('model_revalidation_saved');
     }
 
     _ref.invalidate(modelRegistryEntriesProvider);
     _ref.invalidate(embeddingRuntimeStatesProvider);
     _ref.invalidate(llmRuntimeStatesProvider);
-    _logger.info('revalidateInstalledModel:invalidated modelId=$modelId');
+    _logger.info('model_revalidation_invalidated');
   }
 
   /// Repairs a broken installed model by re-downloading it from the catalog.
