@@ -31,8 +31,8 @@ void main() {
     return ProviderContainer(
       overrides: [
         lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()
-            ..markUnlocked(UnlockMethod.biometric),
+          (ref) =>
+              LockSessionController()..markUnlocked(UnlockMethod.biometric),
         ),
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         localLlmReadinessProvider.overrideWith(
@@ -52,10 +52,7 @@ void main() {
         semanticSearchReadinessProvider.overrideWith(
           (ref) async =>
               semanticReadiness ??
-              const SemanticSearchReadiness(
-                ready: true,
-                reason: 'ready',
-              ),
+              const SemanticSearchReadiness(ready: true, reason: 'ready'),
         ),
         externalProviderStatusProvider.overrideWith(
           (ref) async =>
@@ -98,63 +95,71 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('AI chat page uses drawer-based recent sessions on phone widths', (tester) async {
-    final container = await buildContainer(
-      chatRepository: _FakeChatSessionRepository(
-        sessions: [
-          ChatSession(
-            id: 'session-1',
-            mode: ChatMode.privateQa,
-            title: '邮箱问答',
-            allowPrivateContext: true,
-            archived: false,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-          ),
-        ],
-      ),
-    );
+  testWidgets(
+    'AI chat page uses drawer-based recent sessions on phone widths',
+    (tester) async {
+      final container = await buildContainer(
+        chatRepository: _FakeChatSessionRepository(
+          sessions: [
+            ChatSession(
+              id: 'session-1',
+              mode: ChatMode.privateQa,
+              title: '邮箱问答',
+              allowPrivateContext: true,
+              archived: false,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
+            ),
+          ],
+        ),
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await pumpChatRouteAtSize(tester, container, size: const Size(393, 852));
+      await pumpChatRouteAtSize(tester, container, size: const Size(393, 852));
 
-    expect(find.text('最近会话'), findsNothing);
-    expect(find.byTooltip('打开最近会话'), findsOneWidget);
+      expect(find.text('最近会话'), findsNothing);
+      expect(find.byTooltip('打开最近会话'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('打开最近会话'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('打开最近会话'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('最近会话'), findsOneWidget);
-    expect(find.text('邮箱问答'), findsOneWidget);
-  });
+      expect(find.text('最近会话'), findsOneWidget);
+      expect(find.text('邮箱问答'), findsOneWidget);
+    },
+  );
 
-  testWidgets('AI chat page keeps persistent recent sessions sidebar on wide widths', (tester) async {
-    final container = await buildContainer(
-      chatRepository: _FakeChatSessionRepository(
-        sessions: [
-          ChatSession(
-            id: 'session-1',
-            mode: ChatMode.privateQa,
-            title: '邮箱问答',
-            allowPrivateContext: true,
-            archived: false,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-          ),
-        ],
-      ),
-    );
+  testWidgets(
+    'AI chat page keeps persistent recent sessions sidebar on wide widths',
+    (tester) async {
+      final container = await buildContainer(
+        chatRepository: _FakeChatSessionRepository(
+          sessions: [
+            ChatSession(
+              id: 'session-1',
+              mode: ChatMode.privateQa,
+              title: '邮箱问答',
+              allowPrivateContext: true,
+              archived: false,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
+            ),
+          ],
+        ),
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await pumpChatRouteAtSize(tester, container, size: const Size(1280, 800));
+      await pumpChatRouteAtSize(tester, container, size: const Size(1280, 800));
 
-    expect(find.text('最近会话'), findsOneWidget);
-    expect(find.byTooltip('打开最近会话'), findsNothing);
-  });
+      expect(find.text('最近会话'), findsOneWidget);
+      expect(find.byTooltip('打开最近会话'), findsNothing);
+    },
+  );
 
-  testWidgets('App shell shows 问答 navigation destination on AI chat route', (tester) async {
+  testWidgets('App shell shows 问答 navigation destination on AI chat route', (
+    tester,
+  ) async {
     final container = await buildContainer();
 
     final router = container.read(appRouterProvider);
@@ -185,9 +190,7 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: MaterialApp.router(
-          routerConfig: router,
-        ),
+        child: MaterialApp.router(routerConfig: router),
       ),
     );
 
@@ -197,93 +200,95 @@ void main() {
     expect(find.text('自由聊天'), findsOneWidget);
   });
 
-  testWidgets('AI chat page shows jump-to-model-management CTA when llm is unavailable', (tester) async {
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: false,
-        reason: '尚未选择本地 LLM 模型。',
-        activeModel: null,
-        runtimeState: null,
-      ),
-      semanticReadiness: const SemanticSearchReadiness(
-        ready: false,
-        reason: '本地语义检索不可用。',
-        runtimeStatus: EmbeddingRuntimeStatus.degraded,
-      ),
-    );
-
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
-
-    addTearDown(container.dispose);
-
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(
-          routerConfig: router,
+  testWidgets(
+    'AI chat page shows jump-to-model-management CTA when llm is unavailable',
+    (tester) async {
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
         ),
-      ),
-    );
+        semanticReadiness: const SemanticSearchReadiness(
+          ready: false,
+          reason: '本地语义检索不可用。',
+          runtimeStatus: EmbeddingRuntimeStatus.degraded,
+        ),
+      );
 
-    await tester.pumpAndSettle();
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
 
-    expect(find.text('前往模型管理'), findsOneWidget);
-  });
+      addTearDown(container.dispose);
 
-  testWidgets('AI chat page shows external provider banner when local llm is unavailable but external provider is ready', (
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('前往模型管理'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'AI chat page shows external provider banner when local llm is unavailable but external provider is ready',
+    (tester) async {
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
+        ),
+        semanticReadiness: const SemanticSearchReadiness(
+          ready: false,
+          reason: '本地语义检索不可用。',
+          runtimeStatus: EmbeddingRuntimeStatus.degraded,
+        ),
+        externalStatus: const ExternalProviderStatus(
+          available: true,
+          reason: '外部模型已可用：OpenAI 兼容服务',
+          config: ExternalProviderConfig(
+            id: 'provider-1',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'OpenAI 兼容服务',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            enabled: true,
+            allowSensitiveFields: false,
+          ),
+        ),
+      );
+
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
+
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('外部模型已可用：OpenAI 兼容服务'), findsOneWidget);
+      expect(find.text('前往模型管理'), findsNothing);
+    },
+  );
+
+  testWidgets('free chat tab exposes allow private context toggle', (
     tester,
   ) async {
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: false,
-        reason: '尚未选择本地 LLM 模型。',
-        activeModel: null,
-        runtimeState: null,
-      ),
-      semanticReadiness: const SemanticSearchReadiness(
-        ready: false,
-        reason: '本地语义检索不可用。',
-        runtimeStatus: EmbeddingRuntimeStatus.degraded,
-      ),
-      externalStatus: const ExternalProviderStatus(
-        available: true,
-        reason: '外部模型已可用：OpenAI 兼容服务',
-        config: ExternalProviderConfig(
-          id: 'provider-1',
-          providerType: ExternalProviderType.openAiCompatible,
-          displayName: 'OpenAI 兼容服务',
-          baseUrl: 'https://example.com/v1',
-          apiKey: 'secret-key',
-          modelName: 'gpt-4.1-mini',
-          embeddingModelName: 'text-embedding-3-small',
-          enabled: true,
-          allowSensitiveFields: false,
-        ),
-      ),
-    );
-
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
-
-    addTearDown(container.dispose);
-
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(
-          routerConfig: router,
-        ),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-
-    expect(find.text('外部模型已可用：OpenAI 兼容服务'), findsOneWidget);
-    expect(find.text('前往模型管理'), findsNothing);
-  });
-
-  testWidgets('free chat tab exposes allow private context toggle', (tester) async {
     final container = await buildContainer();
 
     final router = container.read(appRouterProvider);
@@ -305,51 +310,104 @@ void main() {
     expect(find.text('允许参考私密内容'), findsOneWidget);
   });
 
-  testWidgets('AI chat page lists existing sessions and can switch between them', (tester) async {
+  testWidgets(
+    'AI chat page lists existing sessions and can switch between them',
+    (tester) async {
+      final container = await buildContainer(
+        chatRepository: _FakeChatSessionRepository(
+          sessions: [
+            ChatSession(
+              id: 'session-1',
+              mode: ChatMode.privateQa,
+              title: '邮箱问答',
+              allowPrivateContext: true,
+              archived: false,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
+            ),
+            ChatSession(
+              id: 'session-2',
+              mode: ChatMode.freeChat,
+              title: '自由对话',
+              allowPrivateContext: false,
+              archived: false,
+              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(4000),
+            ),
+          ],
+          messagesBySession: {
+            'session-1': [
+              ChatStoredMessage(
+                id: 'm1',
+                sessionId: 'session-1',
+                role: ChatStoredMessageRole.user,
+                content: '邮箱历史',
+                status: ChatStoredMessageStatus.completed,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              ),
+            ],
+            'session-2': [
+              ChatStoredMessage(
+                id: 'm2',
+                sessionId: 'session-2',
+                role: ChatStoredMessageRole.user,
+                content: '自由聊天历史',
+                status: ChatStoredMessageStatus.completed,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              ),
+            ],
+          },
+        ),
+      );
+
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
+
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('最近会话'), findsOneWidget);
+      expect(find.text('邮箱问答'), findsOneWidget);
+      expect(find.text('自由对话'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ListTile, '自由对话'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(currentChatSessionIdProvider), 'session-2');
+    },
+  );
+
+  testWidgets('AI chat page exposes new session entry in session panel', (
+    tester,
+  ) async {
     final container = await buildContainer(
       chatRepository: _FakeChatSessionRepository(
         sessions: [
           ChatSession(
             id: 'session-1',
-            mode: ChatMode.privateQa,
-            title: '邮箱问答',
-            allowPrivateContext: true,
-            archived: false,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-          ),
-          ChatSession(
-            id: 'session-2',
             mode: ChatMode.freeChat,
             title: '自由对话',
             allowPrivateContext: false,
             archived: false,
             createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(4000),
+            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
           ),
         ],
-        messagesBySession: {
-          'session-1': [
-            ChatStoredMessage(
-              id: 'm1',
-              sessionId: 'session-1',
-              role: ChatStoredMessageRole.user,
-              content: '邮箱历史',
-              status: ChatStoredMessageStatus.completed,
-              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            ),
-          ],
-          'session-2': [
-            ChatStoredMessage(
-              id: 'm2',
-              sessionId: 'session-2',
-              role: ChatStoredMessageRole.user,
-              content: '自由聊天历史',
-              status: ChatStoredMessageStatus.completed,
-              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            ),
-          ],
-        },
       ),
     );
 
@@ -373,55 +431,9 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-
-    expect(find.text('最近会话'), findsOneWidget);
-    expect(find.text('邮箱问答'), findsOneWidget);
-    expect(find.text('自由对话'), findsOneWidget);
-
-    await tester.tap(find.widgetWithText(ListTile, '自由对话'));
-    await tester.pumpAndSettle();
-
-    expect(container.read(currentChatSessionIdProvider), 'session-2');
-  });
-
-  testWidgets('AI chat page exposes new session entry in session panel', (tester) async {
-    final container = await buildContainer(
-      chatRepository: _FakeChatSessionRepository(
-        sessions: [
-          ChatSession(
-            id: 'session-1',
-            mode: ChatMode.freeChat,
-            title: '自由对话',
-            allowPrivateContext: false,
-            archived: false,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-          ),
-        ],
-      ),
-    );
-
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
-
-    addTearDown(container.dispose);
-
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-    await container.read(chatSessionControllerProvider).selectSession('session-1');
+    await container
+        .read(chatSessionControllerProvider)
+        .selectSession('session-1');
     await tester.pumpAndSettle();
 
     expect(container.read(currentChatSessionIdProvider), 'session-1');
@@ -434,334 +446,376 @@ void main() {
     expect(await container.read(currentChatSessionProvider.future), isNull);
   });
 
-  testWidgets('AI chat page can reopen an old session after starting a new session', (tester) async {
-    final container = await buildContainer(
-      chatRepository: _FakeChatSessionRepository(
-        sessions: [
-          ChatSession(
-            id: 'session-1',
-            mode: ChatMode.freeChat,
-            title: '自由对话',
-            allowPrivateContext: false,
-            archived: false,
-            createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-            updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-          ),
-        ],
-        messagesBySession: {
-          'session-1': [
-            ChatStoredMessage(
-              id: 'm1',
-              sessionId: 'session-1',
-              role: ChatStoredMessageRole.user,
-              content: '旧会话消息',
-              status: ChatStoredMessageStatus.completed,
+  testWidgets(
+    'AI chat page can reopen an old session after starting a new session',
+    (tester) async {
+      final container = await buildContainer(
+        chatRepository: _FakeChatSessionRepository(
+          sessions: [
+            ChatSession(
+              id: 'session-1',
+              mode: ChatMode.freeChat,
+              title: '自由对话',
+              allowPrivateContext: false,
+              archived: false,
               createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
             ),
           ],
-        },
-      ),
-    );
+          messagesBySession: {
+            'session-1': [
+              ChatStoredMessage(
+                id: 'm1',
+                sessionId: 'session-1',
+                role: ChatStoredMessageRole.user,
+                content: '旧会话消息',
+                status: ChatStoredMessageStatus.completed,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+              ),
+            ],
+          },
+        ),
+      );
 
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
 
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('新建会话'));
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('新建会话'));
+      await tester.pumpAndSettle();
 
-    expect(container.read(freeChatControllerProvider).messages, isEmpty);
+      expect(container.read(freeChatControllerProvider).messages, isEmpty);
 
-    await tester.tap(find.text('自由对话'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('自由对话'));
+      await tester.pumpAndSettle();
 
-    expect(container.read(currentChatSessionIdProvider), 'session-1');
-    expect(container.read(freeChatControllerProvider).currentSessionId, 'session-1');
-    expect(container.read(freeChatControllerProvider).messages.single.text, '旧会话消息');
-    expect(find.text('旧会话消息'), findsOneWidget);
-  });
+      expect(container.read(currentChatSessionIdProvider), 'session-1');
+      expect(
+        container.read(freeChatControllerProvider).currentSessionId,
+        'session-1',
+      );
+      expect(
+        container.read(freeChatControllerProvider).messages.single.text,
+        '旧会话消息',
+      );
+      expect(find.text('旧会话消息'), findsOneWidget);
+    },
+  );
 
-  testWidgets('free chat renders first local response after sending a message', (tester) async {
-    final fakeLlmEngine = _RecordingLlmEngine(responseText: '这是本地首轮回答。');
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: true,
-        reason: '本地 LLM 模型已就绪：Qwen Local',
-        activeModel: _localLlmModel,
-        runtimeState: LlmRuntimeState(
+  testWidgets(
+    'free chat renders first local response after sending a message',
+    (tester) async {
+      final fakeLlmEngine = _RecordingLlmEngine(responseText: '这是本地首轮回答。');
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
           ready: true,
           reason: '本地 LLM 模型已就绪：Qwen Local',
-          status: LlmRuntimeStatus.ready,
-        ),
-      ),
-      extraOverrides: [llmEngineProvider.overrideWithValue(fakeLlmEngine)],
-    );
-
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
-
-    addTearDown(container.dispose);
-
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, '你好，本地模型');
-    await tester.tap(find.widgetWithText(FilledButton, '发送').last);
-    await tester.pump();
-    await tester.pumpAndSettle();
-
-    expect(find.text('你好，本地模型'), findsOneWidget);
-    expect(find.text('这是本地首轮回答。'), findsOneWidget);
-    expect(fakeLlmEngine.lastRequest, isNotNull);
-    expect(fakeLlmEngine.lastRequest?.model.id, 'llm-local');
-    expect(fakeLlmEngine.lastRequest?.prompt, '你好，本地模型');
-    expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isFalse);
-  });
-
-  testWidgets('free chat asks for confirmation before sending private context to external provider', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: false,
-        reason: '尚未选择本地 LLM 模型。',
-        activeModel: null,
-        runtimeState: null,
-      ),
-      semanticReadiness: const SemanticSearchReadiness(
-        ready: true,
-        reason: 'ready',
-        activeEmbeddingModel: _embeddingModel,
-      ),
-      externalStatus: const ExternalProviderStatus(
-        available: true,
-        reason: '外部模型已可用：OpenAI 兼容服务',
-        config: ExternalProviderConfig(
-          id: 'provider-1',
-          providerType: ExternalProviderType.openAiCompatible,
-          displayName: 'OpenAI 兼容服务',
-          baseUrl: 'https://example.com/v1',
-          apiKey: 'secret-key',
-          modelName: 'gpt-4.1-mini',
-          embeddingModelName: 'text-embedding-3-small',
-          enabled: true,
-          allowSensitiveFields: true,
-        ),
-      ),
-      extraOverrides: [
-        aiChatContextRetrieverProvider.overrideWithValue(
-          const _StaticContextRetriever(
-            items: [
-              ChatContextItem(
-                id: 'secret-1',
-                type: ChatContextItemType.secret,
-                title: 'GitHub',
-                preview: 'octo-user',
-                summary: '账号：octo-user',
-              ),
-            ],
+          activeModel: _localLlmModel,
+          runtimeState: LlmRuntimeState(
+            ready: true,
+            reason: '本地 LLM 模型已就绪：Qwen Local',
+            status: LlmRuntimeStatus.ready,
           ),
         ),
-        externalProviderClientProvider.overrideWithValue(_ImmediateExternalProviderClient()),
-      ],
-    );
+        extraOverrides: [llmEngineProvider.overrideWithValue(fakeLlmEngine)],
+      );
 
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('允许参考私密内容'));
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-    await tester.tap(find.text('发送'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(find.text('你即将把私密内容发送到外部模型'), findsOneWidget);
-  });
-
-  testWidgets('private QA asks for confirmation before sending externally retrieved private context', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: false,
-        reason: '尚未选择本地 LLM 模型。',
-        activeModel: null,
-        runtimeState: null,
-      ),
-      semanticReadiness: const SemanticSearchReadiness(
-        ready: true,
-        reason: 'ready',
-        activeEmbeddingModel: _embeddingModel,
-      ),
-      externalStatus: const ExternalProviderStatus(
-        available: true,
-        reason: '外部模型已可用：OpenAI 兼容服务',
-        config: ExternalProviderConfig(
-          id: 'provider-1',
-          providerType: ExternalProviderType.openAiCompatible,
-          displayName: 'OpenAI 兼容服务',
-          baseUrl: 'https://example.com/v1',
-          apiKey: 'secret-key',
-          modelName: 'gpt-4.1-mini',
-          embeddingModelName: 'text-embedding-3-small',
-          enabled: true,
-          allowSensitiveFields: true,
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
         ),
-      ),
-      extraOverrides: [
-        aiChatContextRetrieverProvider.overrideWithValue(
-          const _StaticContextRetriever(
-            items: [
-              ChatContextItem(
-                id: 'note-1',
-                type: ChatContextItemType.note,
-                title: '邮箱整理',
-                preview: '正文预览',
-                summary: '摘要：记录了主邮箱与备用邮箱。',
-              ),
-            ],
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, '你好，本地模型');
+      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('你好，本地模型'), findsOneWidget);
+      expect(find.text('这是本地首轮回答。'), findsOneWidget);
+      expect(fakeLlmEngine.lastRequest, isNotNull);
+      expect(fakeLlmEngine.lastRequest?.model.id, 'llm-local');
+      expect(fakeLlmEngine.lastRequest?.prompt, '你好，本地模型');
+      expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isFalse);
+    },
+  );
+
+  testWidgets(
+    'free chat asks for confirmation before sending private context to external provider',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
+        ),
+        semanticReadiness: const SemanticSearchReadiness(
+          ready: true,
+          reason: 'ready',
+          activeEmbeddingModel: _embeddingModel,
+        ),
+        externalStatus: const ExternalProviderStatus(
+          available: true,
+          reason: '外部模型已可用：OpenAI 兼容服务',
+          config: ExternalProviderConfig(
+            id: 'provider-1',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'OpenAI 兼容服务',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            enabled: true,
+            allowSensitiveFields: true,
           ),
         ),
-        externalProviderClientProvider.overrideWithValue(_ImmediateExternalProviderClient()),
-      ],
-    );
+        extraOverrides: [
+          aiChatContextRetrieverProvider.overrideWithValue(
+            const _StaticContextRetriever(
+              items: [
+                ChatContextItem(
+                  id: 'secret-1',
+                  type: ChatContextItemType.secret,
+                  title: 'GitHub',
+                  preview: 'octo-user',
+                  summary: '账号：octo-user',
+                ),
+              ],
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(
+            _ImmediateExternalProviderClient(),
+          ),
+        ],
+      );
 
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '帮我总结邮箱账号');
-    await tester.tap(find.text('发送'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
-
-    expect(find.text('你即将把私密内容发送到外部模型'), findsOneWidget);
-  });
-
-  testWidgets('acknowledged external provider does not prompt again for private-context send', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({
-      'ai.external_privacy_ack.provider-1': true,
-    });
-    final container = await buildContainer(
-      llmReadiness: const LocalLlmReadiness(
-        ready: false,
-        reason: '尚未选择本地 LLM 模型。',
-        activeModel: null,
-        runtimeState: null,
-      ),
-      semanticReadiness: const SemanticSearchReadiness(
-        ready: true,
-        reason: 'ready',
-        activeEmbeddingModel: _embeddingModel,
-      ),
-      externalStatus: const ExternalProviderStatus(
-        available: true,
-        reason: '外部模型已可用：OpenAI 兼容服务',
-        config: ExternalProviderConfig(
-          id: 'provider-1',
-          providerType: ExternalProviderType.openAiCompatible,
-          displayName: 'OpenAI 兼容服务',
-          baseUrl: 'https://example.com/v1',
-          apiKey: 'secret-key',
-          modelName: 'gpt-4.1-mini',
-          embeddingModelName: 'text-embedding-3-small',
-          enabled: true,
-          allowSensitiveFields: true,
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
         ),
-      ),
-      extraOverrides: [
-        aiChatContextRetrieverProvider.overrideWithValue(
-          const _StaticContextRetriever(
-            items: [
-              ChatContextItem(
-                id: 'secret-1',
-                type: ChatContextItemType.secret,
-                title: 'GitHub',
-                preview: 'octo-user',
-                summary: '账号：octo-user',
-              ),
-            ],
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+      final freeSelector = find.byKey(
+        const ValueKey('free-chat-backend-selector'),
+      );
+      await tester.tap(
+        find.descendant(of: freeSelector, matching: find.text('外部')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('允许参考私密内容'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
+      await tester.tap(find.text('发送'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('确认使用外部模型'), findsOneWidget);
+      expect(find.text('包含私密上下文：是'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'private QA asks for confirmation before sending externally retrieved private context',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
+        ),
+        semanticReadiness: const SemanticSearchReadiness(
+          ready: true,
+          reason: 'ready',
+          activeEmbeddingModel: _embeddingModel,
+        ),
+        externalStatus: const ExternalProviderStatus(
+          available: true,
+          reason: '外部模型已可用：OpenAI 兼容服务',
+          config: ExternalProviderConfig(
+            id: 'provider-1',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'OpenAI 兼容服务',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            enabled: true,
+            allowSensitiveFields: true,
           ),
         ),
-        externalProviderClientProvider.overrideWithValue(_ImmediateExternalProviderClient()),
-      ],
-    );
+        extraOverrides: [
+          aiChatContextRetrieverProvider.overrideWithValue(
+            const _StaticContextRetriever(
+              items: [
+                ChatContextItem(
+                  id: 'note-1',
+                  type: ChatContextItemType.note,
+                  title: '邮箱整理',
+                  preview: '正文预览',
+                  summary: '摘要：记录了主邮箱与备用邮箱。',
+                ),
+              ],
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(
+            _ImmediateExternalProviderClient(),
+          ),
+        ],
+      );
 
-    final router = container.read(appRouterProvider);
-    router.go('/ai/chat');
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
 
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('允许参考私密内容'));
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-    await tester.tap(find.text('发送'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      final privateSelector = find.byKey(
+        const ValueKey('private-qa-backend-selector'),
+      );
+      await tester.tap(
+        find.descendant(of: privateSelector, matching: find.text('外部')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, '帮我总结邮箱账号');
+      await tester.tap(find.text('发送'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('你即将把私密内容发送到外部模型'), findsNothing);
-  });
+      expect(find.text('确认使用外部模型'), findsOneWidget);
+      expect(find.text('包含私密上下文：是'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'legacy provider-id acknowledgement does not bypass fingerprint consent',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'ai.external_privacy_ack.provider-1': true,
+      });
+      final container = await buildContainer(
+        llmReadiness: const LocalLlmReadiness(
+          ready: false,
+          reason: '尚未选择本地 LLM 模型。',
+          activeModel: null,
+          runtimeState: null,
+        ),
+        semanticReadiness: const SemanticSearchReadiness(
+          ready: true,
+          reason: 'ready',
+          activeEmbeddingModel: _embeddingModel,
+        ),
+        externalStatus: const ExternalProviderStatus(
+          available: true,
+          reason: '外部模型已可用：OpenAI 兼容服务',
+          config: ExternalProviderConfig(
+            id: 'provider-1',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'OpenAI 兼容服务',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            enabled: true,
+            allowSensitiveFields: true,
+          ),
+        ),
+        extraOverrides: [
+          aiChatContextRetrieverProvider.overrideWithValue(
+            const _StaticContextRetriever(
+              items: [
+                ChatContextItem(
+                  id: 'secret-1',
+                  type: ChatContextItemType.secret,
+                  title: 'GitHub',
+                  preview: 'octo-user',
+                  summary: '账号：octo-user',
+                ),
+              ],
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(
+            _ImmediateExternalProviderClient(),
+          ),
+        ],
+      );
+
+      final router = container.read(appRouterProvider);
+      router.go('/ai/chat');
+
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+      final selector = find.byKey(const ValueKey('free-chat-backend-selector'));
+      await tester.tap(
+        find.descendant(of: selector, matching: find.text('外部')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('允许参考私密内容'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
+      await tester.tap(find.text('发送'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('确认使用外部模型'), findsOneWidget);
+    },
+  );
 }
 
 const _embeddingModel = ModelRegistryEntry(

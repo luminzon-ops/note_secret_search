@@ -171,6 +171,7 @@ class AiChatConversationController
     }
 
     final conversationMode = state.mode;
+    final backendPreference = state.backendPreference;
     final allowPrivateContext = state.allowPrivateContext;
     final manualItems = List<ChatContextItem>.of(
       state.manualItems,
@@ -285,6 +286,7 @@ class AiChatConversationController
               AiChatRequest(
                 mode: conversationMode,
                 userInput: normalized,
+                backendPreference: backendPreference,
                 allowPrivateContext: allowPrivateContext,
                 manualItems: manualItems,
               ),
@@ -424,6 +426,13 @@ class AiChatConversationController
       return;
     }
     state = state.copyWith(allowPrivateContext: value);
+  }
+
+  void setBackendPreference(ChatBackendPreference value) {
+    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+      return;
+    }
+    state = state.copyWith(backendPreference: value);
   }
 
   void setManualItems(List<ChatContextItem> items) {

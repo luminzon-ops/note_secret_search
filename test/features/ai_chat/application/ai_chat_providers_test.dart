@@ -14,6 +14,8 @@ import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _llmModel = ModelRegistryEntry(
   id: 'llm-1',
@@ -93,529 +95,621 @@ void main() {
       ),
       throwsA(
         predicate(
-          (error) => error is StateError && error.toString().contains('本地 LLM 当前不可用。'),
+          (error) =>
+              error is StateError && error.toString().contains('本地 LLM 当前不可用。'),
         ),
       ),
     );
   });
 
-  test('free chat falls back to external provider when local llm is unavailable', () async {
-    final fakeExternalClient = _FakeExternalProviderClient();
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: false,
-            reason: '本地 LLM 当前不可用。',
-            activeModel: null,
-            runtimeState: null,
-          ),
-        ),
-        externalProviderStatusProvider.overrideWith(
-          (ref) async => const ExternalProviderStatus(
-            available: true,
-            reason: '外部模型已可用：OpenAI 兼容服务',
-            config: _externalProvider,
-          ),
-        ),
-        externalProviderClientProvider.overrideWithValue(fakeExternalClient),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final orchestrator = container.read(aiChatOrchestratorProvider);
-    final response = await orchestrator.send(
-      const AiChatRequest(mode: ChatMode.freeChat, userInput: '你好，介绍一下你自己'),
-    );
-
-    expect(fakeExternalClient.lastPrompt, '你好，介绍一下你自己');
-    expect(fakeExternalClient.lastUsedPrivateContext, isFalse);
-    expect(response.text, '来自外部模型的回答');
-  });
-
-  test('free chat blocks external private context when provider policy forbids sensitive fields', () async {
-    final fakeExternalClient = _FakeExternalProviderClient();
-    final fakeRetriever = _FakeAiChatContextRetriever(
-      items: const [
-        ChatContextItem(
-          id: 'secret-1',
-          type: ChatContextItemType.secret,
-          title: 'GitHub',
-          preview: 'octo-user',
-          summary: '账号：octo-user',
-        ),
-      ],
-    );
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: false,
-            reason: '本地 LLM 当前不可用。',
-            activeModel: null,
-            runtimeState: null,
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: true,
-            reason: 'ready',
-            activeEmbeddingModel: _embeddingModel,
-          ),
-        ),
-        aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
-        externalProviderStatusProvider.overrideWith(
-          (ref) async => const ExternalProviderStatus(
-            available: true,
-            reason: '外部模型已可用：OpenAI 兼容服务',
-            config: ExternalProviderConfig(
-              id: 'provider-2',
-              providerType: ExternalProviderType.openAiCompatible,
-              displayName: 'OpenAI 兼容服务',
-              baseUrl: 'https://example.com/v1',
-              apiKey: 'secret-key',
-              modelName: 'gpt-4.1-mini',
-              embeddingModelName: 'text-embedding-3-small',
-              enabled: true,
-              allowSensitiveFields: false,
+  test(
+    'free chat defaults to local and never falls back when local llm is unavailable',
+    () async {
+      final fakeExternalClient = _FakeExternalProviderClient();
+      final container = ProviderContainer(
+        overrides: [
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: false,
+              reason: '本地 LLM 当前不可用。',
+              activeModel: null,
+              runtimeState: null,
             ),
           ),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => const ExternalProviderStatus(
+              available: true,
+              reason: '外部模型已可用：OpenAI 兼容服务',
+              config: _externalProvider,
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(fakeExternalClient),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      await expectLater(
+        () => orchestrator.send(
+          const AiChatRequest(mode: ChatMode.freeChat, userInput: '你好，介绍一下你自己'),
         ),
-        externalProviderClientProvider.overrideWithValue(fakeExternalClient),
-      ],
-    );
+        throwsA(
+          predicate(
+            (error) =>
+                error is StateError &&
+                error.toString().contains('本地 LLM 当前不可用。'),
+          ),
+        ),
+      );
 
-    addTearDown(container.dispose);
+      expect(fakeExternalClient.lastPrompt, isNull);
+      expect(fakeExternalClient.lastUsedPrivateContext, isNull);
+    },
+  );
 
-    final orchestrator = container.read(aiChatOrchestratorProvider);
+  test(
+    'free chat blocks external private context when provider policy forbids sensitive fields',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final fakeExternalClient = _FakeExternalProviderClient();
+      final fakeRetriever = _FakeAiChatContextRetriever(
+        items: const [
+          ChatContextItem(
+            id: 'secret-1',
+            type: ChatContextItemType.secret,
+            title: 'GitHub',
+            preview: 'octo-user',
+            summary: '账号：octo-user',
+          ),
+        ],
+      );
+      const blockedConfig = ExternalProviderConfig(
+        id: 'provider-2',
+        providerType: ExternalProviderType.openAiCompatible,
+        displayName: 'OpenAI 兼容服务',
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'secret-key',
+        modelName: 'gpt-4.1-mini',
+        embeddingModelName: 'text-embedding-3-small',
+        enabled: true,
+        allowSensitiveFields: false,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sharedPreferencesProvider.overrideWith(
+            (ref) async => SharedPreferences.getInstance(),
+          ),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: false,
+              reason: '本地 LLM 当前不可用。',
+              activeModel: null,
+              runtimeState: null,
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: true,
+              reason: 'ready',
+              activeEmbeddingModel: _embeddingModel,
+            ),
+          ),
+          aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => const ExternalProviderStatus(
+              available: true,
+              reason: '外部模型已可用：OpenAI 兼容服务',
+              config: blockedConfig,
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(fakeExternalClient),
+        ],
+      );
 
-    await expectLater(
-      () => orchestrator.send(
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      await container
+          .read(externalPrivacyConfirmationControllerProvider)
+          .markAcknowledged(blockedConfig);
+
+      await expectLater(
+        () => orchestrator.send(
+          const AiChatRequest(
+            mode: ChatMode.freeChat,
+            userInput: '帮我回忆 GitHub 登录信息',
+            backendPreference: ChatBackendPreference.external,
+            allowPrivateContext: true,
+          ),
+        ),
+        throwsA(
+          predicate(
+            (error) =>
+                error is StateError &&
+                error.toString().contains('当前外部模型未允许访问私密内容'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'private QA uses semantic retrieval before local llm generation',
+    () async {
+      final callLog = <String>[];
+      final fakeRetriever = _FakeAiChatContextRetriever(
+        onRetrieve: () => callLog.add('retrieve'),
+        items: const [
+          ChatContextItem(
+            id: 'note-1',
+            type: ChatContextItemType.note,
+            title: '邮箱整理',
+            preview: '正文预览',
+            summary: '摘要：记录了主邮箱与备用邮箱。',
+          ),
+        ],
+      );
+      final fakeLlmEngine = _FakeLlmEngine(
+        onGenerate: (request) => callLog.add('generate'),
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: true,
+              reason: 'ready',
+              activeEmbeddingModel: _embeddingModel,
+            ),
+          ),
+          aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      final response = await orchestrator.send(
+        const AiChatRequest(mode: ChatMode.privateQa, userInput: '帮我总结一下邮箱账号'),
+      );
+
+      expect(callLog, ['retrieve', 'generate']);
+      expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isTrue);
+      expect(fakeLlmEngine.lastRequest?.prompt, contains('摘要：记录了主邮箱与备用邮箱。'));
+      expect(response.usedPrivateContext, isTrue);
+      expect(response.sourceType, ChatContextSource.autoRetrieved);
+      expect(response.contextSummary, ['摘要：记录了主邮箱与备用邮箱。']);
+    },
+  );
+
+  test(
+    'free chat can answer without private context when llm is ready',
+    () async {
+      final fakeRetriever = _FakeAiChatContextRetriever(
+        onRetrieve: () =>
+            fail('free chat pure mode should not retrieve private context'),
+        items: const [],
+      );
+      final fakeLlmEngine = _FakeLlmEngine();
+
+      final container = ProviderContainer(
+        overrides: [
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      final response = await orchestrator.send(
+        const AiChatRequest(mode: ChatMode.freeChat, userInput: '你好，介绍一下你自己'),
+      );
+
+      expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isFalse);
+      expect(response.usedPrivateContext, isFalse);
+      expect(response.sourceType, ChatContextSource.none);
+      expect(response.contextSummary, isEmpty);
+    },
+  );
+
+  test(
+    'free chat with allowPrivateContext=true can combine auto retrieval and manual items',
+    () async {
+      final fakeRetriever = _FakeAiChatContextRetriever(
+        items: const [
+          ChatContextItem(
+            id: 'secret-1',
+            type: ChatContextItemType.secret,
+            title: 'GitHub',
+            preview: 'octo-user',
+            summary: '账号：octo-user',
+          ),
+        ],
+      );
+      final fakeLlmEngine = _FakeLlmEngine();
+
+      final container = ProviderContainer(
+        overrides: [
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: true,
+              reason: 'ready',
+              activeEmbeddingModel: _embeddingModel,
+            ),
+          ),
+          aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      final response = await orchestrator.send(
         const AiChatRequest(
           mode: ChatMode.freeChat,
           userInput: '帮我回忆 GitHub 登录信息',
           allowPrivateContext: true,
+          manualItems: [
+            ChatContextItem(
+              id: 'note-1',
+              type: ChatContextItemType.note,
+              title: '开发备忘',
+              preview: 'MFA 已开启',
+              summary: '附注：MFA 已开启',
+            ),
+          ],
         ),
-      ),
-      throwsA(
-        predicate(
-          (error) => error is StateError && error.toString().contains('当前外部模型未允许访问私密内容'),
-        ),
-      ),
-    );
-  });
+      );
 
-  test('private QA uses semantic retrieval before local llm generation', () async {
-    final callLog = <String>[];
-    final fakeRetriever = _FakeAiChatContextRetriever(
-      onRetrieve: () => callLog.add('retrieve'),
-      items: const [
-        ChatContextItem(
-          id: 'note-1',
-          type: ChatContextItemType.note,
-          title: '邮箱整理',
-          preview: '正文预览',
-          summary: '摘要：记录了主邮箱与备用邮箱。',
-        ),
-      ],
-    );
-    final fakeLlmEngine = _FakeLlmEngine(
-      onGenerate: (request) => callLog.add('generate'),
-    );
+      expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isTrue);
+      expect(fakeLlmEngine.lastRequest?.prompt, contains('账号：octo-user'));
+      expect(fakeLlmEngine.lastRequest?.prompt, contains('附注：MFA 已开启'));
+      expect(response.usedPrivateContext, isTrue);
+      expect(response.sourceType, ChatContextSource.mixed);
+      expect(response.contextSummary, ['账号：octo-user', '附注：MFA 已开启']);
+    },
+  );
 
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
+  test(
+    'controller persists user and assistant messages with session metadata after successful send',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _FakeLlmEngine();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
               ready: true,
               reason: 'ready',
-              status: LlmRuntimeStatus.ready,
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
             ),
           ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: true,
-            reason: 'ready',
-            activeEmbeddingModel: _embeddingModel,
-          ),
-        ),
-        aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final orchestrator = container.read(aiChatOrchestratorProvider);
-    final response = await orchestrator.send(
-      const AiChatRequest(mode: ChatMode.privateQa, userInput: '帮我总结一下邮箱账号'),
-    );
-
-    expect(callLog, ['retrieve', 'generate']);
-    expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isTrue);
-    expect(fakeLlmEngine.lastRequest?.prompt, contains('摘要：记录了主邮箱与备用邮箱。'));
-    expect(response.usedPrivateContext, isTrue);
-    expect(response.sourceType, ChatContextSource.autoRetrieved);
-    expect(response.contextSummary, ['摘要：记录了主邮箱与备用邮箱。']);
-  });
-
-  test('free chat can answer without private context when llm is ready', () async {
-    final fakeRetriever = _FakeAiChatContextRetriever(
-      onRetrieve: () => fail('free chat pure mode should not retrieve private context'),
-      items: const [],
-    );
-    final fakeLlmEngine = _FakeLlmEngine();
-
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final orchestrator = container.read(aiChatOrchestratorProvider);
-    final response = await orchestrator.send(
-      const AiChatRequest(mode: ChatMode.freeChat, userInput: '你好，介绍一下你自己'),
-    );
-
-    expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isFalse);
-    expect(response.usedPrivateContext, isFalse);
-    expect(response.sourceType, ChatContextSource.none);
-    expect(response.contextSummary, isEmpty);
-  });
-
-  test('free chat with allowPrivateContext=true can combine auto retrieval and manual items', () async {
-    final fakeRetriever = _FakeAiChatContextRetriever(
-      items: const [
-        ChatContextItem(
-          id: 'secret-1',
-          type: ChatContextItemType.secret,
-          title: 'GitHub',
-          preview: 'octo-user',
-          summary: '账号：octo-user',
-        ),
-      ],
-    );
-    final fakeLlmEngine = _FakeLlmEngine();
-
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: true,
-            reason: 'ready',
-            activeEmbeddingModel: _embeddingModel,
-          ),
-        ),
-        aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final orchestrator = container.read(aiChatOrchestratorProvider);
-    final response = await orchestrator.send(
-      const AiChatRequest(
-        mode: ChatMode.freeChat,
-        userInput: '帮我回忆 GitHub 登录信息',
-        allowPrivateContext: true,
-        manualItems: [
-          ChatContextItem(
-            id: 'note-1',
-            type: ChatContextItemType.note,
-            title: '开发备忘',
-            preview: 'MFA 已开启',
-            summary: '附注：MFA 已开启',
-          ),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
         ],
-      ),
-    );
+      );
 
-    expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isTrue);
-    expect(fakeLlmEngine.lastRequest?.prompt, contains('账号：octo-user'));
-    expect(fakeLlmEngine.lastRequest?.prompt, contains('附注：MFA 已开启'));
-    expect(response.usedPrivateContext, isTrue);
-    expect(response.sourceType, ChatContextSource.mixed);
-    expect(response.contextSummary, ['账号：octo-user', '附注：MFA 已开启']);
-  });
+      addTearDown(container.dispose);
 
-  test('controller persists user and assistant messages with session metadata after successful send', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final fakeLlmEngine = _FakeLlmEngine();
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('你好，继续聊天');
+
+      expect(fakeRepository.savedSessions, hasLength(1));
+      expect(fakeRepository.savedMessages, hasLength(2));
+      expect(
+        fakeRepository.savedMessages.first.role,
+        ChatStoredMessageRole.user,
+      );
+      expect(
+        fakeRepository.savedMessages.last.role,
+        ChatStoredMessageRole.assistant,
+      );
+      expect(
+        fakeRepository.savedMessages.last.status,
+        ChatStoredMessageStatus.completed,
+      );
+      expect(
+        fakeRepository.savedMessages.first.sessionId,
+        fakeRepository.savedMessages.last.sessionId,
+      );
+      expect(fakeRepository.savedSessions.last.lastModelId, 'llm-1');
+      expect(
+        fakeRepository.savedSessions.single.updatedAt.isAfter(
+          fakeRepository.savedSessions.single.createdAt,
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'controller persists failed assistant-side message when generation fails',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _ThrowingLlmEngine();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
               ready: true,
               reason: 'ready',
-              status: LlmRuntimeStatus.ready,
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
             ),
           ),
-        ),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.send('你好，继续聊天');
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('这次会失败');
 
-    expect(fakeRepository.savedSessions, hasLength(1));
-    expect(fakeRepository.savedMessages, hasLength(2));
-    expect(fakeRepository.savedMessages.first.role, ChatStoredMessageRole.user);
-    expect(fakeRepository.savedMessages.last.role, ChatStoredMessageRole.assistant);
-    expect(fakeRepository.savedMessages.last.status, ChatStoredMessageStatus.completed);
-    expect(fakeRepository.savedMessages.first.sessionId, fakeRepository.savedMessages.last.sessionId);
-    expect(fakeRepository.savedSessions.last.lastModelId, 'llm-1');
-    expect(fakeRepository.savedSessions.single.updatedAt.isAfter(fakeRepository.savedSessions.single.createdAt), isTrue);
-  });
+      expect(fakeRepository.savedMessages, hasLength(2));
+      expect(
+        fakeRepository.savedMessages.last.role,
+        ChatStoredMessageRole.system,
+      );
+      expect(
+        fakeRepository.savedMessages.last.status,
+        ChatStoredMessageStatus.failed,
+      );
+    },
+  );
 
-  test('controller persists failed assistant-side message when generation fails', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final fakeLlmEngine = _ThrowingLlmEngine();
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
+  test(
+    'controller keeps failed assistant message persistence when runtime reports degraded generation',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _ThrowingLlmEngine(message: '真实本地 LLM 生成失败');
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
               ready: true,
               reason: 'ready',
-              status: LlmRuntimeStatus.ready,
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
             ),
           ),
-        ),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.send('这次会失败');
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('运行真实本地 LLM');
 
-    expect(fakeRepository.savedMessages, hasLength(2));
-    expect(fakeRepository.savedMessages.last.role, ChatStoredMessageRole.system);
-    expect(fakeRepository.savedMessages.last.status, ChatStoredMessageStatus.failed);
-  });
+      expect(
+        fakeRepository.savedMessages.last.role,
+        ChatStoredMessageRole.system,
+      );
+      expect(
+        fakeRepository.savedMessages.last.status,
+        ChatStoredMessageStatus.failed,
+      );
+      expect(
+        fakeRepository.savedMessages.last.content,
+        contains('真实本地 LLM 生成失败'),
+      );
+    },
+  );
 
-  test('controller keeps failed assistant message persistence when runtime reports degraded generation', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final fakeLlmEngine = _ThrowingLlmEngine(message: '真实本地 LLM 生成失败');
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
+  test(
+    'controller creates paired user and assistant messages with shared correlation timestamp',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _FakeLlmEngine();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
               ready: true,
               reason: 'ready',
-              status: LlmRuntimeStatus.ready,
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
             ),
           ),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('你好，配对测试');
+
+      expect(fakeRepository.savedMessages, hasLength(2));
+
+      final userMessage = fakeRepository.savedMessages.firstWhere(
+        (message) => message.role == ChatStoredMessageRole.user,
+      );
+      final assistantMessage = fakeRepository.savedMessages.firstWhere(
+        (message) => message.role == ChatStoredMessageRole.assistant,
+      );
+
+      final userMicros = int.parse(userMessage.id.replaceFirst('user-', ''));
+      final assistantMicros = int.parse(
+        assistantMessage.id.replaceFirst('assistant-', ''),
+      );
+
+      expect(
+        userMicros,
+        equals(assistantMicros),
+        reason:
+            'user and assistant message IDs must share the same correlation timestamp',
+      );
+      expect(userMessage.sessionId, equals(assistantMessage.sessionId));
+      expect(userMessage.createdAt.microsecondsSinceEpoch, equals(userMicros));
+      expect(
+        assistantMessage.createdAt.microsecondsSinceEpoch,
+        greaterThanOrEqualTo(assistantMicros),
+        reason:
+            'assistant reply is created later but must preserve the original correlation id seed',
+      );
+    },
+  );
+
+  test(
+    'controller starts a blank new session without restoring the latest old session',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final previousSession = ChatSession(
+        id: 'session-old',
+        mode: ChatMode.freeChat,
+        title: '旧会话',
+        allowPrivateContext: false,
+        archived: false,
+        createdAt: DateTime(2026, 5, 11, 19),
+        updatedAt: DateTime(2026, 5, 11, 19, 10),
+      );
+      await fakeRepository.saveSession(previousSession);
+      await fakeRepository.saveMessage(
+        ChatStoredMessage(
+          id: 'message-old',
+          sessionId: previousSession.id,
+          role: ChatStoredMessageRole.user,
+          content: '旧消息',
+          status: ChatStoredMessageStatus.completed,
+          createdAt: previousSession.updatedAt,
         ),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.send('运行真实本地 LLM');
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.restoreSessionIfNeeded();
+      expect(controller.state.currentSessionId, previousSession.id);
+      expect(controller.state.messages.single.text, '旧消息');
 
-    expect(fakeRepository.savedMessages.last.role, ChatStoredMessageRole.system);
-    expect(fakeRepository.savedMessages.last.status, ChatStoredMessageStatus.failed);
-    expect(fakeRepository.savedMessages.last.content, contains('真实本地 LLM 生成失败'));
-  });
+      await controller.startNewSession();
+      await controller.restoreSessionIfNeeded();
 
-  test('controller creates paired user and assistant messages with shared correlation timestamp', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final fakeLlmEngine = _FakeLlmEngine();
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: _llmModel,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
+      expect(controller.state.currentSessionId, isNull);
+      expect(controller.state.messages, isEmpty);
+      expect(container.read(currentChatSessionIdProvider), isNull);
+    },
+  );
+
+  test(
+    'shared session providers stay blank after explicit new session',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final previousSession = ChatSession(
+        id: 'session-old',
+        mode: ChatMode.freeChat,
+        title: '旧会话',
+        allowPrivateContext: false,
+        archived: false,
+        createdAt: DateTime(2026, 5, 11, 20),
+        updatedAt: DateTime(2026, 5, 11, 20, 10),
+      );
+      await fakeRepository.saveSession(previousSession);
+      await fakeRepository.saveMessage(
+        ChatStoredMessage(
+          id: 'message-old',
+          sessionId: previousSession.id,
+          role: ChatStoredMessageRole.user,
+          content: '旧消息',
+          status: ChatStoredMessageStatus.completed,
+          createdAt: previousSession.updatedAt,
         ),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-        llmEngineProvider.overrideWithValue(fakeLlmEngine),
-      ],
-    );
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.send('你好，配对测试');
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.startNewSession();
 
-    expect(fakeRepository.savedMessages, hasLength(2));
+      final currentSession = await container.read(
+        currentChatSessionProvider.future,
+      );
+      final currentMessages = await container.read(
+        currentChatMessagesProvider.future,
+      );
 
-    final userMessage = fakeRepository.savedMessages.firstWhere(
-      (message) => message.role == ChatStoredMessageRole.user,
-    );
-    final assistantMessage = fakeRepository.savedMessages.firstWhere(
-      (message) => message.role == ChatStoredMessageRole.assistant,
-    );
-
-    final userMicros = int.parse(userMessage.id.replaceFirst('user-', ''));
-    final assistantMicros = int.parse(
-      assistantMessage.id.replaceFirst('assistant-', ''),
-    );
-
-    expect(
-      userMicros,
-      equals(assistantMicros),
-      reason: 'user and assistant message IDs must share the same correlation timestamp',
-    );
-    expect(userMessage.sessionId, equals(assistantMessage.sessionId));
-    expect(userMessage.createdAt.microsecondsSinceEpoch, equals(userMicros));
-    expect(
-      assistantMessage.createdAt.microsecondsSinceEpoch,
-      greaterThanOrEqualTo(assistantMicros),
-      reason: 'assistant reply is created later but must preserve the original correlation id seed',
-    );
-  });
-
-  test('controller starts a blank new session without restoring the latest old session', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final previousSession = ChatSession(
-      id: 'session-old',
-      mode: ChatMode.freeChat,
-      title: '旧会话',
-      allowPrivateContext: false,
-      archived: false,
-      createdAt: DateTime(2026, 5, 11, 19),
-      updatedAt: DateTime(2026, 5, 11, 19, 10),
-    );
-    await fakeRepository.saveSession(previousSession);
-    await fakeRepository.saveMessage(
-      ChatStoredMessage(
-        id: 'message-old',
-        sessionId: previousSession.id,
-        role: ChatStoredMessageRole.user,
-        content: '旧消息',
-        status: ChatStoredMessageStatus.completed,
-        createdAt: previousSession.updatedAt,
-      ),
-    );
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.restoreSessionIfNeeded();
-    expect(controller.state.currentSessionId, previousSession.id);
-    expect(controller.state.messages.single.text, '旧消息');
-
-    await controller.startNewSession();
-    await controller.restoreSessionIfNeeded();
-
-    expect(controller.state.currentSessionId, isNull);
-    expect(controller.state.messages, isEmpty);
-    expect(container.read(currentChatSessionIdProvider), isNull);
-  });
-
-  test('shared session providers stay blank after explicit new session', () async {
-    final fakeRepository = _FakeChatSessionRepository();
-    final previousSession = ChatSession(
-      id: 'session-old',
-      mode: ChatMode.freeChat,
-      title: '旧会话',
-      allowPrivateContext: false,
-      archived: false,
-      createdAt: DateTime(2026, 5, 11, 20),
-      updatedAt: DateTime(2026, 5, 11, 20, 10),
-    );
-    await fakeRepository.saveSession(previousSession);
-    await fakeRepository.saveMessage(
-      ChatStoredMessage(
-        id: 'message-old',
-        sessionId: previousSession.id,
-        role: ChatStoredMessageRole.user,
-        content: '旧消息',
-        status: ChatStoredMessageStatus.completed,
-        createdAt: previousSession.updatedAt,
-      ),
-    );
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final controller = container.read(freeChatControllerProvider.notifier);
-    await controller.startNewSession();
-
-    final currentSession = await container.read(currentChatSessionProvider.future);
-    final currentMessages = await container.read(currentChatMessagesProvider.future);
-
-    expect(currentSession, isNull);
-    expect(currentMessages, isEmpty);
-  });
+      expect(currentSession, isNull);
+      expect(currentMessages, isEmpty);
+    },
+  );
 }
 
 class _FakeAiChatContextRetriever implements AiChatContextRetriever {
@@ -704,12 +798,16 @@ class _FakeChatSessionRepository implements ChatSessionRepository {
 
   @override
   Future<ChatSession?> getSession(String sessionId) async {
-    return savedSessions.where((session) => session.id == sessionId).firstOrNull;
+    return savedSessions
+        .where((session) => session.id == sessionId)
+        .firstOrNull;
   }
 
   @override
   Future<List<ChatStoredMessage>> listMessages(String sessionId) async {
-    return savedMessages.where((message) => message.sessionId == sessionId).toList(growable: false);
+    return savedMessages
+        .where((message) => message.sessionId == sessionId)
+        .toList(growable: false);
   }
 
   @override

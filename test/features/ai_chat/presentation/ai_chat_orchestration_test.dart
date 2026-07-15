@@ -42,7 +42,10 @@ void main() {
     config: null,
   );
 
-  Future<void> pumpChatPage(WidgetTester tester, ProviderContainer container) async {
+  Future<void> pumpChatPage(
+    WidgetTester tester,
+    ProviderContainer container,
+  ) async {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
@@ -53,7 +56,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  testWidgets('private QA tab disables send when semantic readiness is false', (tester) async {
+  testWidgets('private QA tab disables send when semantic readiness is false', (
+    tester,
+  ) async {
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
@@ -75,8 +80,12 @@ void main() {
             reason: '尚未选择本地 embedding 模型。',
           ),
         ),
-        externalProviderStatusProvider.overrideWith((ref) async => defaultExternalStatus),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
+        externalProviderStatusProvider.overrideWith(
+          (ref) async => defaultExternalStatus,
+        ),
+        chatSessionRepositoryProvider.overrideWithValue(
+          const _FakeChatSessionRepository(),
+        ),
       ],
     );
 
@@ -85,7 +94,9 @@ void main() {
     await pumpChatPage(tester, container);
 
     expect(find.text('尚未选择本地 embedding 模型。'), findsOneWidget);
-    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, '发送').first);
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '发送').first,
+    );
     expect(button.onPressed, isNull);
   });
 
@@ -112,195 +123,11 @@ void main() {
             activeEmbeddingModel: _embeddingModel,
           ),
         ),
-        externalProviderStatusProvider.overrideWith((ref) async => defaultExternalStatus),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await pumpChatPage(tester, container);
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-
-    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, '发送').first);
-    expect(button.onPressed, isNotNull);
-  });
-
-  testWidgets('free chat shows manual context entry point when private context is enabled', (
-    tester,
-  ) async {
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: null,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: true,
-            reason: 'semantic ready',
-            activeEmbeddingModel: _embeddingModel,
-          ),
-        ),
-        externalProviderStatusProvider.overrideWith((ref) async => defaultExternalStatus),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await pumpChatPage(tester, container);
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('手动选择私密内容'), findsNothing);
-
-    await tester.tap(find.text('允许参考私密内容'));
-    await tester.pump();
-
-    expect(find.text('手动选择私密内容'), findsOneWidget);
-  });
-
-  testWidgets('manual picker remains usable when semantic readiness is false but llm is ready', (
-    tester,
-  ) async {
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: null,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: false,
-            reason: '尚未选择本地 embedding 模型。',
-          ),
-        ),
-        externalProviderStatusProvider.overrideWith((ref) async => defaultExternalStatus),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await pumpChatPage(tester, container);
-    await tester.tap(find.text('自由聊天'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('允许参考私密内容'));
-    await tester.pump();
-
-    final button = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '手动选择私密内容'));
-    expect(button.onPressed, isNotNull);
-  });
-
-  testWidgets('private QA send action is disabled when semantic readiness is false', (tester) async {
-    final container = ProviderContainer(
-      overrides: [
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: true,
-            reason: 'ready',
-            activeModel: null,
-            runtimeState: LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: false,
-            reason: '本地语义检索当前不可用。',
-          ),
-        ),
-        externalProviderStatusProvider.overrideWith((ref) async => defaultExternalStatus),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await pumpChatPage(tester, container);
-
-    final button = tester.widget<FilledButton>(find.widgetWithText(FilledButton, '发送').first);
-    expect(button.onPressed, isNull);
-  });
-
-  testWidgets('free chat asks for confirmation before sending private context to external provider', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final externalClient = _RecordingExternalProviderClient();
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: false,
-            reason: '尚未选择本地 LLM 模型。',
-            activeModel: null,
-            runtimeState: null,
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: true,
-            reason: 'semantic ready',
-            activeEmbeddingModel: _embeddingModel,
-          ),
-        ),
         externalProviderStatusProvider.overrideWith(
-          (ref) async => const ExternalProviderStatus(
-            available: true,
-            reason: '外部模型已可用：OpenAI 兼容服务',
-            config: ExternalProviderConfig(
-              id: 'provider-1',
-              providerType: ExternalProviderType.openAiCompatible,
-              displayName: 'OpenAI 兼容服务',
-              baseUrl: 'https://example.com/v1',
-              apiKey: 'secret-key',
-              modelName: 'gpt-4.1-mini',
-              embeddingModelName: 'text-embedding-3-small',
-              enabled: true,
-              allowSensitiveFields: true,
-            ),
-          ),
+          (ref) async => defaultExternalStatus,
         ),
-        externalProviderClientProvider.overrideWithValue(externalClient),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-        aiChatContextRetrieverProvider.overrideWithValue(
-          const _StaticContextRetriever(
-            items: [
-              ChatContextItem(
-                id: 'secret-1',
-                type: ChatContextItemType.secret,
-                title: 'GitHub',
-                preview: 'octo-user',
-                summary: '账号：octo-user',
-              ),
-            ],
-          ),
+        chatSessionRepositoryProvider.overrideWithValue(
+          const _FakeChatSessionRepository(),
         ),
       ],
     );
@@ -310,22 +137,272 @@ void main() {
     await pumpChatPage(tester, container);
     await tester.tap(find.text('自由聊天'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('允许参考私密内容'));
-    await tester.pump();
-    await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-    await tester.tap(find.widgetWithText(FilledButton, '发送').last);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('你即将把私密内容发送到外部模型'), findsOneWidget);
-    expect(externalClient.generateCallCount, 0);
-
-    await tester.tap(find.text('继续发送'));
-    await tester.pumpAndSettle();
-
-    expect(externalClient.generateCallCount, 1);
-    expect(externalClient.lastUsedPrivateContext, isTrue);
+    final button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '发送').first,
+    );
+    expect(button.onPressed, isNotNull);
   });
+
+  testWidgets(
+    'free chat shows manual context entry point when private context is enabled',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: null,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: true,
+              reason: 'semantic ready',
+              activeEmbeddingModel: _embeddingModel,
+            ),
+          ),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => defaultExternalStatus,
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(
+            const _FakeChatSessionRepository(),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await pumpChatPage(tester, container);
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('手动选择私密内容'), findsNothing);
+
+      await tester.tap(find.text('允许参考私密内容'));
+      await tester.pump();
+
+      expect(find.text('手动选择私密内容'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'manual picker remains usable when semantic readiness is false but llm is ready',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: null,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: false,
+              reason: '尚未选择本地 embedding 模型。',
+            ),
+          ),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => defaultExternalStatus,
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(
+            const _FakeChatSessionRepository(),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await pumpChatPage(tester, container);
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('允许参考私密内容'));
+      await tester.pump();
+
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '手动选择私密内容'),
+      );
+      expect(button.onPressed, isNotNull);
+    },
+  );
+
+  testWidgets(
+    'private QA send action is disabled when semantic readiness is false',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: null,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: false,
+              reason: '本地语义检索当前不可用。',
+            ),
+          ),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => defaultExternalStatus,
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(
+            const _FakeChatSessionRepository(),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await pumpChatPage(tester, container);
+
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '发送').first,
+      );
+      expect(button.onPressed, isNull);
+    },
+  );
+
+  testWidgets(
+    'free chat requires explicit external selection and config-bound confirmation',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final externalClient = _RecordingExternalProviderClient();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          sharedPreferencesProvider.overrideWith(
+            (ref) async => SharedPreferences.getInstance(),
+          ),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: false,
+              reason: '尚未选择本地 LLM 模型。',
+              activeModel: null,
+              runtimeState: null,
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: true,
+              reason: 'semantic ready',
+              activeEmbeddingModel: _embeddingModel,
+            ),
+          ),
+          externalProviderStatusProvider.overrideWith(
+            (ref) async => const ExternalProviderStatus(
+              available: true,
+              reason: '外部模型已可用：OpenAI 兼容服务',
+              config: ExternalProviderConfig(
+                id: 'provider-1',
+                providerType: ExternalProviderType.openAiCompatible,
+                displayName: 'OpenAI 兼容服务',
+                baseUrl: 'https://example.com/v1',
+                apiKey: 'secret-key',
+                modelName: 'gpt-4.1-mini',
+                embeddingModelName: 'text-embedding-3-small',
+                enabled: true,
+                allowSensitiveFields: true,
+              ),
+            ),
+          ),
+          externalProviderClientProvider.overrideWithValue(externalClient),
+          chatSessionRepositoryProvider.overrideWithValue(
+            const _FakeChatSessionRepository(),
+          ),
+          aiChatContextRetrieverProvider.overrideWithValue(
+            const _StaticContextRetriever(
+              items: [
+                ChatContextItem(
+                  id: 'secret-1',
+                  type: ChatContextItemType.secret,
+                  title: 'GitHub',
+                  preview: 'octo-user',
+                  summary: '账号：octo-user',
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await pumpChatPage(tester, container);
+      await tester.tap(find.text('自由聊天'));
+      await tester.pumpAndSettle();
+
+      final selector = find.byKey(const ValueKey('free-chat-backend-selector'));
+      expect(selector, findsOneWidget);
+      expect(
+        container.read(freeChatControllerProvider).backendPreference,
+        ChatBackendPreference.local,
+      );
+      await tester.tap(
+        find.descendant(of: selector, matching: find.text('外部')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        container.read(freeChatControllerProvider).backendPreference,
+        ChatBackendPreference.external,
+      );
+
+      await tester.enterText(find.byType(TextField).last, '普通外部问题');
+      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('确认使用外部模型'), findsOneWidget);
+      expect(find.text('提供商：OpenAI 兼容接口'), findsOneWidget);
+      expect(find.text('Endpoint：https://example.com/v1'), findsOneWidget);
+      expect(find.text('模型：gpt-4.1-mini'), findsOneWidget);
+      expect(find.text('包含私密上下文：否'), findsOneWidget);
+      expect(find.textContaining('secret-key'), findsNothing);
+      expect(externalClient.generateCallCount, 0);
+
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(externalClient.generateCallCount, 0);
+
+      await tester.tap(find.text('允许参考私密内容'));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
+      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('确认使用外部模型'), findsOneWidget);
+      expect(find.text('包含私密上下文：是'), findsOneWidget);
+      expect(externalClient.generateCallCount, 0);
+
+      await tester.tap(find.text('继续发送'));
+      await tester.pumpAndSettle();
+
+      expect(externalClient.generateCallCount, 1);
+      expect(externalClient.lastUsedPrivateContext, isTrue);
+    },
+  );
 }
 
 class _FakeChatSessionRepository implements ChatSessionRepository {
@@ -335,7 +412,8 @@ class _FakeChatSessionRepository implements ChatSessionRepository {
   Future<ChatSession?> getSession(String sessionId) async => null;
 
   @override
-  Future<List<ChatStoredMessage>> listMessages(String sessionId) async => const <ChatStoredMessage>[];
+  Future<List<ChatStoredMessage>> listMessages(String sessionId) async =>
+      const <ChatStoredMessage>[];
 
   @override
   Future<List<ChatSession>> listSessions() async => const <ChatSession>[];

@@ -61,6 +61,7 @@ void main() {
 
       final controller = container.read(freeChatControllerProvider.notifier);
       await controller.selectSession('session-old');
+      controller.setBackendPreference(ChatBackendPreference.external);
       controller.setAllowPrivateContext(true);
       controller.setManualItems(const [_manualItem]);
       await controller.send('create an error');
@@ -86,11 +87,15 @@ void main() {
         ],
       },
     );
-    final container = _buildContainer(repository: repository, llmEngine: _ThrowingLlmEngine());
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: _ThrowingLlmEngine(),
+    );
     addTearDown(container.dispose);
 
     final controller = container.read(privateQaChatControllerProvider.notifier);
     await controller.selectSession('session-lock');
+    controller.setBackendPreference(ChatBackendPreference.external);
     controller.setAllowPrivateContext(true);
     controller.setManualItems(const [_manualItem]);
     await controller.send('create lock error');
@@ -246,34 +251,31 @@ void main() {
     },
   );
 
-  test(
-    'stale failed send cannot repopulate errors after lock reset',
-    () async {
-      final repository = _ControllableChatSessionRepository();
-      final llmEngine = _ControllableLlmEngine();
-      final container = _buildContainer(
-        repository: repository,
-        llmEngine: llmEngine,
-      );
-      addTearDown(container.dispose);
+  test('stale failed send cannot repopulate errors after lock reset', () async {
+    final repository = _ControllableChatSessionRepository();
+    final llmEngine = _ControllableLlmEngine();
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: llmEngine,
+    );
+    addTearDown(container.dispose);
 
-      final controller = container.read(freeChatControllerProvider.notifier);
-      final sendFuture = controller.send('sensitive prompt');
-      await llmEngine.waitForRequest();
+    final controller = container.read(freeChatControllerProvider.notifier);
+    final sendFuture = controller.send('sensitive prompt');
+    await llmEngine.waitForRequest();
 
-      controller.resetForLock();
-      llmEngine.completeError(StateError('stale sensitive failure'));
-      await sendFuture;
+    controller.resetForLock();
+    llmEngine.completeError(StateError('stale sensitive failure'));
+    await sendFuture;
 
-      _expectBlankConversation(container, controller);
-      expect(
-        repository.savedMessages.where(
-          (message) => message.status == ChatStoredMessageStatus.failed,
-        ),
-        isEmpty,
-      );
-    },
-  );
+    _expectBlankConversation(container, controller);
+    expect(
+      repository.savedMessages.where(
+        (message) => message.status == ChatStoredMessageStatus.failed,
+      ),
+      isEmpty,
+    );
+  });
 }
 
 ProviderContainer _buildContainer({
@@ -314,6 +316,7 @@ void _expectBlankConversation(
 ) {
   expect(controller.state.messages, isEmpty);
   expect(controller.state.sending, isFalse);
+  expect(controller.state.backendPreference, ChatBackendPreference.local);
   expect(controller.state.allowPrivateContext, isFalse);
   expect(controller.state.manualItems, isEmpty);
   expect(controller.state.currentSessionId, isNull);

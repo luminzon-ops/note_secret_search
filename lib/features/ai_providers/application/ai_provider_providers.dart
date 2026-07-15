@@ -3,19 +3,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_providers/infrastructure/openai_compatible_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/infrastructure/ollama_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/infrastructure/sqlite_external_provider_repository.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
-final externalProviderRepositoryProvider =
-    Provider<ExternalProviderRepository>((ref) {
-  return SqliteExternalProviderRepository(
-    database: ref.watch(appDatabaseProvider),
-    cryptoService: ref.watch(cryptoServiceProvider),
-  );
-});
+final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>(
+  (ref) {
+    return SqliteExternalProviderRepository(
+      database: ref.watch(appDatabaseProvider),
+      cryptoService: ref.watch(cryptoServiceProvider),
+    );
+  },
+);
 
 final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
   final dio = Dio();
@@ -27,17 +29,19 @@ final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
   return OpenAiCompatibleProviderClient(dio: dio);
 });
 
-final enabledExternalProviderProvider =
-    FutureProvider<ExternalProviderConfig?>((ref) {
-  return guardSensitiveFuture<ExternalProviderConfig?>(
-    ref,
-    lockedValue: null,
-    load: () => ref.watch(externalProviderRepositoryProvider).loadEnabled(),
-  );
-});
+final enabledExternalProviderProvider = FutureProvider<ExternalProviderConfig?>(
+  (ref) {
+    return guardSensitiveFuture<ExternalProviderConfig?>(
+      ref,
+      lockedValue: null,
+      load: () => ref.watch(externalProviderRepositoryProvider).loadEnabled(),
+    );
+  },
+);
 
-final externalProviderStatusProvider =
-    FutureProvider<ExternalProviderStatus>((ref) {
+final externalProviderStatusProvider = FutureProvider<ExternalProviderStatus>((
+  ref,
+) {
   return guardSensitiveFuture<ExternalProviderStatus>(
     ref,
     lockedValue: const ExternalProviderStatus(
@@ -65,13 +69,13 @@ final externalProviderStatusProvider =
 
 final externalPrivacyConfirmationControllerProvider =
     Provider<ExternalPrivacyConfirmationController>((ref) {
-  return ExternalPrivacyConfirmationController(ref: ref);
-});
+      return ExternalPrivacyConfirmationController(ref: ref);
+    });
 
 final externalProviderSettingsControllerProvider =
     Provider<ExternalProviderSettingsController>((ref) {
-  return ExternalProviderSettingsController(ref: ref);
-});
+      return ExternalProviderSettingsController(ref: ref);
+    });
 
 class ExternalProviderStatus {
   const ExternalProviderStatus({
@@ -90,19 +94,24 @@ class ExternalPrivacyConfirmationController {
 
   final Ref _ref;
 
-  Future<bool> hasAcknowledged(String providerId) async {
+  Future<bool> hasAcknowledged(ExternalProviderConfig config) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    return preferences.getBool(_providerAcknowledgementKey(providerId)) ??
-        false;
+    return preferences.getBool(_providerAcknowledgementKey(config)) ?? false;
   }
 
-  Future<void> markAcknowledged(String providerId) async {
+  Future<void> markAcknowledged(ExternalProviderConfig config) async {
     final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.setBool(_providerAcknowledgementKey(providerId), true);
+    await preferences.setBool(_providerAcknowledgementKey(config), true);
   }
 
-  String _providerAcknowledgementKey(String providerId) {
-    return 'ai.external_privacy_ack.$providerId';
+  Future<void> revoke(ExternalProviderConfig config) async {
+    final preferences = await _ref.read(sharedPreferencesProvider.future);
+    await preferences.remove(_providerAcknowledgementKey(config));
+  }
+
+  String _providerAcknowledgementKey(ExternalProviderConfig config) {
+    return 'ai.external_privacy_ack.v2.'
+        '${externalProviderConsentFingerprint(config)}';
   }
 }
 
@@ -112,7 +121,14 @@ class ExternalProviderSettingsController {
   final Ref _ref;
 
   Future<void> save(ExternalProviderConfig config) async {
-    await _ref.read(externalProviderRepositoryProvider).save(config);
+    final repository = _ref.read(externalProviderRepositoryProvider);
+    final existing = await repository.loadById(config.id);
+    if (existing != null) {
+      await _ref
+          .read(externalPrivacyConfirmationControllerProvider)
+          .revoke(existing);
+    }
+    await repository.save(config);
     _ref.invalidate(enabledExternalProviderProvider);
     _ref.invalidate(externalProviderStatusProvider);
   }

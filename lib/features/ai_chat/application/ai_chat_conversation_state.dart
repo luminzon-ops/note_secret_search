@@ -5,6 +5,7 @@ class AiChatConversationState {
     required this.mode,
     this.messages = const <ChatMessage>[],
     this.sending = false,
+    this.backendPreference = ChatBackendPreference.local,
     this.allowPrivateContext = false,
     this.manualItems = const <ChatContextItem>[],
     this.currentSessionId,
@@ -15,6 +16,7 @@ class AiChatConversationState {
   final ChatMode mode;
   final List<ChatMessage> messages;
   final bool sending;
+  final ChatBackendPreference backendPreference;
   final bool allowPrivateContext;
   final List<ChatContextItem> manualItems;
   final String? currentSessionId;
@@ -25,6 +27,7 @@ class AiChatConversationState {
     ChatMode? mode,
     List<ChatMessage>? messages,
     bool? sending,
+    ChatBackendPreference? backendPreference,
     bool? allowPrivateContext,
     List<ChatContextItem>? manualItems,
     String? currentSessionId,
@@ -37,6 +40,7 @@ class AiChatConversationState {
       mode: mode ?? this.mode,
       messages: messages ?? this.messages,
       sending: sending ?? this.sending,
+      backendPreference: backendPreference ?? this.backendPreference,
       allowPrivateContext: allowPrivateContext ?? this.allowPrivateContext,
       manualItems: manualItems ?? this.manualItems,
       currentSessionId: clearCurrentSessionId

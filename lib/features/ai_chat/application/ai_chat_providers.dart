@@ -35,14 +35,20 @@ final aiChatOrchestratorProvider = Provider<AiChatOrchestrator>((ref) {
 });
 
 final privateQaChatControllerProvider =
-    StateNotifierProvider<AiChatConversationController, AiChatConversationState>((ref) {
-  return AiChatConversationController(ref: ref, mode: ChatMode.privateQa);
-});
+    StateNotifierProvider<
+      AiChatConversationController,
+      AiChatConversationState
+    >((ref) {
+      return AiChatConversationController(ref: ref, mode: ChatMode.privateQa);
+    });
 
 final freeChatControllerProvider =
-    StateNotifierProvider<AiChatConversationController, AiChatConversationState>((ref) {
-  return AiChatConversationController(ref: ref, mode: ChatMode.freeChat);
-});
+    StateNotifierProvider<
+      AiChatConversationController,
+      AiChatConversationState
+    >((ref) {
+      return AiChatConversationController(ref: ref, mode: ChatMode.freeChat);
+    });
 
 abstract interface class AiChatContextRetriever {
   Future<List<ChatContextItem>> retrieve({
@@ -64,7 +70,9 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     final scope = await _ref.read(searchScopeConfigProvider.future);
     final secrets = await _ref.read(secretListProvider.future);
     final notes = await _ref.read(noteListProvider.future);
-    final results = await _ref.read(semanticSearchServiceProvider).search(
+    final results = await _ref
+        .read(semanticSearchServiceProvider)
+        .search(
           query: query,
           scope: scope,
           activeEmbeddingModel: embeddingModel,
@@ -100,42 +108,62 @@ class AiChatOrchestrator {
       throw StateError('请输入问题或消息。');
     }
 
-    final backend = await _resolveBackend();
+    final backend = await _resolveBackend(request.backendPreference);
 
     return switch (request.mode) {
       ChatMode.privateQa => _runPrivateQa(
-          userInput: userInput,
-          request: request,
-          backend: backend,
-        ),
+        userInput: userInput,
+        request: request,
+        backend: backend,
+      ),
       ChatMode.freeChat => _runFreeChat(
-          userInput: userInput,
-          request: request,
-          backend: backend,
-        ),
+        userInput: userInput,
+        request: request,
+        backend: backend,
+      ),
     };
   }
 
-  Future<_ResolvedChatBackend> _resolveBackend() async {
+  Future<_ResolvedChatBackend> _resolveBackend(
+    ChatBackendPreference preference,
+  ) async {
+    return switch (preference) {
+      ChatBackendPreference.local => _resolveLocalBackend(),
+      ChatBackendPreference.external => _resolveExternalBackend(),
+    };
+  }
+
+  Future<_ResolvedChatBackend> _resolveLocalBackend() async {
     final llmReadiness = await _ref.read(localLlmReadinessProvider.future);
-    if (llmReadiness.ready && llmReadiness.activeModel != null) {
-      return _ResolvedChatBackend.local(
-        llmEngine: _ref.read(llmEngineProvider),
-        llmModel: llmReadiness.activeModel!,
-        reason: llmReadiness.reason,
-      );
+    if (!llmReadiness.ready || llmReadiness.activeModel == null) {
+      throw StateError(llmReadiness.reason);
     }
+    return _ResolvedChatBackend.local(
+      llmEngine: _ref.read(llmEngineProvider),
+      llmModel: llmReadiness.activeModel!,
+      reason: llmReadiness.reason,
+    );
+  }
 
-    final externalStatus = await _ref.read(externalProviderStatusProvider.future);
-    if (externalStatus.available && externalStatus.config != null) {
-      return _ResolvedChatBackend.external(
-        externalConfig: externalStatus.config!,
-        externalClient: _ref.read(externalProviderClientProvider),
-        reason: externalStatus.reason,
-      );
+  Future<_ResolvedChatBackend> _resolveExternalBackend() async {
+    final externalStatus = await _ref.read(
+      externalProviderStatusProvider.future,
+    );
+    if (!externalStatus.available || externalStatus.config == null) {
+      throw StateError(externalStatus.reason);
     }
-
-    throw StateError(llmReadiness.reason);
+    final config = externalStatus.config!;
+    final acknowledged = await _ref
+        .read(externalPrivacyConfirmationControllerProvider)
+        .hasAcknowledged(config);
+    if (!acknowledged) {
+      throw StateError('外部模型配置尚未确认。');
+    }
+    return _ResolvedChatBackend.external(
+      externalConfig: config,
+      externalClient: _ref.read(externalProviderClientProvider),
+      reason: externalStatus.reason,
+    );
   }
 
   Future<AiChatResponse> _runPrivateQa({
@@ -143,12 +171,22 @@ class AiChatOrchestrator {
     required AiChatRequest request,
     required _ResolvedChatBackend backend,
   }) async {
-    final semanticReadiness = await _ref.read(semanticSearchReadinessProvider.future);
-    if (!semanticReadiness.ready || semanticReadiness.activeEmbeddingModel == null) {
+    _validateExternalPrivateContext(
+      backend: backend,
+      usedPrivateContext: false,
+      requestedPrivateContext: true,
+    );
+    final semanticReadiness = await _ref.read(
+      semanticSearchReadinessProvider.future,
+    );
+    if (!semanticReadiness.ready ||
+        semanticReadiness.activeEmbeddingModel == null) {
       throw StateError(semanticReadiness.reason);
     }
 
-    final contextItems = await _ref.read(aiChatContextRetrieverProvider).retrieve(
+    final contextItems = await _ref
+        .read(aiChatContextRetrieverProvider)
+        .retrieve(
           query: userInput,
           embeddingModel: semanticReadiness.activeEmbeddingModel!,
         );
@@ -156,7 +194,8 @@ class AiChatOrchestrator {
     _validateExternalPrivateContext(
       backend: backend,
       usedPrivateContext: usedPrivateContext,
-      requestedPrivateContext: request.allowPrivateContext || usedPrivateContext,
+      requestedPrivateContext:
+          request.allowPrivateContext || usedPrivateContext,
     );
     final prompt = _buildPrompt(
       mode: ChatMode.privateQa,
@@ -171,9 +210,13 @@ class AiChatOrchestrator {
 
     return AiChatResponse(
       text: text,
-      contextSummary: contextItems.map((item) => item.summary).toList(growable: false),
+      contextSummary: contextItems
+          .map((item) => item.summary)
+          .toList(growable: false),
       usedPrivateContext: usedPrivateContext,
-      sourceType: usedPrivateContext ? ChatContextSource.autoRetrieved : ChatContextSource.none,
+      sourceType: usedPrivateContext
+          ? ChatContextSource.autoRetrieved
+          : ChatContextSource.none,
       contextItems: contextItems,
     );
   }
@@ -183,13 +226,20 @@ class AiChatOrchestrator {
     required AiChatRequest request,
     required _ResolvedChatBackend backend,
   }) async {
-    final manualItems = _dedupeContextItems(request.manualItems);
+    final manualItems = request.allowPrivateContext
+        ? _dedupeContextItems(request.manualItems)
+        : const <ChatContextItem>[];
     var autoItems = const <ChatContextItem>[];
 
     if (request.allowPrivateContext) {
-      final semanticReadiness = await _ref.read(semanticSearchReadinessProvider.future);
-      if (semanticReadiness.ready && semanticReadiness.activeEmbeddingModel != null) {
-        autoItems = await _ref.read(aiChatContextRetrieverProvider).retrieve(
+      final semanticReadiness = await _ref.read(
+        semanticSearchReadinessProvider.future,
+      );
+      if (semanticReadiness.ready &&
+          semanticReadiness.activeEmbeddingModel != null) {
+        autoItems = await _ref
+            .read(aiChatContextRetrieverProvider)
+            .retrieve(
               query: userInput,
               embeddingModel: semanticReadiness.activeEmbeddingModel!,
             );
@@ -216,9 +266,14 @@ class AiChatOrchestrator {
 
     return AiChatResponse(
       text: text,
-      contextSummary: contextItems.map((item) => item.summary).toList(growable: false),
+      contextSummary: contextItems
+          .map((item) => item.summary)
+          .toList(growable: false),
       usedPrivateContext: usedPrivateContext,
-      sourceType: _resolveSourceType(autoItems: autoItems, manualItems: manualItems),
+      sourceType: _resolveSourceType(
+        autoItems: autoItems,
+        manualItems: manualItems,
+      ),
       contextItems: contextItems,
     );
   }
@@ -230,14 +285,14 @@ class AiChatOrchestrator {
   }) async {
     return switch (backend.type) {
       _ChatBackendType.local => (await backend.llmEngine!.generate(
-          LlmInferenceRequest(
-            model: backend.llmModel!,
-            prompt: prompt,
-            usedPrivateContext: usedPrivateContext,
-          ),
-        ))
-          .text,
-      _ChatBackendType.external => backend.externalClient!.generateChatCompletion(
+        LlmInferenceRequest(
+          model: backend.llmModel!,
+          prompt: prompt,
+          usedPrivateContext: usedPrivateContext,
+        ),
+      )).text,
+      _ChatBackendType.external =>
+        backend.externalClient!.generateChatCompletion(
           config: backend.externalConfig!,
           prompt: prompt,
           usedPrivateContext: usedPrivateContext,
@@ -317,17 +372,17 @@ class _ResolvedChatBackend {
     required this.llmEngine,
     required this.llmModel,
     required this.reason,
-  })  : type = _ChatBackendType.local,
-        externalConfig = null,
-        externalClient = null;
+  }) : type = _ChatBackendType.local,
+       externalConfig = null,
+       externalClient = null;
 
   const _ResolvedChatBackend.external({
     required this.externalConfig,
     required this.externalClient,
     required this.reason,
-  })  : type = _ChatBackendType.external,
-        llmEngine = null,
-        llmModel = null;
+  }) : type = _ChatBackendType.external,
+       llmEngine = null,
+       llmModel = null;
 
   final _ChatBackendType type;
   final String reason;

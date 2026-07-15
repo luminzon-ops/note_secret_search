@@ -2,6 +2,8 @@ import 'package:note_secret_search/features/search/domain/search_result_item.dar
 
 enum ChatMode { privateQa, freeChat }
 
+enum ChatBackendPreference { local, external }
+
 enum ChatContextSource { none, autoRetrieved, manuallySelected, mixed }
 
 enum ChatContextItemType { secret, note }
@@ -28,12 +30,14 @@ class AiChatRequest {
   const AiChatRequest({
     required this.mode,
     required this.userInput,
+    this.backendPreference = ChatBackendPreference.local,
     this.allowPrivateContext = false,
     this.manualItems = const <ChatContextItem>[],
   });
 
   final ChatMode mode;
   final String userInput;
+  final ChatBackendPreference backendPreference;
   final bool allowPrivateContext;
   final List<ChatContextItem> manualItems;
 }
