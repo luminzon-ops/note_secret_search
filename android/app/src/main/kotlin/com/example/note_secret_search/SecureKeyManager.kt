@@ -2,6 +2,18 @@ package com.example.note_secret_search
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Build
+import com.example.note_secret_search.security.AndroidKeystoreWrappingKeyBackend
+import com.example.note_secret_search.security.AndroidSystemAuthCapabilities
+import com.example.note_secret_search.security.AndroidWrappingKeyRepository
+import com.example.note_secret_search.security.AtomicFileSecurityEnvelopeStore
+import com.example.note_secret_search.security.NativeKeyringManager
+import com.example.note_secret_search.security.NativeKeyringOperations
+import com.example.note_secret_search.security.NativeResult
+import com.example.note_secret_search.security.NativeSecurityState
+import com.example.note_secret_search.security.NativeUnlockMaterial
+import com.example.note_secret_search.security.SharedPreferencesLegacySecurityDetector
+import com.example.note_secret_search.security.SystemAuthenticator
 import java.util.UUID
 
 interface SecureKeyOperations {
@@ -67,12 +79,32 @@ private class SharedPreferencesSecureKeyPreferenceStore(
 
 class SecureKeyManager internal constructor(
     private val store: SecureKeyPreferenceStore,
-) : SecureKeyOperations {
+) : SecureKeyOperations, NativeKeyringOperations {
+    private var nativeKeyring: NativeKeyringOperations? = null
+
     constructor(context: Context) : this(
         SharedPreferencesSecureKeyPreferenceStore(
             context.getSharedPreferences("native_security", Context.MODE_PRIVATE),
         ),
     )
+
+    constructor(
+        context: Context,
+        authenticator: SystemAuthenticator,
+    ) : this(context) {
+        val capabilities = AndroidSystemAuthCapabilities(context)
+        nativeKeyring = NativeKeyringManager(
+            apiLevel = Build.VERSION.SDK_INT,
+            envelopeStore = AtomicFileSecurityEnvelopeStore(context),
+            legacyDetector = SharedPreferencesLegacySecurityDetector(context),
+            wrappingKeys = AndroidWrappingKeyRepository(
+                apiLevel = Build.VERSION.SDK_INT,
+                backend = AndroidKeystoreWrappingKeyBackend(),
+            ),
+            authenticator = authenticator,
+            capabilities = capabilities::read,
+        )
+    }
 
     override fun ensureRootKey() {
         if (!store.isPersistenceAvailable()) {
@@ -109,5 +141,33 @@ class SecureKeyManager internal constructor(
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?: throw IllegalStateException("Database key material is unavailable.")
+    }
+
+    override fun getSecurityState(): NativeSecurityState {
+        return requireNativeKeyring().getSecurityState()
+    }
+
+    override fun provisionWithSystemAuth(
+        reason: String,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        requireNativeKeyring().provisionWithSystemAuth(reason, result)
+    }
+
+    override fun unlockWithSystemAuth(
+        reason: String,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        requireNativeKeyring().unlockWithSystemAuth(reason, result)
+    }
+
+    override fun lock(): Any? {
+        return requireNativeKeyring().lock()
+    }
+
+    private fun requireNativeKeyring(): NativeKeyringOperations {
+        return checkNotNull(nativeKeyring) {
+            "Native keyring dependencies were not configured."
+        }
     }
 }

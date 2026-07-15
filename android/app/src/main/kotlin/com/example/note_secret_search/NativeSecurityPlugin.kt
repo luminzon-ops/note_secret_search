@@ -1,11 +1,14 @@
 package com.example.note_secret_search
 
 import android.app.Activity
-import android.os.Build
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
-import androidx.biometric.BiometricManager
+import com.example.note_secret_search.security.NativeKeyringOperations
+import com.example.note_secret_search.security.NativeResult
+import com.example.note_secret_search.security.NativeSecurityErrorCode
+import com.example.note_secret_search.security.NativeSecurityException
+import com.example.note_secret_search.security.NativeUnlockMaterial
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -16,9 +19,12 @@ class NativeSecurityPlugin(
 ) : MethodChannel.MethodCallHandler {
 
     private lateinit var channel: MethodChannel
-    private val keyManager = SecureKeyManager(activity)
-    private val secureKeyMethodHandler = SecureKeyMethodHandler(keyManager)
     private val biometricAuthenticator = BiometricAuthenticator(activity)
+    private val keyManager = SecureKeyManager(activity, biometricAuthenticator)
+    private val nativeSecurityMethodHandler = NativeSecurityMethodHandler(keyManager)
+    private val secureKeyMethodHandler = SecureKeyMethodHandler(keyManager)
+    private val legacyBiometricMethodHandler =
+        LegacyBiometricMethodHandler(biometricAuthenticator)
 
     fun attachToEngine(messenger: BinaryMessenger) {
         channel = MethodChannel(messenger, CHANNEL_NAME)
@@ -40,6 +46,10 @@ class NativeSecurityPlugin(
                 result.success(null)
             }
 
+            "getSecurityState" -> {
+                nativeSecurityMethodHandler.getSecurityState(result)
+            }
+
             "ensureRootKey" -> {
                 secureKeyMethodHandler.ensureRootKey(result)
             }
@@ -49,25 +59,32 @@ class NativeSecurityPlugin(
             }
 
             "getBiometricAvailability" -> {
-                val authenticators = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                } else {
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG
-                }
-                val availability = when (BiometricManager.from(activity).canAuthenticate(authenticators)) {
-                    BiometricManager.BIOMETRIC_SUCCESS -> "available"
-                    BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "not_enrolled"
-                    else -> "unavailable"
-                }
-                result.success(availability)
+                legacyBiometricMethodHandler.getBiometricAvailability(result)
             }
 
             "authenticateWithBiometrics" -> {
-                biometricAuthenticator.authenticate(
-                    reason = call.argument<String>("reason") ?: "解锁保险库",
-                    result = result,
+                legacyBiometricMethodHandler.authenticateWithBiometrics(
+                    call.argument<Any?>("reason"),
+                    result,
                 )
+            }
+
+            "provisionWithSystemAuth" -> {
+                nativeSecurityMethodHandler.provisionWithSystemAuth(
+                    call.argument<Any?>("reason"),
+                    result,
+                )
+            }
+
+            "unlockWithSystemAuth" -> {
+                nativeSecurityMethodHandler.unlockWithSystemAuth(
+                    call.argument<Any?>("reason"),
+                    result,
+                )
+            }
+
+            "lock" -> {
+                nativeSecurityMethodHandler.lock(result)
             }
 
             else -> result.notImplemented()
@@ -76,6 +93,143 @@ class NativeSecurityPlugin(
 
     companion object {
         private const val CHANNEL_NAME = "note_secret_search/native_security"
+    }
+}
+
+internal class NativeSecurityMethodHandler(
+    private val operations: NativeKeyringOperations,
+) {
+    fun getSecurityState(result: MethodChannel.Result) {
+        handle(result) {
+            operations.getSecurityState().toChannelMap()
+        }
+    }
+
+    fun provisionWithSystemAuth(
+        reason: Any?,
+        result: MethodChannel.Result,
+    ) {
+        withReason(reason, result) {
+            operations.provisionWithSystemAuth(it, channelResult(result))
+        }
+    }
+
+    fun unlockWithSystemAuth(
+        reason: Any?,
+        result: MethodChannel.Result,
+    ) {
+        withReason(reason, result) {
+            operations.unlockWithSystemAuth(it, channelResult(result))
+        }
+    }
+
+    fun lock(result: MethodChannel.Result) {
+        handle(result) {
+            operations.lock()
+        }
+    }
+
+    private fun withReason(
+        value: Any?,
+        result: MethodChannel.Result,
+        operation: (String) -> Unit,
+    ) {
+        val reason = value as? String
+        if (reason.isNullOrBlank()) {
+            sendError(
+                result,
+                NativeSecurityException(NativeSecurityErrorCode.INVALID_ARGUMENT),
+            )
+            return
+        }
+        try {
+            operation(reason)
+        } catch (error: Throwable) {
+            sendError(result, sanitize(error))
+        }
+    }
+
+    private fun channelResult(
+        result: MethodChannel.Result,
+    ): NativeResult<NativeUnlockMaterial> {
+        return object : NativeResult<NativeUnlockMaterial> {
+            override fun success(value: NativeUnlockMaterial) {
+                try {
+                    result.success(value.toChannelMap())
+                } finally {
+                    value.zeroize()
+                }
+            }
+
+            override fun error(error: NativeSecurityException) {
+                sendError(result, error)
+            }
+        }
+    }
+
+    private fun handle(
+        result: MethodChannel.Result,
+        operation: () -> Any?,
+    ) {
+        try {
+            result.success(operation())
+        } catch (error: Throwable) {
+            sendError(result, sanitize(error))
+        }
+    }
+
+    private fun sanitize(error: Throwable): NativeSecurityException {
+        return error as? NativeSecurityException
+            ?: NativeSecurityException(
+                NativeSecurityErrorCode.INTERNAL_ERROR,
+                error,
+            )
+    }
+
+    private fun sendError(
+        result: MethodChannel.Result,
+        error: NativeSecurityException,
+    ) {
+        result.error(error.code.name, error.message, null)
+    }
+}
+
+internal interface LegacyBiometricOperations {
+    fun getBiometricAvailability(): String
+
+    fun authenticateWithBiometrics(
+        reason: String,
+        result: MethodChannel.Result,
+    )
+}
+
+internal class LegacyBiometricMethodHandler(
+    private val operations: LegacyBiometricOperations,
+) {
+    fun getBiometricAvailability(result: MethodChannel.Result) {
+        try {
+            result.success(operations.getBiometricAvailability())
+        } catch (_: Throwable) {
+            result.success("unavailable")
+        }
+    }
+
+    fun authenticateWithBiometrics(
+        reason: Any?,
+        result: MethodChannel.Result,
+    ) {
+        val resolvedReason = (reason as? String)
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_REASON
+        try {
+            operations.authenticateWithBiometrics(resolvedReason, result)
+        } catch (_: Throwable) {
+            result.success(false)
+        }
+    }
+
+    companion object {
+        private const val DEFAULT_REASON = "解锁保险库"
     }
 }
 
