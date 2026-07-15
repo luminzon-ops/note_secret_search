@@ -135,6 +135,25 @@ class SecurityKeyringManagerTest {
     }
 
     @Test
+    fun `api 30 unlocks a keyset provisioned before the os upgrade`() {
+        provisionApi29WithBiometric()
+        authenticator.requests.clear()
+        val upgradedManager = manager(apiLevel = 30)
+        val unlock = RecordingNativeResult<NativeUnlockMaterial>()
+
+        val state = upgradedManager.getSecurityState()
+        upgradedManager.unlockWithSystemAuth("Unlock after upgrade", unlock)
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertNull(unlock.error)
+        assertNotNull(unlock.value)
+        assertEquals(
+            listOf(SystemAuthenticatorMode.BIOMETRIC),
+            authenticator.requests.map { it.mode },
+        )
+    }
+
+    @Test
     fun `api 29 biometric cancellation falls back to authenticated device credential`() {
         provisionApi29WithBiometric()
         authenticator.requests.clear()
@@ -151,6 +170,26 @@ class SecurityKeyringManagerTest {
                 SystemAuthenticatorMode.BIOMETRIC,
                 SystemAuthenticatorMode.DEVICE_CREDENTIAL,
             ),
+            authenticator.requests.map { it.mode },
+        )
+    }
+
+    @Test
+    fun `api 29 missing optional biometric alias falls back to device credential`() {
+        provisionApi29WithBiometric()
+        authenticator.requests.clear()
+        val biometricAlias = keys.keys.keys.single {
+            it.endsWith(".${EnvelopeKind.BIOMETRIC.serializedName}")
+        }
+        keys.keys.remove(biometricAlias)
+        val unlock = RecordingNativeResult<NativeUnlockMaterial>()
+
+        manager(apiLevel = 29).unlockWithSystemAuth("Unlock", unlock)
+
+        assertNull(unlock.error)
+        assertNotNull(unlock.value)
+        assertEquals(
+            listOf(SystemAuthenticatorMode.DEVICE_CREDENTIAL),
             authenticator.requests.map { it.mode },
         )
     }
@@ -192,8 +231,8 @@ class SecurityKeyringManagerTest {
             listOf(EnvelopeKind.DEVICE_CREDENTIAL),
             persisted.envelopes.map { it.kind },
         )
-        assertEquals(2, keys.keys.size)
-        assertEquals(0, keys.deleteCalls)
+        assertEquals(1, keys.keys.size)
+        assertEquals(1, keys.deleteCalls)
     }
 
     @Test
@@ -361,6 +400,59 @@ class SecurityKeyringManagerTest {
     }
 
     @Test
+    fun `state rejects stored security level that disagrees with the keystore`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 31)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult<NativeUnlockMaterial>(),
+        )
+        val keyset = SecurityKeysetCodec.decode(store.bytes!!)
+        val envelope = keyset.envelopes.single()
+        store.bytes = SecurityKeysetCodec.encode(
+            keyset.copy(
+                envelopes = listOf(
+                    envelope.copy(securityLevel = KeySecurityLevel.STRONG_BOX),
+                ),
+            ),
+        )
+
+        val state = manager.getSecurityState()
+
+        assertEquals(SecurityStatus.RECOVERY_REQUIRED, state.status)
+        assertEquals(KeySecurityLevel.UNKNOWN, state.securityLevel)
+    }
+
+    @Test
+    fun `api 30 keeps StrongBox keysets usable when legacy KeyInfo reports tee`() {
+        val ambiguousKeys = FakeWrappingKeyRepository(
+            generatedLevel = KeySecurityLevel.STRONG_BOX,
+            loadedLevel = KeySecurityLevel.TEE,
+        )
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = NativeKeyringManager(
+            apiLevel = 30,
+            envelopeStore = store,
+            legacyDetector = legacy,
+            wrappingKeys = ambiguousKeys,
+            authenticator = authenticator,
+            capabilities = { capabilities },
+            random = random,
+        )
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult<NativeUnlockMaterial>(),
+        )
+
+        val state = manager.getSecurityState()
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertEquals(KeySecurityLevel.UNKNOWN, state.securityLevel)
+    }
+
+    @Test
     fun `atomic persistence failure returns storage error and removes generated alias`() {
         store.failWrites = true
         val manager = manager(apiLevel = 30)
@@ -393,6 +485,59 @@ class SecurityKeyringManagerTest {
         assertNull(manager(apiLevel = 30).lock())
     }
 
+    @Test
+    fun `lock cancels an in flight authentication before keys can be delivered`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val deferredAuthenticator = DeferredSystemAuthenticator()
+        val manager = NativeKeyringManager(
+            apiLevel = 30,
+            envelopeStore = store,
+            legacyDetector = legacy,
+            wrappingKeys = keys,
+            authenticator = deferredAuthenticator,
+            capabilities = { capabilities },
+            random = random,
+        )
+        val result = RecordingNativeResult<NativeUnlockMaterial>()
+
+        manager.provisionWithSystemAuth("Create keyring", result)
+        manager.lock()
+        deferredAuthenticator.succeed()
+
+        assertEquals(1, deferredAuthenticator.cancelCalls)
+        assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, result.error?.code)
+        assertNull(result.value)
+        assertNull(store.bytes)
+    }
+
+    @Test
+    fun `late biometric cancellation after lock does not start credential fallback`() {
+        provisionApi29WithBiometric()
+        val deferredAuthenticator = DeferredSystemAuthenticator()
+        val manager = NativeKeyringManager(
+            apiLevel = 29,
+            envelopeStore = store,
+            legacyDetector = legacy,
+            wrappingKeys = keys,
+            authenticator = deferredAuthenticator,
+            capabilities = { capabilities },
+            random = random,
+        )
+        val result = RecordingNativeResult<NativeUnlockMaterial>()
+
+        manager.unlockWithSystemAuth("Unlock", result)
+        manager.lock()
+        deferredAuthenticator.fail(NativeSecurityErrorCode.AUTH_CANCELLED)
+
+        assertEquals(
+            listOf(SystemAuthenticatorMode.BIOMETRIC),
+            deferredAuthenticator.requests.map { it.mode },
+        )
+        assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, result.error?.code)
+        assertNull(result.value)
+    }
+
     private fun provisionApi29WithBiometric() {
         random.enqueue(ByteArray(16) { (it + 2).toByte() })
         random.enqueue(ByteArray(32) { it.toByte() })
@@ -419,5 +564,31 @@ class SecurityKeyringManagerTest {
 
     private fun hex(value: String): ByteArray {
         return value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+}
+
+private class DeferredSystemAuthenticator : SystemAuthenticator {
+    val requests = mutableListOf<SystemAuthRequest>()
+    var cancelCalls = 0
+    private val terminals = mutableListOf<AuthenticationTerminal>()
+
+    override fun authenticate(
+        request: SystemAuthRequest,
+        terminal: AuthenticationTerminal,
+    ) {
+        requests += request
+        terminals += terminal
+    }
+
+    override fun cancel() {
+        cancelCalls += 1
+    }
+
+    fun succeed() {
+        terminals.last().succeeded(requests.last().cipher)
+    }
+
+    fun fail(code: NativeSecurityErrorCode) {
+        terminals.last().failed(NativeSecurityException(code))
     }
 }

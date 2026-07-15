@@ -3,7 +3,6 @@ package com.example.note_secret_search.security
 import javax.crypto.Cipher
 
 internal class KeyringUnlocker(
-    private val apiLevel: Int,
     private val wrappingKeys: WrappingKeyRepository,
     private val authenticator: SystemAuthenticator,
 ) {
@@ -13,12 +12,8 @@ internal class KeyringUnlocker(
         capabilities: SystemAuthCapabilities,
         result: NativeResult<NativeUnlockMaterial>,
     ) {
-        if (apiLevel >= 30) {
-            val combined = envelope(keyset, EnvelopeKind.COMBINED)
-            if (combined == null) {
-                result.error(recoveryRequired())
-                return
-            }
+        val combined = envelope(keyset, EnvelopeKind.COMBINED)
+        if (combined != null) {
             unlockEnvelope(reason, keyset.keyId, combined, result, result::error)
             return
         }
@@ -38,8 +33,11 @@ internal class KeyringUnlocker(
             keyset.keyId,
             biometric,
             result,
-        ) { error ->
-            if (error.code == NativeSecurityErrorCode.AUTH_CANCELLED) {
+        ) fallback@{ error ->
+            if (!result.isActiveOperation()) {
+                return@fallback
+            }
+            if (shouldFallbackToDeviceCredential(error)) {
                 unlockEnvelope(
                     reason,
                     keyset.keyId,
@@ -50,6 +48,21 @@ internal class KeyringUnlocker(
             } else {
                 result.error(error)
             }
+        }
+    }
+
+    private fun shouldFallbackToDeviceCredential(
+        error: NativeSecurityException,
+    ): Boolean {
+        return when (error.code) {
+            NativeSecurityErrorCode.AUTH_CANCELLED,
+            NativeSecurityErrorCode.AUTH_LOCKOUT,
+            NativeSecurityErrorCode.KEY_INVALIDATED,
+            NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+            NativeSecurityErrorCode.RECOVERY_REQUIRED,
+            -> true
+
+            else -> false
         }
     }
 
@@ -91,6 +104,9 @@ internal class KeyringUnlocker(
                 SystemAuthRequest(reason, mode, preparedCipher),
                 object : AuthenticationTerminal {
                     override fun succeeded(cipher: Cipher?) {
+                        if (!result.isActiveOperation()) {
+                            return
+                        }
                         var masterKey: ByteArray? = null
                         try {
                             val activeCipher = cipher
@@ -116,6 +132,9 @@ internal class KeyringUnlocker(
                     }
 
                     override fun failed(error: NativeSecurityException) {
+                        if (!result.isActiveOperation()) {
+                            return
+                        }
                         onError(error)
                     }
                 },

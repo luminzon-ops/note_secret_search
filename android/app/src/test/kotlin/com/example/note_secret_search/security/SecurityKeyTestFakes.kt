@@ -34,6 +34,7 @@ internal class FakeLegacySecurityDetector(
 
 internal class FakeWrappingKeyRepository(
     private val generatedLevel: KeySecurityLevel = KeySecurityLevel.TEE,
+    private val loadedLevel: KeySecurityLevel = generatedLevel,
 ) : WrappingKeyRepository {
     val keys = linkedMapOf<String, Key>()
     var createCalls = 0
@@ -53,7 +54,7 @@ internal class FakeWrappingKeyRepository(
 
     override fun load(alias: String): WrappingKeyHandle? {
         val key = keys[alias] ?: return null
-        return TestWrappingKeyHandle(alias, generatedLevel, key) { invalidated }
+        return TestWrappingKeyHandle(alias, loadedLevel, key) { invalidated }
     }
 
     override fun delete(alias: String) {
@@ -113,6 +114,9 @@ internal class FakeSystemAuthenticator : SystemAuthenticator {
                 terminal.succeeded(request.cipher)
             }
         }
+    }
+
+    override fun cancel() {
     }
 }
 

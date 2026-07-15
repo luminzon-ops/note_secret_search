@@ -43,7 +43,7 @@ internal class KeyringProvisioner(
             masterKey,
             result,
         ) ?: return
-        val cipher = try {
+        val preparedCipher = try {
             handle.encryptionCipher()
         } catch (error: Throwable) {
             failRequired(alias, masterKey, result, error)
@@ -53,18 +53,23 @@ internal class KeyringProvisioner(
             request = SystemAuthRequest(
                 reason,
                 SystemAuthenticatorMode.COMBINED,
-                cipher,
+                preparedCipher,
             ),
             alias = alias,
             masterKey = masterKey,
             result = result,
             onSuccess = { authenticatedCipher ->
+                if (!result.isActiveOperation()) {
+                    KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                    masterKey.fill(0)
+                    return@authenticateRequired
+                }
                 val envelope = KeyringCrypto.wrap(
                     keyId,
                     kind,
                     alias,
                     handle.securityLevel,
-                    authenticatedCipher ?: cipher,
+                    authenticatedCipher ?: preparedCipher,
                     masterKey,
                 )
                 envelopeStore.write(SecurityKeysetCodec.encode(
@@ -99,6 +104,11 @@ internal class KeyringProvisioner(
             masterKey = masterKey,
             result = result,
             onSuccess = {
+                if (!result.isActiveOperation()) {
+                    KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                    masterKey.fill(0)
+                    return@authenticateRequired
+                }
                 val envelope = KeyringCrypto.wrap(
                     keyId,
                     kind,
@@ -140,7 +150,7 @@ internal class KeyringProvisioner(
             completeSuccess(keyId, masterKey, result)
             return
         }
-        val cipher = try {
+        val preparedCipher = try {
             handle.encryptionCipher()
         } catch (_: Throwable) {
             KeyringCrypto.cleanupAlias(wrappingKeys, alias)
@@ -152,17 +162,22 @@ internal class KeyringProvisioner(
                 SystemAuthRequest(
                     reason,
                     SystemAuthenticatorMode.BIOMETRIC,
-                    cipher,
+                    preparedCipher,
                 ),
                 object : AuthenticationTerminal {
-                    override fun succeeded(authenticatedCipher: Cipher?) {
+                    override fun succeeded(cipher: Cipher?) {
+                        if (!result.isActiveOperation()) {
+                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                            masterKey.fill(0)
+                            return
+                        }
                         val envelope = try {
                             KeyringCrypto.wrap(
                                 keyId,
                                 kind,
                                 alias,
                                 handle.securityLevel,
-                                authenticatedCipher ?: cipher,
+                                cipher ?: preparedCipher,
                                 masterKey,
                             )
                         } catch (_: Throwable) {
@@ -176,7 +191,9 @@ internal class KeyringProvisioner(
                                     envelopes = deviceKeyset.envelopes + envelope,
                                 ),
                             ))
-                        } catch (_: Throwable) {}
+                        } catch (_: Throwable) {
+                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                        }
                         completeSuccess(keyId, masterKey, result)
                     }
 

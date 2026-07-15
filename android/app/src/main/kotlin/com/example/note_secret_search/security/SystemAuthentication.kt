@@ -19,6 +19,8 @@ interface SystemAuthenticator {
         request: SystemAuthRequest,
         terminal: AuthenticationTerminal,
     )
+
+    fun cancel()
 }
 
 interface AuthenticationTerminal {

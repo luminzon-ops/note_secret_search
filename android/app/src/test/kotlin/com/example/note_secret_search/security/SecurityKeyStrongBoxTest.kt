@@ -1,6 +1,8 @@
 package com.example.note_secret_search.security
 
+import java.security.InvalidAlgorithmParameterException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SecurityKeyStrongBoxTest {
@@ -39,6 +41,15 @@ class SecurityKeyStrongBoxTest {
         val repository = AndroidWrappingKeyRepository(apiLevel = 30, backend = backend)
 
         repository.create("alias", WrappingKeyPolicy.COMBINED_AUTH_PER_USE)
+    }
+
+    @Test
+    fun `invalid key specification is not classified as unsupported StrongBox`() {
+        val classified = classifyKeyGenerationFailure(
+            InvalidAlgorithmParameterException("invalid auth specification"),
+        )
+
+        assertTrue(classified is KeystoreOperationFailure)
     }
 }
 

@@ -1,7 +1,5 @@
 package com.example.note_secret_search.security
 
-import java.util.concurrent.atomic.AtomicBoolean
-
 interface NativeKeyringOperations {
     fun getSecurityState(): NativeSecurityState
 
@@ -27,7 +25,8 @@ class NativeKeyringManager(
     private val capabilities: () -> SystemAuthCapabilities,
     random: RandomSource = SecureRandomSource(),
 ) : NativeKeyringOperations {
-    private val operationActive = AtomicBoolean(false)
+    private val operationLock = Any()
+    private var activeOperation: CompletingResult<*>? = null
     private val provisioner = KeyringProvisioner(
         apiLevel = apiLevel,
         envelopeStore = envelopeStore,
@@ -36,7 +35,6 @@ class NativeKeyringManager(
         random = random,
     )
     private val unlocker = KeyringUnlocker(
-        apiLevel = apiLevel,
         wrappingKeys = wrappingKeys,
         authenticator = authenticator,
     )
@@ -62,21 +60,27 @@ class NativeKeyringManager(
                 keyId = keyset.keyId,
                 auth = auth,
             )
-        val keyAvailable = try {
-            wrappingKeys.load(envelope.keyAlias) != null
+        val handle = try {
+            wrappingKeys.load(envelope.keyAlias)
         } catch (_: WrappingKeyInvalidatedException) {
-            false
+            null
         } catch (error: KeystoreOperationFailure) {
             throw NativeSecurityException(
                 NativeSecurityErrorCode.KEYSTORE_UNAVAILABLE,
                 error,
             )
         }
-        return if (keyAvailable) {
+        val resolvedSecurityLevel = handle?.let {
+            resolveSecurityLevel(
+                stored = envelope.securityLevel,
+                loaded = it.securityLevel,
+            )
+        }
+        return if (resolvedSecurityLevel != null) {
             state(
                 status = SecurityStatus.LOCKED,
                 keyId = keyset.keyId,
-                securityLevel = envelope.securityLevel,
+                securityLevel = resolvedSecurityLevel,
                 auth = auth,
             )
         } else {
@@ -86,6 +90,23 @@ class NativeKeyringManager(
                 auth = auth,
             )
         }
+    }
+
+    private fun resolveSecurityLevel(
+        stored: KeySecurityLevel,
+        loaded: KeySecurityLevel,
+    ): KeySecurityLevel? {
+        if (stored == loaded) {
+            return loaded
+        }
+        if (
+            apiLevel in 28..30 &&
+            stored == KeySecurityLevel.STRONG_BOX &&
+            loaded == KeySecurityLevel.TEE
+        ) {
+            return KeySecurityLevel.UNKNOWN
+        }
+        return null
     }
 
     override fun provisionWithSystemAuth(
@@ -144,17 +165,30 @@ class NativeKeyringManager(
         }
     }
 
-    override fun lock(): Any? = null
+    override fun lock(): Any? {
+        val operation = synchronized(operationLock) {
+            val active = activeOperation ?: return null
+            activeOperation = null
+            active
+        }
+        try {
+            authenticator.cancel()
+        } catch (_: Throwable) {
+            // The operation is still revoked even if the platform prompt is gone.
+        } finally {
+            operation.cancelLocked()
+        }
+        return null
+    }
 
     private fun requiredStateEnvelope(
         keyset: SecurityKeyset,
     ): SecurityEnvelope? {
-        val requiredKind = if (apiLevel >= 30) {
-            EnvelopeKind.COMBINED
-        } else {
-            EnvelopeKind.DEVICE_CREDENTIAL
+        return keyset.envelopes.firstOrNull {
+            it.kind == EnvelopeKind.COMBINED
+        } ?: keyset.envelopes.firstOrNull {
+            it.kind == EnvelopeKind.DEVICE_CREDENTIAL
         }
-        return keyset.envelopes.firstOrNull { it.kind == requiredKind }
     }
 
     private fun state(
@@ -183,12 +217,17 @@ class NativeKeyringManager(
             ))
             return
         }
-        if (!operationActive.compareAndSet(false, true)) {
-            result.error(NativeSecurityException(NativeSecurityErrorCode.BUSY))
-            return
-        }
-        val completing = CompletingResult(result) {
-            operationActive.set(false)
+        val completing = CompletingResult(
+            delegate = result,
+            complete = ::complete,
+            isActive = ::isActive,
+        )
+        synchronized(operationLock) {
+            if (activeOperation != null) {
+                result.error(NativeSecurityException(NativeSecurityErrorCode.BUSY))
+                return
+            }
+            activeOperation = completing
         }
         try {
             operation(completing)
@@ -203,6 +242,26 @@ class NativeKeyringManager(
         }
     }
 
+    private fun <T> complete(
+        owner: CompletingResult<T>,
+        delivery: () -> Unit,
+    ): Boolean {
+        return synchronized(operationLock) {
+            if (activeOperation !== owner) {
+                return@synchronized false
+            }
+            activeOperation = null
+            delivery()
+            true
+        }
+    }
+
+    private fun <T> isActive(owner: CompletingResult<T>): Boolean {
+        return synchronized(operationLock) {
+            activeOperation === owner
+        }
+    }
+
     companion object {
         private const val MAX_REASON_LENGTH = 200
     }
@@ -210,21 +269,37 @@ class NativeKeyringManager(
 
 internal class CompletingResult<T>(
     private val delegate: NativeResult<T>,
-    private val completed: () -> Unit,
-) : NativeResult<T> {
-    private val terminal = AtomicBoolean(false)
+    private val complete: (CompletingResult<T>, () -> Unit) -> Boolean,
+    private val isActive: (CompletingResult<T>) -> Boolean,
+) : NativeResult<T>, OperationAwareResult {
+    override fun isActiveOperation(): Boolean = isActive(this)
 
     override fun success(value: T) {
-        if (terminal.compareAndSet(false, true)) {
-            completed()
+        val delivered = complete(this) {
             delegate.success(value)
+        }
+        if (!delivered && value is NativeUnlockMaterial) {
+            value.zeroize()
         }
     }
 
     override fun error(error: NativeSecurityException) {
-        if (terminal.compareAndSet(false, true)) {
-            completed()
+        complete(this) {
             delegate.error(error)
         }
     }
+
+    fun cancelLocked() {
+        delegate.error(NativeSecurityException(
+            NativeSecurityErrorCode.AUTH_CANCELLED,
+        ))
+    }
+}
+
+internal interface OperationAwareResult {
+    fun isActiveOperation(): Boolean
+}
+
+internal fun NativeResult<*>.isActiveOperation(): Boolean {
+    return (this as? OperationAwareResult)?.isActiveOperation() ?: true
 }

@@ -19,18 +19,29 @@ class BiometricAuthenticator(
 ) : SystemAuthenticator, LegacyBiometricOperations {
     private val hostActivity = activity as FragmentActivity
     private val executor = ContextCompat.getMainExecutor(activity)
+    private var activePrompt: BiometricPrompt? = null
+    private var activeSession: Any? = null
 
     override fun authenticate(
         request: SystemAuthRequest,
         terminal: AuthenticationTerminal,
     ) {
         hostActivity.runOnUiThread {
+            activePrompt?.cancelAuthentication()
+            val session = Any()
             val dispatcher = AuthenticationResultDispatcher(terminal)
             val prompt = BiometricPrompt(
                 hostActivity,
                 executor,
-                callback(request, dispatcher),
+                callback(request, dispatcher) {
+                    if (activeSession === session) {
+                        activeSession = null
+                        activePrompt = null
+                    }
+                },
             )
+            activeSession = session
+            activePrompt = prompt
             val promptInfo = promptInfo(request)
             val cipher = request.cipher
             if (cipher == null) {
@@ -41,6 +52,15 @@ class BiometricAuthenticator(
                     BiometricPrompt.CryptoObject(cipher),
                 )
             }
+        }
+    }
+
+    override fun cancel() {
+        hostActivity.runOnUiThread {
+            val prompt = activePrompt
+            activePrompt = null
+            activeSession = null
+            prompt?.cancelAuthentication()
         }
     }
 
@@ -123,11 +143,13 @@ class BiometricAuthenticator(
     private fun callback(
         request: SystemAuthRequest,
         dispatcher: AuthenticationResultDispatcher,
+        onTerminal: () -> Unit,
     ): BiometricPrompt.AuthenticationCallback {
         return object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(
                 result: BiometricPrompt.AuthenticationResult,
             ) {
+                onTerminal()
                 dispatcher.onAuthenticationSucceeded(
                     result.cryptoObject?.cipher ?: request.cipher,
                 )
@@ -137,6 +159,7 @@ class BiometricAuthenticator(
                 errorCode: Int,
                 errString: CharSequence,
             ) {
+                onTerminal()
                 dispatcher.onAuthenticationError(mapPromptError(errorCode))
             }
 

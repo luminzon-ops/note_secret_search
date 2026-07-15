@@ -41,10 +41,6 @@ class StrongBoxUnavailableFailure(
     cause: Throwable? = null,
 ) : RuntimeException(cause)
 
-class StrongBoxUnsupportedFailure(
-    cause: Throwable? = null,
-) : RuntimeException(cause)
-
 class KeystoreOperationFailure(
     cause: Throwable? = null,
 ) : RuntimeException(cause)
@@ -67,8 +63,6 @@ class AndroidWrappingKeyRepository(
         return try {
             backend.create(alias, policy, requestStrongBox = true)
         } catch (_: StrongBoxUnavailableFailure) {
-            backend.create(alias, policy, requestStrongBox = false)
-        } catch (_: StrongBoxUnsupportedFailure) {
             backend.create(alias, policy, requestStrongBox = false)
         }
     }

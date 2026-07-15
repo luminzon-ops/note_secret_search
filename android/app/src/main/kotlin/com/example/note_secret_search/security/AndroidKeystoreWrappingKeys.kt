@@ -6,9 +6,7 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
-import java.security.InvalidAlgorithmParameterException
 import java.security.KeyStore
-import java.security.ProviderException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -32,17 +30,8 @@ class AndroidKeystoreWrappingKeyBackend(
             val key = generator.generateKey()
             val level = securityLevel(key, requestStrongBox)
             return AndroidWrappingKeyHandle(alias, level, key)
-        } catch (error: StrongBoxUnavailableException) {
-            throw StrongBoxUnavailableFailure(error)
-        } catch (error: InvalidAlgorithmParameterException) {
-            if (requestStrongBox) {
-                throw StrongBoxUnsupportedFailure(error)
-            }
-            throw KeystoreOperationFailure(error)
-        } catch (error: ProviderException) {
-            throw KeystoreOperationFailure(error)
         } catch (error: Exception) {
-            throw KeystoreOperationFailure(error)
+            throw classifyKeyGenerationFailure(error)
         }
     }
 
@@ -142,6 +131,16 @@ class AndroidKeystoreWrappingKeyBackend(
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val DEVICE_CREDENTIAL_WINDOW_SECONDS = 30
+    }
+}
+
+internal fun classifyKeyGenerationFailure(
+    error: Exception,
+): RuntimeException {
+    return if (error is StrongBoxUnavailableException) {
+        StrongBoxUnavailableFailure(error)
+    } else {
+        KeystoreOperationFailure(error)
     }
 }
 

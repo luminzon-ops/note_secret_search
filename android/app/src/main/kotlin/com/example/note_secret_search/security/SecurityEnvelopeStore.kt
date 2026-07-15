@@ -3,6 +3,7 @@ package com.example.note_secret_search.security
 import android.content.Context
 import android.util.AtomicFile
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 
 interface SecurityEnvelopeStore {
@@ -59,10 +60,7 @@ private class AndroidAtomicFileAccess(
     private val atomicFile = AtomicFile(file)
 
     override fun read(): ByteArray? {
-        if (!atomicFile.baseFile.exists()) {
-            return null
-        }
-        return atomicFile.readFully()
+        return readRecoverableAtomicFile(atomicFile::readFully)
     }
 
     override fun write(value: ByteArray) {
@@ -82,5 +80,15 @@ private class AndroidAtomicFileAccess(
         } finally {
             stream?.let(atomicFile::failWrite)
         }
+    }
+}
+
+internal fun readRecoverableAtomicFile(
+    readFully: () -> ByteArray,
+): ByteArray? {
+    return try {
+        readFully()
+    } catch (_: FileNotFoundException) {
+        null
     }
 }
