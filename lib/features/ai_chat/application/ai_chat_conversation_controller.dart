@@ -122,7 +122,9 @@ class AiChatConversationController
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     state = state.copyWith(
       currentSessionId: sessionId,
+      backendPreference: ChatBackendPreference.local,
       allowPrivateContext: session.allowPrivateContext,
+      manualItems: const <ChatContextItem>[],
       messages: messages.map(_mapStoredChatMessageToUi).toList(growable: false),
       sending: _sendingOperations.containsKey(sessionId),
       clearErrorMessage: true,

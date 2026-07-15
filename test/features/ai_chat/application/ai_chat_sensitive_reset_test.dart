@@ -43,6 +43,114 @@ const _manualItem = ChatContextItem(
 
 void main() {
   test(
+    'selectSession resets private chat choices before the next send',
+    () async {
+      final repository = _ControllableChatSessionRepository(
+        sessions: [
+          _session('session-a', allowPrivateContext: true),
+          _session('session-b', allowPrivateContext: true),
+        ],
+        messagesBySession: {
+          'session-a': [
+            _storedMessage('message-a', 'session-a', 'session A message'),
+          ],
+          'session-b': [
+            _storedMessage('message-b', 'session-b', 'session B message'),
+          ],
+        },
+      );
+      final llmEngine = _ImmediateLlmEngine();
+      final container = _buildContainer(
+        repository: repository,
+        llmEngine: llmEngine,
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.selectSession('session-a');
+      controller.setBackendPreference(ChatBackendPreference.external);
+      controller.setManualItems(const [_manualItem]);
+
+      await controller.selectSession('session-b');
+
+      expect(controller.state.currentSessionId, 'session-b');
+      expect(controller.state.allowPrivateContext, isTrue);
+      expect(controller.state.backendPreference, ChatBackendPreference.local);
+      expect(controller.state.manualItems, isEmpty);
+      expect(
+        controller.state.messages.map((message) => message.text),
+        contains('session B message'),
+      );
+
+      await controller.send('question for session B');
+
+      expect(llmEngine.lastRequest, isNotNull);
+      expect(llmEngine.lastRequest!.prompt, 'question for session B');
+      expect(llmEngine.lastRequest!.usedPrivateContext, isFalse);
+
+      controller.setBackendPreference(ChatBackendPreference.external);
+      controller.setManualItems(const [_manualItem]);
+      await controller.selectSession('session-b');
+
+      expect(controller.state.backendPreference, ChatBackendPreference.local);
+      expect(controller.state.manualItems, isEmpty);
+    },
+  );
+
+  test('automatic session restore resets private chat choices', () async {
+    final repository = _ControllableChatSessionRepository(
+      sessions: [_session('session-restored', allowPrivateContext: true)],
+      messagesBySession: {
+        'session-restored': [
+          _storedMessage(
+            'message-restored',
+            'session-restored',
+            'restored message',
+          ),
+        ],
+      },
+    );
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: _ImmediateLlmEngine(),
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(freeChatControllerProvider.notifier);
+    controller.setBackendPreference(ChatBackendPreference.external);
+    controller.setManualItems(const [_manualItem]);
+
+    await controller.restoreSessionIfNeeded();
+
+    expect(controller.state.currentSessionId, 'session-restored');
+    expect(controller.state.allowPrivateContext, isTrue);
+    expect(controller.state.backendPreference, ChatBackendPreference.local);
+    expect(controller.state.manualItems, isEmpty);
+  });
+
+  test('failed selection preserves current private chat choices', () async {
+    final repository = _ControllableChatSessionRepository(
+      sessions: [_session('session-current', allowPrivateContext: true)],
+    );
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: _ImmediateLlmEngine(),
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(freeChatControllerProvider.notifier);
+    await controller.selectSession('session-current');
+    controller.setBackendPreference(ChatBackendPreference.external);
+    controller.setManualItems(const [_manualItem]);
+
+    await controller.selectSession('missing-session');
+
+    expect(controller.state.currentSessionId, 'session-current');
+    expect(controller.state.backendPreference, ChatBackendPreference.external);
+    expect(controller.state.manualItems, const [_manualItem]);
+  });
+
+  test(
     'startNewSession resets privacy, messages, selection, errors, and restoration',
     () async {
       final repository = _ControllableChatSessionRepository(

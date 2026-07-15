@@ -140,8 +140,11 @@ class _ControllableChatSessionRepository implements ChatSessionRepository {
 }
 
 class _ImmediateLlmEngine implements LlmEngine {
+  LlmInferenceRequest? lastRequest;
+
   @override
   Future<LlmInferenceResponse> generate(LlmInferenceRequest request) async {
+    lastRequest = request;
     return LlmInferenceResponse(
       text: 'answer',
       finishReason: 'stop',
