@@ -9,7 +9,9 @@ import java.io.File
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -66,5 +68,25 @@ class SecurityEnvelopeStoreInstrumentationTest {
         assertArrayEquals(committedEnvelope, store.read())
         assertArrayEquals(committedEnvelope, keysetFile.readBytes())
         assertFalse("Expected recovery to consume the backup.", backupFile.exists())
+    }
+
+    @Test
+    fun readFailsClosedWhenOnlyAnInterruptedNewFileRemains() {
+        val pendingFile = File("${keysetFile.path}.new")
+        assertTrue(pendingFile.parentFile?.mkdirs() == true)
+        pendingFile.writeText(
+            """{"version":2,"keyId":"interrupted"}""",
+            Charsets.UTF_8,
+        )
+
+        val error = assertThrows(NativeSecurityException::class.java) {
+            store.read()
+        }
+
+        assertEquals(
+            NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            error.code,
+        )
+        assertTrue("The pending recovery file must be preserved.", pendingFile.isFile)
     }
 }

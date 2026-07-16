@@ -4,6 +4,7 @@ import java.io.FileNotFoundException
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class SecurityEnvelopeStoreRecoveryTest {
@@ -23,10 +24,40 @@ class SecurityEnvelopeStoreRecoveryTest {
 
     @Test
     fun `read treats a missing base and backup as unprovisioned`() {
-        val result = readRecoverableAtomicFile {
-            throw FileNotFoundException("missing")
-        }
+        val result = readRecoverableAtomicFile(
+            stateFilesExist = { false },
+            readFully = { throw FileNotFoundException("missing") },
+        )
 
         assertNull(result)
+    }
+
+    @Test
+    fun `read fails closed when recovery material exists but cannot be opened`() {
+        val error = assertThrows(NativeSecurityException::class.java) {
+            readRecoverableAtomicFile(
+                stateFilesExist = { true },
+                readFully = { throw FileNotFoundException("recovery failed") },
+            )
+        }
+
+        assertTrue(error.code == NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE)
+    }
+
+    @Test
+    fun `read fails closed when recovery material disappears during the read`() {
+        var recoveryMaterialExists = true
+
+        val error = assertThrows(NativeSecurityException::class.java) {
+            readRecoverableAtomicFile(
+                stateFilesExist = { recoveryMaterialExists },
+                readFully = {
+                    recoveryMaterialExists = false
+                    throw FileNotFoundException("raced with cleanup")
+                },
+            )
+        }
+
+        assertTrue(error.code == NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE)
     }
 }

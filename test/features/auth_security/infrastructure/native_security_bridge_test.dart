@@ -148,9 +148,7 @@ void main() {
     final fieldKey = Uint8List.fromList(List<int>.generate(32, (i) => 255 - i));
     messenger.setMockMethodCallHandler(channel, (call) async {
       expect(call.method, 'provisionWithSystemAuth');
-      expect(call.arguments, <String, Object?>{
-        'reason': '启用安全存储',
-      });
+      expect(call.arguments, <String, Object?>{'reason': '启用安全存储'});
       return <String, Object?>{
         'keyId': _validKeyId,
         'databaseKey': databaseKey,
@@ -240,6 +238,22 @@ void main() {
         throwsFormatException,
       );
     }
+  });
+
+  test('invalid unlock metadata clears received key arrays', () {
+    final databaseKey = Uint8List.fromList(List<int>.filled(32, 7));
+    final fieldKey = Uint8List.fromList(List<int>.filled(32, 9));
+    final payload = <String, Object?>{
+      'keyId': 'invalid-key-id',
+      'databaseKey': databaseKey,
+      'fieldKey': fieldKey,
+      'unlockMethod': 'system',
+    };
+
+    expect(() => parseNativeUnlockResult(payload), throwsFormatException);
+
+    expect(databaseKey, everyElement(0));
+    expect(fieldKey, everyElement(0));
   });
 
   test('unlock result rejects non-Uint8List key material', () async {

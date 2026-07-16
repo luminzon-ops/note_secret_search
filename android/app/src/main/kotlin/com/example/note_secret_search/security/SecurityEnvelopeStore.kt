@@ -55,12 +55,19 @@ private interface AtomicFileAccess {
 }
 
 private class AndroidAtomicFileAccess(
-    file: File,
+    private val file: File,
 ) : AtomicFileAccess {
     private val atomicFile = AtomicFile(file)
 
     override fun read(): ByteArray? {
-        return readRecoverableAtomicFile(atomicFile::readFully)
+        return readRecoverableAtomicFile(
+            stateFilesExist = {
+                file.exists() ||
+                    File("${file.path}.bak").exists() ||
+                    File("${file.path}.new").exists()
+            },
+            readFully = atomicFile::readFully,
+        )
     }
 
     override fun write(value: ByteArray) {
@@ -84,11 +91,20 @@ private class AndroidAtomicFileAccess(
 }
 
 internal fun readRecoverableAtomicFile(
+    stateFilesExist: () -> Boolean = { false },
     readFully: () -> ByteArray,
 ): ByteArray? {
+    val recoveryMaterialExistedBeforeRead = stateFilesExist()
     return try {
         readFully()
-    } catch (_: FileNotFoundException) {
-        null
+    } catch (error: FileNotFoundException) {
+        if (!recoveryMaterialExistedBeforeRead && !stateFilesExist()) {
+            null
+        } else {
+            throw NativeSecurityException(
+                NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+                error,
+            )
+        }
     }
 }

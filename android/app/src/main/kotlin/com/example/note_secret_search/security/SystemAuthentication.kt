@@ -1,5 +1,6 @@
 package com.example.note_secret_search.security
 
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 
 enum class SystemAuthenticatorMode {
@@ -12,6 +13,7 @@ data class SystemAuthRequest(
     val reason: String,
     val mode: SystemAuthenticatorMode,
     val cipher: Cipher? = null,
+    val operationId: Long = 0,
 )
 
 interface SystemAuthenticator {
@@ -20,7 +22,7 @@ interface SystemAuthenticator {
         terminal: AuthenticationTerminal,
     )
 
-    fun cancel()
+    fun cancel(operationId: Long)
 }
 
 interface AuthenticationTerminal {
@@ -42,8 +44,12 @@ enum class AuthPromptError {
 class AuthenticationResultDispatcher(
     private val terminal: AuthenticationTerminal,
 ) {
+    private val completed = AtomicBoolean(false)
+
     fun onAuthenticationSucceeded(cipher: Cipher?) {
-        terminal.succeeded(cipher)
+        if (completed.compareAndSet(false, true)) {
+            terminal.succeeded(cipher)
+        }
     }
 
     fun onAuthenticationError(error: AuthPromptError) {
@@ -62,7 +68,9 @@ class AuthenticationResultDispatcher(
 
             AuthPromptError.OTHER -> NativeSecurityErrorCode.AUTH_FAILED
         }
-        terminal.failed(NativeSecurityException(code))
+        if (completed.compareAndSet(false, true)) {
+            terminal.failed(NativeSecurityException(code))
+        }
     }
 
     fun onAuthenticationFailed() {

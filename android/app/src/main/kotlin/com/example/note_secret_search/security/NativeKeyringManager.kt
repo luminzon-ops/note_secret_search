@@ -27,6 +27,7 @@ class NativeKeyringManager(
 ) : NativeKeyringOperations {
     private val operationLock = Any()
     private var activeOperation: CompletingResult<*>? = null
+    private var nextOperationId = 1L
     private val provisioner = KeyringProvisioner(
         apiLevel = apiLevel,
         envelopeStore = envelopeStore,
@@ -39,23 +40,29 @@ class NativeKeyringManager(
         authenticator = authenticator,
     )
 
-    override fun getSecurityState(): NativeSecurityState {
+    override fun getSecurityState(): NativeSecurityState = synchronized(operationLock) {
         val auth = capabilities()
         if (legacyDetector.hasLegacyPassword()) {
-            return state(
+            return@synchronized state(
                 status = SecurityStatus.LEGACY_MIGRATION_REQUIRED,
                 auth = auth,
             )
         }
         val encoded = envelopeStore.read()
-            ?: return state(SecurityStatus.UNPROVISIONED, auth = auth)
+            ?: return@synchronized state(
+                SecurityStatus.UNPROVISIONED,
+                auth = auth,
+            )
         val keyset = try {
             SecurityKeysetCodec.decode(encoded)
         } catch (_: NativeSecurityException) {
-            return state(SecurityStatus.RECOVERY_REQUIRED, auth = auth)
+            return@synchronized state(
+                SecurityStatus.RECOVERY_REQUIRED,
+                auth = auth,
+            )
         }
         val envelope = requiredStateEnvelope(keyset)
-            ?: return state(
+            ?: return@synchronized state(
                 SecurityStatus.RECOVERY_REQUIRED,
                 keyId = keyset.keyId,
                 auth = auth,
@@ -76,7 +83,7 @@ class NativeKeyringManager(
                 loaded = it.securityLevel,
             )
         }
-        return if (resolvedSecurityLevel != null) {
+        if (resolvedSecurityLevel != null) {
             state(
                 status = SecurityStatus.LOCKED,
                 keyId = keyset.keyId,
@@ -171,12 +178,11 @@ class NativeKeyringManager(
             activeOperation = null
             active
         }
+        operation.cancelLocked()
         try {
-            authenticator.cancel()
+            authenticator.cancel(operation.operationId)
         } catch (_: Throwable) {
-            // The operation is still revoked even if the platform prompt is gone.
-        } finally {
-            operation.cancelLocked()
+            // The operation is already revoked and its sensitive buffers cleared.
         }
         return null
     }
@@ -217,20 +223,26 @@ class NativeKeyringManager(
             ))
             return
         }
-        val completing = CompletingResult(
-            delegate = result,
-            complete = ::complete,
-            isActive = ::isActive,
-        )
+        lateinit var completing: CompletingResult<T>
         synchronized(operationLock) {
             if (activeOperation != null) {
                 result.error(NativeSecurityException(NativeSecurityErrorCode.BUSY))
                 return
             }
+            completing = CompletingResult(
+                operationId = nextOperationId++,
+                delegate = result,
+                complete = ::complete,
+                isActive = ::isActive,
+                registerCleanupDelegate = ::registerCancellationCleanup,
+                runIfActiveDelegate = ::runIfActive,
+            )
             activeOperation = completing
         }
         try {
-            operation(completing)
+            runIfActive(completing) {
+                operation(completing)
+            }
         } catch (error: Throwable) {
             completing.error(
                 error as? NativeSecurityException
@@ -245,14 +257,19 @@ class NativeKeyringManager(
     private fun <T> complete(
         owner: CompletingResult<T>,
         delivery: () -> Unit,
-    ): Boolean {
+    ): CompletionOutcome {
         return synchronized(operationLock) {
             if (activeOperation !== owner) {
-                return@synchronized false
+                return@synchronized CompletionOutcome.INACTIVE
             }
             activeOperation = null
-            delivery()
-            true
+            owner.discardCancellationCleanups()
+            try {
+                delivery()
+                CompletionOutcome.DELIVERED
+            } catch (_: Throwable) {
+                CompletionOutcome.DELIVERY_FAILED
+            }
         }
     }
 
@@ -262,23 +279,68 @@ class NativeKeyringManager(
         }
     }
 
+    private fun <T> registerCancellationCleanup(
+        owner: CompletingResult<T>,
+        cleanup: () -> Unit,
+    ): Boolean {
+        return synchronized(operationLock) {
+            if (activeOperation !== owner) {
+                return@synchronized false
+            }
+            owner.addCancellationCleanup(cleanup)
+            true
+        }
+    }
+
+    private fun <T> runIfActive(
+        owner: CompletingResult<T>,
+        operation: () -> Unit,
+    ): Boolean {
+        return synchronized(operationLock) {
+            if (activeOperation !== owner) {
+                return@synchronized false
+            }
+            operation()
+            true
+        }
+    }
+
     companion object {
         private const val MAX_REASON_LENGTH = 200
     }
 }
 
 internal class CompletingResult<T>(
+    override val operationId: Long,
     private val delegate: NativeResult<T>,
-    private val complete: (CompletingResult<T>, () -> Unit) -> Boolean,
+    private val complete: (
+        CompletingResult<T>,
+        () -> Unit,
+    ) -> CompletionOutcome,
     private val isActive: (CompletingResult<T>) -> Boolean,
+    private val registerCleanupDelegate: (
+        CompletingResult<T>,
+        () -> Unit,
+    ) -> Boolean,
+    private val runIfActiveDelegate: (CompletingResult<T>, () -> Unit) -> Boolean,
 ) : NativeResult<T>, OperationAwareResult {
+    private val cancellationCleanups = mutableListOf<() -> Unit>()
+
     override fun isActiveOperation(): Boolean = isActive(this)
 
+    override fun registerCancellationCleanup(cleanup: () -> Unit): Boolean {
+        return registerCleanupDelegate(this, cleanup)
+    }
+
+    override fun runIfActive(operation: () -> Unit): Boolean {
+        return runIfActiveDelegate(this, operation)
+    }
+
     override fun success(value: T) {
-        val delivered = complete(this) {
+        val outcome = complete(this) {
             delegate.success(value)
         }
-        if (!delivered && value is NativeUnlockMaterial) {
+        if (outcome != CompletionOutcome.DELIVERED && value is NativeUnlockMaterial) {
             value.zeroize()
         }
     }
@@ -290,16 +352,69 @@ internal class CompletingResult<T>(
     }
 
     fun cancelLocked() {
-        delegate.error(NativeSecurityException(
-            NativeSecurityErrorCode.AUTH_CANCELLED,
-        ))
+        val cleanups = cancellationCleanups.toList()
+        cancellationCleanups.clear()
+        cleanups.forEach { cleanup ->
+            try {
+                cleanup()
+            } catch (_: Throwable) {
+                // Continue clearing the remaining operation-owned material.
+            }
+        }
+        try {
+            delegate.error(NativeSecurityException(
+                NativeSecurityErrorCode.AUTH_CANCELLED,
+            ))
+        } catch (_: Throwable) {
+            // Transport failures must not skip prompt cancellation.
+        }
+    }
+
+    fun addCancellationCleanup(cleanup: () -> Unit) {
+        cancellationCleanups += cleanup
+    }
+
+    fun discardCancellationCleanups() {
+        cancellationCleanups.clear()
     }
 }
 
+internal enum class CompletionOutcome {
+    INACTIVE,
+    DELIVERED,
+    DELIVERY_FAILED,
+}
+
 internal interface OperationAwareResult {
+    val operationId: Long
+
     fun isActiveOperation(): Boolean
+
+    fun registerCancellationCleanup(cleanup: () -> Unit): Boolean
+
+    fun runIfActive(operation: () -> Unit): Boolean
 }
 
 internal fun NativeResult<*>.isActiveOperation(): Boolean {
     return (this as? OperationAwareResult)?.isActiveOperation() ?: true
+}
+
+internal fun NativeResult<*>.operationId(): Long {
+    return (this as? OperationAwareResult)?.operationId ?: 0
+}
+
+internal fun NativeResult<*>.registerCancellationCleanup(
+    cleanup: () -> Unit,
+): Boolean {
+    return (this as? OperationAwareResult)
+        ?.registerCancellationCleanup(cleanup)
+        ?: true
+}
+
+internal fun NativeResult<*>.runIfActive(operation: () -> Unit): Boolean {
+    return (this as? OperationAwareResult)?.runIfActive(operation)
+        ?: run {
+            operation()
+            true
+        }
 }

@@ -9,6 +9,8 @@ import androidx.fragment.app.FragmentActivity
 import com.example.note_secret_search.security.AuthPromptError
 import com.example.note_secret_search.security.AuthenticationResultDispatcher
 import com.example.note_secret_search.security.AuthenticationTerminal
+import com.example.note_secret_search.security.NativeSecurityErrorCode
+import com.example.note_secret_search.security.NativeSecurityException
 import com.example.note_secret_search.security.SystemAuthRequest
 import com.example.note_secret_search.security.SystemAuthenticator
 import com.example.note_secret_search.security.SystemAuthenticatorMode
@@ -19,48 +21,65 @@ class BiometricAuthenticator(
 ) : SystemAuthenticator, LegacyBiometricOperations {
     private val hostActivity = activity as FragmentActivity
     private val executor = ContextCompat.getMainExecutor(activity)
+    private val sessions = BiometricAuthenticationSessionGate()
     private var activePrompt: BiometricPrompt? = null
-    private var activeSession: Any? = null
 
     override fun authenticate(
         request: SystemAuthRequest,
         terminal: AuthenticationTerminal,
     ) {
         hostActivity.runOnUiThread {
-            activePrompt?.cancelAuthentication()
-            val session = Any()
             val dispatcher = AuthenticationResultDispatcher(terminal)
-            val prompt = BiometricPrompt(
-                hostActivity,
-                executor,
-                callback(request, dispatcher) {
-                    if (activeSession === session) {
-                        activeSession = null
-                        activePrompt = null
-                    }
-                },
-            )
-            activeSession = session
-            activePrompt = prompt
-            val promptInfo = promptInfo(request)
-            val cipher = request.cipher
-            if (cipher == null) {
-                prompt.authenticate(promptInfo)
-            } else {
-                prompt.authenticate(
-                    promptInfo,
-                    BiometricPrompt.CryptoObject(cipher),
+            val session = sessions.begin(request.operationId) {
+                dispatcher.onAuthenticationError(AuthPromptError.SYSTEM_CANCELED)
+            }
+            if (session == null) {
+                terminal.failed(NativeSecurityException(NativeSecurityErrorCode.BUSY))
+                return@runOnUiThread
+            }
+            try {
+                val prompt = BiometricPrompt(
+                    hostActivity,
+                    executor,
+                    callback(request, dispatcher) {
+                        if (sessions.complete(session)) {
+                            activePrompt = null
+                        }
+                    },
+                )
+                activePrompt = prompt
+                val promptInfo = promptInfo(request)
+                val cipher = request.cipher
+                if (cipher == null) {
+                    prompt.authenticate(promptInfo)
+                } else {
+                    prompt.authenticate(
+                        promptInfo,
+                        BiometricPrompt.CryptoObject(cipher),
+                    )
+                }
+            } catch (error: Throwable) {
+                if (sessions.complete(session)) {
+                    activePrompt = null
+                }
+                terminal.failed(
+                    error as? NativeSecurityException
+                        ?: NativeSecurityException(
+                            NativeSecurityErrorCode.AUTH_FAILED,
+                            error,
+                        ),
                 )
             }
         }
     }
 
-    override fun cancel() {
+    override fun cancel(operationId: Long) {
         hostActivity.runOnUiThread {
-            val prompt = activePrompt
-            activePrompt = null
-            activeSession = null
-            prompt?.cancelAuthentication()
+            sessions.cancel(operationId) {
+                val prompt = activePrompt
+                activePrompt = null
+                prompt?.cancelAuthentication()
+            }
         }
     }
 
@@ -181,5 +200,65 @@ class BiometricAuthenticator(
                 AuthPromptError.NO_DEVICE_CREDENTIAL
             else -> AuthPromptError.OTHER
         }
+    }
+}
+
+internal data class BiometricAuthenticationSession(
+    val operationId: Long,
+    val onCancel: () -> Unit,
+    val token: Any = Any(),
+)
+
+internal class BiometricAuthenticationSessionGate {
+    private val lock = Any()
+    private var active: BiometricAuthenticationSession? = null
+
+    fun begin(
+        operationId: Long,
+        onCancel: () -> Unit = {},
+    ): BiometricAuthenticationSession? {
+        return synchronized(lock) {
+            if (active != null) {
+                return@synchronized null
+            }
+            BiometricAuthenticationSession(operationId, onCancel).also {
+                active = it
+            }
+        }
+    }
+
+    fun complete(session: BiometricAuthenticationSession): Boolean {
+        return synchronized(lock) {
+            if (active !== session) {
+                return@synchronized false
+            }
+            active = null
+            true
+        }
+    }
+
+    fun cancel(
+        operationId: Long,
+        beforeNotify: () -> Unit = {},
+    ): Boolean {
+        val session = synchronized(lock) {
+            if (active?.operationId != operationId) {
+                return false
+            }
+            val claimed = active
+            active = null
+            claimed
+        }
+        try {
+            beforeNotify()
+        } catch (_: Throwable) {
+            // A detached vendor prompt must not block app-side cancellation.
+        }
+        try {
+            session?.onCancel?.invoke()
+        } catch (_: Throwable) {
+            // Result transports may already be gone during activity teardown.
+        }
+        return true
     }
 }

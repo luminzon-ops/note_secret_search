@@ -41,6 +41,7 @@ internal class FakeWrappingKeyRepository(
     var deleteCalls = 0
     var invalidated = false
     var failPolicy: WrappingKeyPolicy? = null
+    var failAfterCreatePolicy: WrappingKeyPolicy? = null
 
     override fun create(alias: String, policy: WrappingKeyPolicy): WrappingKeyHandle {
         createCalls += 1
@@ -49,6 +50,9 @@ internal class FakeWrappingKeyRepository(
         }
         val key = SecretKeySpec(ByteArray(32) { (it + createCalls).toByte() }, "AES")
         keys[alias] = key
+        if (policy == failAfterCreatePolicy) {
+            throw KeystoreOperationFailure()
+        }
         return TestWrappingKeyHandle(alias, generatedLevel, key) { invalidated }
     }
 
@@ -116,7 +120,7 @@ internal class FakeSystemAuthenticator : SystemAuthenticator {
         }
     }
 
-    override fun cancel() {
+    override fun cancel(operationId: Long) {
     }
 }
 

@@ -101,41 +101,44 @@ internal class KeyringUnlocker(
         }
         try {
             authenticator.authenticate(
-                SystemAuthRequest(reason, mode, preparedCipher),
+                SystemAuthRequest(
+                    reason,
+                    mode,
+                    preparedCipher,
+                    result.operationId(),
+                ),
                 object : AuthenticationTerminal {
                     override fun succeeded(cipher: Cipher?) {
-                        if (!result.isActiveOperation()) {
-                            return
-                        }
-                        var masterKey: ByteArray? = null
-                        try {
-                            val activeCipher = cipher
-                                ?: handle.decryptionCipher(envelope.nonce)
-                            masterKey = KeyringCrypto.unwrap(
-                                keyId,
-                                envelope,
-                                activeCipher,
-                            )
-                            if (masterKey.size != KeyringCrypto.MASTER_KEY_BYTES) {
-                                throw NativeSecurityException(
-                                    NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                        result.runIfActive {
+                            var masterKey: ByteArray? = null
+                            try {
+                                val activeCipher = cipher
+                                    ?: handle.decryptionCipher(envelope.nonce)
+                                masterKey = KeyringCrypto.unwrap(
+                                    keyId,
+                                    envelope,
+                                    activeCipher,
                                 )
+                                if (masterKey.size != KeyringCrypto.MASTER_KEY_BYTES) {
+                                    throw NativeSecurityException(
+                                        NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                                    )
+                                }
+                                result.success(
+                                    KeyringCrypto.deriveMaterial(keyId, masterKey),
+                                )
+                            } catch (error: Throwable) {
+                                onError(KeyringCrypto.mapUnlockError(error))
+                            } finally {
+                                masterKey?.fill(0)
                             }
-                            result.success(
-                                KeyringCrypto.deriveMaterial(keyId, masterKey),
-                            )
-                        } catch (error: Throwable) {
-                            onError(KeyringCrypto.mapUnlockError(error))
-                        } finally {
-                            masterKey?.fill(0)
                         }
                     }
 
                     override fun failed(error: NativeSecurityException) {
-                        if (!result.isActiveOperation()) {
-                            return
+                        result.runIfActive {
+                            onError(error)
                         }
-                        onError(error)
                     }
                 },
             )

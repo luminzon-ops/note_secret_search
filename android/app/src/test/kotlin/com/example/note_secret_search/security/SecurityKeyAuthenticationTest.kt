@@ -49,20 +49,35 @@ class SecurityKeyAuthenticationTest {
             terminal.error?.code,
         )
     }
+
+    @Test
+    fun `only the first terminal authentication result is delivered`() {
+        val terminal = RecordingAuthTerminal()
+        val dispatcher = AuthenticationResultDispatcher(terminal)
+
+        dispatcher.onAuthenticationSucceeded(null)
+        dispatcher.onAuthenticationError(AuthPromptError.SYSTEM_CANCELED)
+
+        assertEquals(1, terminal.completionCount)
+        assertNull(terminal.error)
+    }
 }
 
 private class RecordingAuthTerminal : AuthenticationTerminal {
     var completed = false
+    var completionCount = 0
     var cipher: javax.crypto.Cipher? = null
     var error: NativeSecurityException? = null
 
     override fun succeeded(cipher: javax.crypto.Cipher?) {
         completed = true
+        completionCount += 1
         this.cipher = cipher
     }
 
     override fun failed(error: NativeSecurityException) {
         completed = true
+        completionCount += 1
         this.error = error
     }
 }

@@ -12,9 +12,7 @@ abstract interface class NativeSecurityBridge {
     String reason = '启用安全存储',
   });
 
-  Future<NativeUnlockResult> unlockWithSystemAuth({
-    String reason = '解锁保险库',
-  });
+  Future<NativeUnlockResult> unlockWithSystemAuth({String reason = '解锁保险库'});
 
   Future<void> lock();
 
@@ -81,7 +79,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
       'provisionWithSystemAuth',
       <String, Object?>{'reason': reason},
     );
-    return _parseUnlockResult(payload);
+    return parseNativeUnlockResult(payload);
   }
 
   @override
@@ -92,7 +90,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
       'unlockWithSystemAuth',
       <String, Object?>{'reason': reason},
     );
-    return _parseUnlockResult(payload);
+    return parseNativeUnlockResult(payload);
   }
 
   @override
@@ -157,8 +155,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
 NativeSecurityStatus _parseSecurityStatus(Object? value) {
   return switch (value) {
     'unprovisioned' => NativeSecurityStatus.unprovisioned,
-    'legacyMigrationRequired' =>
-      NativeSecurityStatus.legacyMigrationRequired,
+    'legacyMigrationRequired' => NativeSecurityStatus.legacyMigrationRequired,
     'locked' => NativeSecurityStatus.locked,
     'recoveryRequired' => NativeSecurityStatus.recoveryRequired,
     _ => throw const FormatException('Unknown native security status.'),
@@ -175,7 +172,7 @@ KeySecurityLevel _parseSecurityLevel(Object? value) {
   };
 }
 
-NativeUnlockResult _parseUnlockResult(Object? payload) {
+NativeUnlockResult parseNativeUnlockResult(Object? payload) {
   if (payload is! Map) {
     throw const FormatException('Invalid native unlock payload.');
   }
@@ -184,20 +181,32 @@ NativeUnlockResult _parseUnlockResult(Object? payload) {
   final databaseKey = payload['databaseKey'];
   final fieldKey = payload['fieldKey'];
   final unlockMethod = payload['unlockMethod'];
-  if (databaseKey is! Uint8List ||
-      fieldKey is! Uint8List ||
-      databaseKey.length != 32 ||
-      fieldKey.length != 32 ||
-      unlockMethod != 'system') {
-    throw const FormatException('Invalid native unlock payload.');
-  }
+  try {
+    if (databaseKey is! Uint8List ||
+        fieldKey is! Uint8List ||
+        databaseKey.length != 32 ||
+        fieldKey.length != 32 ||
+        unlockMethod != 'system') {
+      throw const FormatException('Invalid native unlock payload.');
+    }
 
-  return NativeUnlockResult(
-    keyId: _parseKeyId(keyId, requiredForPayload: true)!,
-    databaseKey: databaseKey,
-    fieldKey: fieldKey,
-    unlockMethod: 'system',
-  );
+    return NativeUnlockResult(
+      keyId: _parseKeyId(keyId, requiredForPayload: true)!,
+      databaseKey: databaseKey,
+      fieldKey: fieldKey,
+      unlockMethod: 'system',
+    );
+  } catch (_) {
+    _clearReceivedKey(databaseKey);
+    _clearReceivedKey(fieldKey);
+    rethrow;
+  }
+}
+
+void _clearReceivedKey(Object? value) {
+  if (value is Uint8List) {
+    value.fillRange(0, value.length, 0);
+  }
 }
 
 String? _parseKeyId(Object? value, {required bool requiredForPayload}) {

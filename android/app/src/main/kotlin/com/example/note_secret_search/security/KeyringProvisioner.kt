@@ -16,6 +16,29 @@ internal class KeyringProvisioner(
     ) {
         val keyId = KeyringCrypto.randomUuid(random)
         val masterKey = random.bytes(KeyringCrypto.MASTER_KEY_BYTES)
+        val generatedAliases = if (apiLevel >= 30) {
+            listOf(KeyringCrypto.alias(keyId, EnvelopeKind.COMBINED))
+        } else {
+            buildList {
+                add(KeyringCrypto.alias(keyId, EnvelopeKind.DEVICE_CREDENTIAL))
+                if (capabilities.strongBiometricAvailable) {
+                    add(KeyringCrypto.alias(keyId, EnvelopeKind.BIOMETRIC))
+                }
+            }
+        }
+        if (!result.registerCancellationCleanup {
+                generatedAliases.forEach {
+                    KeyringCrypto.cleanupAlias(wrappingKeys, it)
+                }
+                masterKey.fill(0)
+            }
+        ) {
+            generatedAliases.forEach {
+                KeyringCrypto.cleanupAlias(wrappingKeys, it)
+            }
+            masterKey.fill(0)
+            return
+        }
         if (apiLevel >= 30) {
             provisionCombined(reason, keyId, masterKey, result)
         } else {
@@ -54,6 +77,7 @@ internal class KeyringProvisioner(
                 reason,
                 SystemAuthenticatorMode.COMBINED,
                 preparedCipher,
+                result.operationId(),
             ),
             alias = alias,
             masterKey = masterKey,
@@ -72,10 +96,12 @@ internal class KeyringProvisioner(
                     authenticatedCipher ?: preparedCipher,
                     masterKey,
                 )
-                envelopeStore.write(SecurityKeysetCodec.encode(
+                completeSuccess(
+                    keyId,
+                    masterKey,
                     SecurityKeyset(keyId, listOf(envelope)),
-                ))
-                completeSuccess(keyId, masterKey, result)
+                    result,
+                )
             },
         )
     }
@@ -99,6 +125,7 @@ internal class KeyringProvisioner(
             request = SystemAuthRequest(
                 reason,
                 SystemAuthenticatorMode.DEVICE_CREDENTIAL,
+                operationId = result.operationId(),
             ),
             alias = alias,
             masterKey = masterKey,
@@ -118,7 +145,6 @@ internal class KeyringProvisioner(
                     masterKey,
                 )
                 val deviceKeyset = SecurityKeyset(keyId, listOf(envelope))
-                envelopeStore.write(SecurityKeysetCodec.encode(deviceKeyset))
                 if (strongBiometricAvailable) {
                     provisionOptionalBiometric(
                         reason,
@@ -128,7 +154,7 @@ internal class KeyringProvisioner(
                         result,
                     )
                 } else {
-                    completeSuccess(keyId, masterKey, result)
+                    completeSuccess(keyId, masterKey, deviceKeyset, result)
                 }
             },
         )
@@ -147,14 +173,14 @@ internal class KeyringProvisioner(
             wrappingKeys.create(alias, WrappingKeyPolicy.BIOMETRIC_AUTH_PER_USE)
         } catch (_: Throwable) {
             KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-            completeSuccess(keyId, masterKey, result)
+            completeSuccess(keyId, masterKey, deviceKeyset, result)
             return
         }
         val preparedCipher = try {
             handle.encryptionCipher()
         } catch (_: Throwable) {
             KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-            completeSuccess(keyId, masterKey, result)
+            completeSuccess(keyId, masterKey, deviceKeyset, result)
             return
         }
         try {
@@ -163,49 +189,60 @@ internal class KeyringProvisioner(
                     reason,
                     SystemAuthenticatorMode.BIOMETRIC,
                     preparedCipher,
+                    result.operationId(),
                 ),
                 object : AuthenticationTerminal {
                     override fun succeeded(cipher: Cipher?) {
-                        if (!result.isActiveOperation()) {
-                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-                            masterKey.fill(0)
-                            return
-                        }
-                        val envelope = try {
-                            KeyringCrypto.wrap(
+                        result.runIfActive {
+                            val envelope = try {
+                                KeyringCrypto.wrap(
+                                    keyId,
+                                    kind,
+                                    alias,
+                                    handle.securityLevel,
+                                    cipher ?: preparedCipher,
+                                    masterKey,
+                                )
+                            } catch (_: Throwable) {
+                                KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                                completeSuccess(
+                                    keyId,
+                                    masterKey,
+                                    deviceKeyset,
+                                    result,
+                                )
+                                return@runIfActive
+                            }
+                            completeSuccess(
                                 keyId,
-                                kind,
-                                alias,
-                                handle.securityLevel,
-                                cipher ?: preparedCipher,
                                 masterKey,
-                            )
-                        } catch (_: Throwable) {
-                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-                            completeSuccess(keyId, masterKey, result)
-                            return
-                        }
-                        try {
-                            envelopeStore.write(SecurityKeysetCodec.encode(
                                 deviceKeyset.copy(
                                     envelopes = deviceKeyset.envelopes + envelope,
                                 ),
-                            ))
-                        } catch (_: Throwable) {
-                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                                result,
+                                fallbackKeyset = deviceKeyset,
+                            )
                         }
-                        completeSuccess(keyId, masterKey, result)
                     }
 
                     override fun failed(error: NativeSecurityException) {
-                        KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-                        completeSuccess(keyId, masterKey, result)
+                        result.runIfActive {
+                            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                            completeSuccess(
+                                keyId,
+                                masterKey,
+                                deviceKeyset,
+                                result,
+                            )
+                        }
                     }
                 },
             )
         } catch (_: Throwable) {
-            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
-            completeSuccess(keyId, masterKey, result)
+            result.runIfActive {
+                KeyringCrypto.cleanupAlias(wrappingKeys, alias)
+                completeSuccess(keyId, masterKey, deviceKeyset, result)
+            }
         }
     }
 
@@ -218,6 +255,7 @@ internal class KeyringProvisioner(
         return try {
             wrappingKeys.create(alias, policy)
         } catch (error: Throwable) {
+            KeyringCrypto.cleanupAlias(wrappingKeys, alias)
             masterKey.fill(0)
             result.error(KeyringCrypto.mapKeyError(error))
             null
@@ -236,20 +274,26 @@ internal class KeyringProvisioner(
                 request,
                 object : AuthenticationTerminal {
                     override fun succeeded(cipher: Cipher?) {
-                        try {
-                            onSuccess(cipher)
-                        } catch (error: Throwable) {
-                            failRequired(alias, masterKey, result, error)
+                        result.runIfActive {
+                            try {
+                                onSuccess(cipher)
+                            } catch (error: Throwable) {
+                                failRequired(alias, masterKey, result, error)
+                            }
                         }
                     }
 
                     override fun failed(error: NativeSecurityException) {
-                        failRequired(alias, masterKey, result, error)
+                        result.runIfActive {
+                            failRequired(alias, masterKey, result, error)
+                        }
                     }
                 },
             )
         } catch (error: Throwable) {
-            failRequired(alias, masterKey, result, error)
+            result.runIfActive {
+                failRequired(alias, masterKey, result, error)
+            }
         }
     }
 
@@ -267,10 +311,47 @@ internal class KeyringProvisioner(
     private fun completeSuccess(
         keyId: String,
         masterKey: ByteArray,
+        keyset: SecurityKeyset,
         result: NativeResult<NativeUnlockMaterial>,
+        fallbackKeyset: SecurityKeyset? = null,
     ) {
-        val material = KeyringCrypto.deriveMaterial(keyId, masterKey)
-        masterKey.fill(0)
-        result.success(material)
+        var material: NativeUnlockMaterial? = null
+        try {
+            val unlockMaterial = KeyringCrypto.deriveMaterial(keyId, masterKey)
+            material = unlockMaterial
+            val committed = result.runIfActive {
+                try {
+                    envelopeStore.write(SecurityKeysetCodec.encode(keyset))
+                } catch (error: Throwable) {
+                    val fallback = fallbackKeyset ?: throw error
+                    val retainedAliases = fallback.envelopes
+                        .mapTo(mutableSetOf()) { it.keyAlias }
+                    keyset.envelopes
+                        .filterNot { it.keyAlias in retainedAliases }
+                        .forEach {
+                            KeyringCrypto.cleanupAlias(
+                                wrappingKeys,
+                                it.keyAlias,
+                            )
+                        }
+                    envelopeStore.write(SecurityKeysetCodec.encode(fallback))
+                }
+                result.success(unlockMaterial)
+            }
+            if (!committed) {
+                unlockMaterial.zeroize()
+                keyset.envelopes.forEach {
+                    KeyringCrypto.cleanupAlias(wrappingKeys, it.keyAlias)
+                }
+            }
+        } catch (error: Throwable) {
+            material?.zeroize()
+            keyset.envelopes.forEach {
+                KeyringCrypto.cleanupAlias(wrappingKeys, it.keyAlias)
+            }
+            result.error(KeyringCrypto.mapKeyError(error))
+        } finally {
+            masterKey.fill(0)
+        }
     }
 }
