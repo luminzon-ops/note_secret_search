@@ -43,7 +43,7 @@ class SqlCipherAppDatabase implements AppDatabase {
   int _generation = 0;
 
   static const _databaseName = 'note_secret_search.db';
-  static const _databaseVersion = 3;
+  static const _databaseVersion = 4;
 
   @override
   DatabaseLifecycleState get state => _state;

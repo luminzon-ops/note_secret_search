@@ -60,6 +60,7 @@ abstract final class DatabaseMigrations {
       3 => const <String>[
         'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
       ],
+      4 => const <String>[DatabaseSchema.securityMetadataCreateStatement],
       _ => const <String>[],
     };
   }

@@ -14,6 +14,17 @@ abstract final class DatabaseSchema {
   static const String appSettings = 'app_settings';
   static const String chatSessions = 'chat_sessions';
   static const String chatMessages = 'chat_messages';
+  static const String securityMetadata = 'security_metadata';
+
+  static const String securityMetadataCreateStatement = '''
+    CREATE TABLE IF NOT EXISTS security_metadata (
+      key_id TEXT PRIMARY KEY,
+      source_schema_version INTEGER NOT NULL,
+      field_envelope_version INTEGER NOT NULL,
+      migration_state TEXT NOT NULL,
+      migrated_at INTEGER NOT NULL
+    )
+    ''';
 
   static const List<String> createStatements = [
     '''
@@ -180,6 +191,7 @@ abstract final class DatabaseSchema {
     )
     ''',
     ...chatPersistenceStatements,
+    securityMetadataCreateStatement,
   ];
 
   static const List<String> chatPersistenceStatements = [
