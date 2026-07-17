@@ -14,6 +14,8 @@ abstract interface class SecureKeyGateway {
 
   Future<NativeSecurityState> getSecurityState();
 
+  Future<NativeUnlockResult> provisionWithSystemAuth();
+
   Future<NativeUnlockResult> unlockWithSystemAuth();
 
   Future<void> configurePin({required String pin});
@@ -65,6 +67,11 @@ class DeviceSecureKeyGateway implements SecureKeyGateway {
   @override
   Future<NativeSecurityState> getSecurityState() {
     return _bridge.getSecurityState();
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    return _bridge.provisionWithSystemAuth();
   }
 
   @override

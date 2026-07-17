@@ -12,81 +12,85 @@ class SqliteNoteRepository implements NoteRepository {
   final AppDatabase _database;
 
   @override
-  Future<NoteItem?> getById(String id) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.noteItems,
-      where: 'id = ? AND deleted_at IS NULL',
-      whereArgs: <Object>[id],
-      limit: 1,
-    );
+  Future<NoteItem?> getById(String id) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.noteItems,
+        where: 'id = ? AND deleted_at IS NULL',
+        whereArgs: <Object>[id],
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapNote(rows.first, await _loadTags(db, id));
+      return _mapNote(rows.first, await _loadTags(db, id));
+    });
   }
 
   @override
-  Future<List<NoteItem>> listByVault(String vaultId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.noteItems,
-      where: 'vault_id = ? AND deleted_at IS NULL',
-      whereArgs: <Object>[vaultId],
-      orderBy: 'favorite DESC, updated_at DESC',
-    );
+  Future<List<NoteItem>> listByVault(String vaultId) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.noteItems,
+        where: 'vault_id = ? AND deleted_at IS NULL',
+        whereArgs: <Object>[vaultId],
+        orderBy: 'favorite DESC, updated_at DESC',
+      );
 
-    final items = <NoteItem>[];
-    for (final row in rows) {
-      final id = row['id']! as String;
-      items.add(_mapNote(row, await _loadTags(db, id)));
-    }
-    return items;
+      final items = <NoteItem>[];
+      for (final row in rows) {
+        final id = row['id']! as String;
+        items.add(_mapNote(row, await _loadTags(db, id)));
+      }
+      return items;
+    });
   }
 
   @override
   Future<void> save(NoteItem item) async {
     _validateCiphertexts(item);
-    final db = await _database.database;
-    await db.transaction((txn) async {
-      await txn.insert(DatabaseSchema.noteItems, <String, Object?>{
-        'id': item.id,
-        'vault_id': item.vaultId,
-        'title': item.title,
-        'content_ciphertext': item.contentCiphertext,
-        'summary_ciphertext': item.summaryCacheCiphertext,
-        'category_id': item.categoryId,
-        'favorite': item.favorite ? 1 : 0,
-        'created_at': item.createdAt.millisecondsSinceEpoch,
-        'updated_at': item.updatedAt.millisecondsSinceEpoch,
-        'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _database.run((db) async {
+      await db.transaction((txn) async {
+        await txn.insert(DatabaseSchema.noteItems, <String, Object?>{
+          'id': item.id,
+          'vault_id': item.vaultId,
+          'title': item.title,
+          'content_ciphertext': item.contentCiphertext,
+          'summary_ciphertext': item.summaryCacheCiphertext,
+          'category_id': item.categoryId,
+          'favorite': item.favorite ? 1 : 0,
+          'created_at': item.createdAt.millisecondsSinceEpoch,
+          'updated_at': item.updatedAt.millisecondsSinceEpoch,
+          'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      await _replaceTags(txn, item.id, item.vaultId, item.tags);
-      await txn.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[item.id, SearchSourceType.note.name],
-      );
+        await _replaceTags(txn, item.id, item.vaultId, item.tags);
+        await txn.delete(
+          DatabaseSchema.embeddingChunks,
+          where: 'source_id = ? AND source_type = ?',
+          whereArgs: <Object>[item.id, SearchSourceType.note.name],
+        );
+      });
     });
   }
 
   @override
-  Future<void> softDelete(String id) async {
-    final db = await _database.database;
-    await db.update(
-      DatabaseSchema.noteItems,
-      <String, Object?>{'deleted_at': DateTime.now().millisecondsSinceEpoch},
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-    );
-    await db.delete(
-      DatabaseSchema.embeddingChunks,
-      where: 'source_id = ? AND source_type = ?',
-      whereArgs: <Object>[id, SearchSourceType.note.name],
-    );
+  Future<void> softDelete(String id) {
+    return _database.run((db) async {
+      await db.update(
+        DatabaseSchema.noteItems,
+        <String, Object?>{'deleted_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+      );
+      await db.delete(
+        DatabaseSchema.embeddingChunks,
+        where: 'source_id = ? AND source_type = ?',
+        whereArgs: <Object>[id, SearchSourceType.note.name],
+      );
+    });
   }
 
   Future<List<String>> _loadTags(DatabaseExecutor db, String itemId) async {

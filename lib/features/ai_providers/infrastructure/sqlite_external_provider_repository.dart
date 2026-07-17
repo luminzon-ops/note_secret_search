@@ -18,90 +18,94 @@ class SqliteExternalProviderRepository implements ExternalProviderRepository {
   final CryptoService _cryptoService;
 
   @override
-  Future<List<ExternalProviderConfig>> loadAll() async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.providerConfigs,
-      orderBy: 'updated_at DESC',
-    );
-    return rows.map(_mapRow).toList(growable: false);
+  Future<List<ExternalProviderConfig>> loadAll() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.providerConfigs,
+        orderBy: 'updated_at DESC',
+      );
+      return rows.map(_mapRow).toList(growable: false);
+    });
   }
 
   @override
-  Future<ExternalProviderConfig?> loadById(String id) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.providerConfigs,
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    return _mapRow(rows.first);
+  Future<ExternalProviderConfig?> loadById(String id) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.providerConfigs,
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+      return _mapRow(rows.first);
+    });
   }
 
   @override
-  Future<ExternalProviderConfig?> loadEnabled() async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.providerConfigs,
-      where: 'enabled = ?',
-      whereArgs: const <Object>[1],
-      orderBy: 'updated_at DESC',
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    return _mapRow(rows.first);
+  Future<ExternalProviderConfig?> loadEnabled() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.providerConfigs,
+        where: 'enabled = ?',
+        whereArgs: const <Object>[1],
+        orderBy: 'updated_at DESC',
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+      return _mapRow(rows.first);
+    });
   }
 
   @override
-  Future<void> save(ExternalProviderConfig config) async {
-    final db = await _database.database;
+  Future<void> save(ExternalProviderConfig config) {
     final now = DateTime.now();
     final normalized = config.copyWith(
       createdAt: config.createdAt ?? now,
       updatedAt: now,
     );
 
-    await db.transaction((txn) async {
-      if (normalized.enabled) {
-        await txn.update(
+    return _database.run((db) async {
+      await db.transaction((txn) async {
+        if (normalized.enabled) {
+          await txn.update(
+            DatabaseSchema.providerConfigs,
+            <String, Object?>{
+              'enabled': 0,
+              'updated_at': now.millisecondsSinceEpoch,
+            },
+            where: 'provider_type = ?',
+            whereArgs: <Object>[normalized.providerType.name],
+          );
+        }
+
+        final encryptedConfig = _cryptoService.encryptField(
+          jsonEncode(normalized.toJson()),
+          field: EncryptedDatabaseField.providerConfig,
+          rowId: normalized.id,
+        );
+        if (encryptedConfig == null) {
+          throw StateError('External provider config could not be encrypted.');
+        }
+
+        await txn.insert(
           DatabaseSchema.providerConfigs,
           <String, Object?>{
-            'enabled': 0,
-            'updated_at': now.millisecondsSinceEpoch,
+            'id': normalized.id,
+            'provider_type': normalized.providerType.name,
+            'name': normalized.displayName,
+            'encrypted_config': encryptedConfig,
+            'enabled': normalized.enabled ? 1 : 0,
+            'created_at': normalized.createdAt?.millisecondsSinceEpoch,
+            'updated_at': normalized.updatedAt?.millisecondsSinceEpoch,
           },
-          where: 'provider_type = ?',
-          whereArgs: <Object>[normalized.providerType.name],
+          conflictAlgorithm: ConflictAlgorithm.replace,
         );
-      }
-
-      final encryptedConfig = _cryptoService.encryptField(
-        jsonEncode(normalized.toJson()),
-        field: EncryptedDatabaseField.providerConfig,
-        rowId: normalized.id,
-      );
-      if (encryptedConfig == null) {
-        throw StateError('External provider config could not be encrypted.');
-      }
-
-      await txn.insert(
-        DatabaseSchema.providerConfigs,
-        <String, Object?>{
-          'id': normalized.id,
-          'provider_type': normalized.providerType.name,
-          'name': normalized.displayName,
-          'encrypted_config': encryptedConfig,
-          'enabled': normalized.enabled ? 1 : 0,
-          'created_at': normalized.createdAt?.millisecondsSinceEpoch,
-          'updated_at': normalized.updatedAt?.millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      });
     });
   }
 

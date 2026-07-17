@@ -9,6 +9,7 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
@@ -21,6 +22,8 @@ import 'package:note_secret_search/features/settings/infrastructure/security_set
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+
+import '../../../support/fake_app_database.dart';
 
 void main() {
   testWidgets('first install lock screen does not expose pin setup', (
@@ -44,6 +47,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -58,6 +62,138 @@ void main() {
     expect(find.text('使用生物识别解锁'), findsOneWidget);
     expect(find.text('设置应用 PIN'), findsNothing);
     expect(find.text('使用应用 PIN 解锁'), findsNothing);
+  });
+
+  testWidgets('unprovisioned lock screen provisions with system auth', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final secureKeyGateway = _FakeSecureKeyGateway(
+      status: NativeSecurityStatus.unprovisioned,
+    );
+    final orchestrator = SecurityOrchestrator(
+      biometricGateway: _FakeBiometricGateway(),
+      screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+      secureKeyGateway: secureKeyGateway,
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+      sessionKeyStore: DatabaseSessionKeyStore(),
+      database: FakeAppDatabase(),
+      logger: const AppLogger(),
+      appIsForeground: () => true,
+    );
+    var unlocked = false;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securityOrchestratorProvider.overrideWithValue(orchestrator),
+        ],
+        child: MaterialApp(
+          home: AppLockScreen(
+            securityState: const NativeSecurityState(
+              status: NativeSecurityStatus.unprovisioned,
+              keyId: null,
+              pinConfigured: false,
+              deviceCredentialAvailable: true,
+              strongBiometricAvailable: true,
+              securityLevel: KeySecurityLevel.unknown,
+            ),
+            onUnlocked: () => unlocked = true,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('启用安全存储'), findsOneWidget);
+    expect(find.text('使用系统凭据启用'), findsOneWidget);
+
+    await tester.tap(find.text('使用系统凭据启用'));
+    await tester.pumpAndSettle();
+
+    expect(secureKeyGateway.provisionCalls, 1);
+    expect(sessionController.isUnlocked, isTrue);
+    expect(unlocked, isTrue);
+  });
+
+  testWidgets('a provisioned gate uses system unlock after the next lock', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final database = FakeAppDatabase();
+    final secureKeyGateway = _FakeSecureKeyGateway(
+      status: NativeSecurityStatus.unprovisioned,
+    );
+    final orchestrator = SecurityOrchestrator(
+      biometricGateway: _FakeBiometricGateway(),
+      screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+      secureKeyGateway: secureKeyGateway,
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+      sessionKeyStore: DatabaseSessionKeyStore(),
+      database: database,
+      logger: const AppLogger(),
+      appIsForeground: () => true,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          appDatabaseProvider.overrideWithValue(database),
+          securityOrchestratorProvider.overrideWithValue(orchestrator),
+        ],
+        child: const MaterialApp(
+          home: AppLockGate(child: Text('sensitive child')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('使用系统凭据启用'));
+    await tester.pumpAndSettle();
+    expect(find.text('sensitive child'), findsOneWidget);
+
+    await orchestrator.lock();
+    await tester.pumpAndSettle();
+
+    expect(find.text('使用生物识别解锁'), findsOneWidget);
+    expect(find.text('使用系统凭据启用'), findsNothing);
+    expect(secureKeyGateway.provisionCalls, 1);
+  });
+
+  testWidgets('unlocked session stays gated while database is locked', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController()
+      ..markUnlocked(UnlockMethod.biometric);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          appDatabaseProvider.overrideWithValue(FakeAppDatabase()),
+        ],
+        child: const MaterialApp(
+          home: AppLockGate(child: Text('sensitive child')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('sensitive child'), findsNothing);
+    expect(find.text('应用已锁定'), findsOneWidget);
   });
 
   testWidgets('locked gate reveals the lock screen after its first frame', (
@@ -253,6 +389,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 sessionKeyStore: DatabaseSessionKeyStore(),
+                database: FakeAppDatabase(),
                 logger: const AppLogger(),
                 appIsForeground: () => true,
               ),
@@ -291,6 +428,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -433,6 +571,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -474,6 +613,7 @@ void main() {
       final sessionController = LockSessionController();
       final pinStateController = PinStateController();
       final repository = _FakeSecuritySettingsRepository();
+      final database = FakeAppDatabase();
       late GoRouter router;
 
       await tester.pumpWidget(
@@ -485,6 +625,7 @@ void main() {
             pinStateControllerProvider.overrideWith(
               (ref) => pinStateController,
             ),
+            appDatabaseProvider.overrideWithValue(database),
             securityOrchestratorProvider.overrideWith(
               (ref) => SecurityOrchestrator(
                 biometricGateway: _FakeBiometricGateway(),
@@ -493,6 +634,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 sessionKeyStore: DatabaseSessionKeyStore(),
+                database: database,
                 logger: const AppLogger(),
                 appIsForeground: () => true,
               ),
@@ -573,6 +715,9 @@ void main() {
             (ref) => sessionController,
           ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          appDatabaseProvider.overrideWithValue(
+            FakeAppDatabase(initialStatus: DatabaseLifecycleStatus.open),
+          ),
           securitySettingsRepositoryProvider.overrideWith(
             (ref) async => repository,
           ),
@@ -626,9 +771,14 @@ class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
 }
 
 class _FakeSecureKeyGateway implements SecureKeyGateway {
-  _FakeSecureKeyGateway({this.pinConfigured = false});
+  _FakeSecureKeyGateway({
+    this.pinConfigured = false,
+    this.status = NativeSecurityStatus.locked,
+  });
 
   bool pinConfigured;
+  NativeSecurityStatus status;
+  int provisionCalls = 0;
 
   @override
   Future<void> configurePin({required String pin}) async {
@@ -644,13 +794,22 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
   @override
   Future<NativeSecurityState> getSecurityState() async {
     return NativeSecurityState(
-      status: NativeSecurityStatus.locked,
-      keyId: '123e4567-e89b-42d3-a456-426614174000',
+      status: status,
+      keyId: status == NativeSecurityStatus.unprovisioned
+          ? null
+          : '123e4567-e89b-42d3-a456-426614174000',
       pinConfigured: pinConfigured,
       deviceCredentialAvailable: true,
       strongBiometricAvailable: true,
       securityLevel: KeySecurityLevel.tee,
     );
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    provisionCalls += 1;
+    status = NativeSecurityStatus.locked;
+    return unlockWithSystemAuth();
   }
 
   @override

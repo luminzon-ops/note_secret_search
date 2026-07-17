@@ -5,12 +5,39 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 void main() {
+  test(
+    'initialize loads security state without provisioning a root key',
+    () async {
+      final sessionController = LockSessionController();
+      final secureKeyGateway = _RecordingSecureKeyGateway(
+        securityState: _nativeSecurityState(pinConfigured: true),
+      );
+      final database = _RecordingAppDatabase();
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+        secureKeyGateway: secureKeyGateway,
+        database: database,
+      );
+
+      await orchestrator.initialize();
+
+      expect(secureKeyGateway.securityStateCalls, 1);
+      expect(secureKeyGateway.ensureRootKeyCalls, 0);
+      expect(database.state.status, DatabaseLifecycleStatus.locked);
+      expect(sessionController.isUnlocked, isFalse);
+      expect(sessionController.state.pinEnabled, isTrue);
+    },
+  );
+
   test(
     'biometric unlock removes the shield before marking session unlocked',
     () async {
@@ -67,6 +94,140 @@ void main() {
     );
     expect(unlockMaterial.isCleared, isTrue);
   });
+
+  test(
+    'system provisioning opens the database and unlocks the session',
+    () async {
+      final sessionController = LockSessionController();
+      final provisionMaterial = NativeUnlockResult(
+        keyId: '123e4567-e89b-42d3-a456-426614174000',
+        databaseKey: Uint8List.fromList(List<int>.filled(32, 0x31)),
+        fieldKey: Uint8List.fromList(List<int>.filled(32, 0x42)),
+        unlockMethod: 'system',
+      );
+      final secureKeyGateway = _RecordingSecureKeyGateway(
+        provisionResult: provisionMaterial,
+      );
+      final database = _RecordingAppDatabase();
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+        secureKeyGateway: secureKeyGateway,
+        database: database,
+      );
+
+      expect(await orchestrator.provisionWithSystemAuth(), isTrue);
+
+      expect(secureKeyGateway.provisionCalls, 1);
+      expect(secureKeyGateway.systemUnlockCalls, 0);
+      expect(database.state.status, DatabaseLifecycleStatus.open);
+      expect(sessionController.isUnlocked, isTrue);
+      expect(provisionMaterial.isCleared, isTrue);
+    },
+  );
+
+  test('unlock waits for the database before removing the shield', () async {
+    final sessionController = LockSessionController();
+    final openStarted = Completer<void>();
+    final releaseOpen = Completer<void>();
+    final database = _RecordingAppDatabase(
+      onOpen: (_) async {
+        openStarted.complete();
+        await releaseOpen.future;
+      },
+    );
+    final screenshotGateway = _RecordingScreenshotProtectionGateway();
+    final orchestrator = _buildOrchestrator(
+      sessionController: sessionController,
+      screenshotGateway: screenshotGateway,
+      database: database,
+    );
+
+    final unlocking = orchestrator.unlockWithBiometrics();
+    await openStarted.future;
+
+    expect(database.state.status, DatabaseLifecycleStatus.opening);
+    expect(sessionController.isUnlocked, isFalse);
+    expect(screenshotGateway.obscuredUpdates, isEmpty);
+
+    releaseOpen.complete();
+    expect(await unlocking, isTrue);
+    expect(database.state.status, DatabaseLifecycleStatus.open);
+    expect(screenshotGateway.obscuredUpdates, [false]);
+    expect(sessionController.isUnlocked, isTrue);
+  });
+
+  test(
+    'a concurrent unlock is rejected before requesting new key material',
+    () async {
+      final sessionController = LockSessionController();
+      final firstMaterial = NativeUnlockResult(
+        keyId: '123e4567-e89b-42d3-a456-426614174000',
+        databaseKey: Uint8List.fromList(List<int>.filled(32, 0x17)),
+        fieldKey: Uint8List.fromList(List<int>.filled(32, 0x29)),
+        unlockMethod: 'system',
+      );
+      final authenticationBlocker = Completer<NativeUnlockResult>();
+      final secureKeyGateway = _RecordingSecureKeyGateway(
+        systemUnlockFuture: authenticationBlocker.future,
+      );
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+        secureKeyGateway: secureKeyGateway,
+      );
+
+      final firstUnlock = orchestrator.unlockWithBiometrics();
+      await _waitUntil(() => secureKeyGateway.systemUnlockCalls == 1);
+
+      final concurrentUnlock = await orchestrator.unlockWithPin(
+        pin: '2468',
+        expectedLockEpoch: sessionController.lockEpoch,
+      );
+      authenticationBlocker.complete(firstMaterial);
+      final firstResult = await firstUnlock;
+
+      expect(concurrentUnlock, isFalse);
+      expect(secureKeyGateway.pinUnlockCalls, 0);
+      expect(firstResult, isTrue);
+      expect(sessionController.isUnlocked, isTrue);
+      expect(firstMaterial.isCleared, isTrue);
+    },
+  );
+
+  test(
+    'database open failure stays sanitized and clears unlock keys',
+    () async {
+      final sessionController = LockSessionController();
+      final sessionKeyStore = DatabaseSessionKeyStore();
+      final database = _RecordingAppDatabase(
+        onOpen: (_) async {
+          throw const DatabaseLifecycleException('database_open_failed');
+        },
+      );
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+        sessionKeyStore: sessionKeyStore,
+        database: database,
+      );
+
+      await expectLater(
+        orchestrator.unlockWithBiometrics(),
+        throwsA(
+          isA<DatabaseLifecycleException>().having(
+            (error) => error.code,
+            'code',
+            'database_open_failed',
+          ),
+        ),
+      );
+
+      expect(sessionController.isUnlocked, isFalse);
+      expect(sessionKeyStore.hasKeys, isFalse);
+      expect(database.state.status, DatabaseLifecycleStatus.locked);
+    },
+  );
 
   test('biometric unlock stays locked when shield removal fails', () async {
     final sessionController = LockSessionController();
@@ -309,6 +470,43 @@ void main() {
       expect(sessionKeyStore.hasKeys, isFalse);
     },
   );
+
+  test('lock revokes database access before clearing session keys', () async {
+    final sessionController = LockSessionController();
+    final sessionKeyStore = DatabaseSessionKeyStore();
+    final closeStarted = Completer<void>();
+    final releaseClose = Completer<void>();
+    final database = _RecordingAppDatabase(
+      onClose: () async {
+        expect(sessionController.isUnlocked, isTrue);
+        closeStarted.complete();
+        await releaseClose.future;
+      },
+    );
+    final screenshotGateway = _RecordingScreenshotProtectionGateway();
+    final orchestrator = _buildOrchestrator(
+      sessionController: sessionController,
+      screenshotGateway: screenshotGateway,
+      sessionKeyStore: sessionKeyStore,
+      database: database,
+    );
+    expect(await orchestrator.unlockWithBiometrics(), isTrue);
+    screenshotGateway.obscuredUpdates.clear();
+
+    final locking = orchestrator.lock();
+    await closeStarted.future;
+
+    expect(screenshotGateway.obscuredUpdates, [true]);
+    expect(database.state.status, DatabaseLifecycleStatus.closing);
+    expect(sessionController.isUnlocked, isFalse);
+    expect(sessionKeyStore.hasKeys, isTrue);
+
+    releaseClose.complete();
+    await locking;
+
+    expect(database.state.status, DatabaseLifecycleStatus.locked);
+    expect(sessionKeyStore.hasKeys, isFalse);
+  });
 }
 
 SecurityOrchestrator _buildOrchestrator({
@@ -317,6 +515,7 @@ SecurityOrchestrator _buildOrchestrator({
   BiometricGateway? biometricGateway,
   SecureKeyGateway? secureKeyGateway,
   DatabaseSessionKeyStore? sessionKeyStore,
+  AppDatabase? database,
 }) {
   return SecurityOrchestrator(
     biometricGateway: biometricGateway ?? _SuccessfulBiometricGateway(),
@@ -327,7 +526,45 @@ SecurityOrchestrator _buildOrchestrator({
     logger: const AppLogger(),
     appIsForeground: () => true,
     sessionKeyStore: sessionKeyStore ?? DatabaseSessionKeyStore(),
+    database: database ?? _RecordingAppDatabase(),
   );
+}
+
+class _RecordingAppDatabase implements AppDatabase {
+  _RecordingAppDatabase({this.onOpen, this.onClose});
+
+  final Future<void> Function(DatabaseSessionKeys keys)? onOpen;
+  final Future<void> Function()? onClose;
+  DatabaseLifecycleState _state = const DatabaseLifecycleState.locked();
+
+  @override
+  DatabaseLifecycleState get state => _state;
+
+  @override
+  Stream<DatabaseLifecycleState> get states => const Stream.empty();
+
+  @override
+  Future<void> open(DatabaseSessionKeys sessionKeys) async {
+    _state = const DatabaseLifecycleState(
+      status: DatabaseLifecycleStatus.opening,
+    );
+    await onOpen?.call(sessionKeys);
+    _state = const DatabaseLifecycleState(status: DatabaseLifecycleStatus.open);
+  }
+
+  @override
+  Future<T> run<T>(Future<T> Function(Database database) operation) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> close() async {
+    _state = const DatabaseLifecycleState(
+      status: DatabaseLifecycleStatus.closing,
+    );
+    await onClose?.call();
+    _state = const DatabaseLifecycleState.locked();
+  }
 }
 
 class _SuccessfulBiometricGateway implements BiometricGateway {
@@ -375,24 +612,47 @@ class _RecordingSecureKeyGateway implements SecureKeyGateway {
     this.unlockError,
     this.systemUnlockResult,
     this.systemUnlockFuture,
+    this.securityState,
+    this.provisionResult,
   });
 
   final NativeUnlockResult? unlockResult;
   final NativeSecurityException? unlockError;
   final NativeUnlockResult? systemUnlockResult;
   final Future<NativeUnlockResult>? systemUnlockFuture;
+  final NativeSecurityState? securityState;
+  final NativeUnlockResult? provisionResult;
   String? lastPin;
   int systemUnlockCalls = 0;
+  int securityStateCalls = 0;
+  int ensureRootKeyCalls = 0;
+  int provisionCalls = 0;
+  int pinUnlockCalls = 0;
 
   @override
-  Future<void> ensureRootKey() async {}
+  Future<void> ensureRootKey() async {
+    ensureRootKeyCalls += 1;
+  }
 
   @override
   Future<String> getDatabasePasswordMaterial() async => 'material';
 
   @override
   Future<NativeSecurityState> getSecurityState() async {
-    return _nativeSecurityState(pinConfigured: false);
+    securityStateCalls += 1;
+    return securityState ?? _nativeSecurityState(pinConfigured: false);
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() async {
+    provisionCalls += 1;
+    return provisionResult ??
+        NativeUnlockResult(
+          keyId: '123e4567-e89b-42d3-a456-426614174000',
+          databaseKey: Uint8List(32),
+          fieldKey: Uint8List(32),
+          unlockMethod: 'system',
+        );
   }
 
   @override
@@ -418,6 +678,7 @@ class _RecordingSecureKeyGateway implements SecureKeyGateway {
 
   @override
   Future<NativeUnlockResult> unlockWithPin({required String pin}) async {
+    pinUnlockCalls += 1;
     lastPin = pin;
     final error = unlockError;
     if (error != null) {

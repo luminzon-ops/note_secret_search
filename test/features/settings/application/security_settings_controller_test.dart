@@ -13,6 +13,8 @@ import 'package:note_secret_search/features/settings/application/security_settin
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
 
+import '../../../support/fake_app_database.dart';
+
 void main() {
   test('load derives pin availability from native keyring state', () async {
     final gateway = _FakeSecureKeyGateway(pinConfigured: false);
@@ -88,6 +90,7 @@ SecuritySettingsController _controller({
       sessionController: LockSessionController(),
       pinStateController: pinStateController,
       sessionKeyStore: DatabaseSessionKeyStore(),
+      database: FakeAppDatabase(),
       logger: const AppLogger(),
       appIsForeground: () => true,
     ),
@@ -145,6 +148,11 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
       strongBiometricAvailable: true,
       securityLevel: KeySecurityLevel.tee,
     );
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    return unlockWithSystemAuth();
   }
 
   @override

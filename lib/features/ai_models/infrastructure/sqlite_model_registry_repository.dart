@@ -8,53 +8,55 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_repo
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteModelRegistryRepository implements ModelRegistryRepository {
-  SqliteModelRegistryRepository({required AppDatabase database}) : _database = database;
+  SqliteModelRegistryRepository({required AppDatabase database})
+    : _database = database;
 
   final AppDatabase _database;
 
   @override
-  Future<ModelRegistryEntry?> getById(String id) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.modelRegistry,
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-      limit: 1,
-    );
+  Future<ModelRegistryEntry?> getById(String id) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.modelRegistry,
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapEntry(rows.first);
+      return _mapEntry(rows.first);
+    });
   }
 
   @override
-  Future<void> deleteById(String id) async {
-    final db = await _database.database;
-    await db.delete(
-      DatabaseSchema.modelRegistry,
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-    );
+  Future<void> deleteById(String id) {
+    return _database.run((db) async {
+      await db.delete(
+        DatabaseSchema.modelRegistry,
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+      );
+    });
   }
 
   @override
-  Future<List<ModelRegistryEntry>> listInstalledModels() async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.modelRegistry,
-      orderBy: 'installed_at DESC',
-    );
-    return rows.map(_mapEntry).toList(growable: false);
+  Future<List<ModelRegistryEntry>> listInstalledModels() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.modelRegistry,
+        orderBy: 'installed_at DESC',
+      );
+      return rows.map(_mapEntry).toList(growable: false);
+    });
   }
 
   @override
-  Future<void> save(ModelRegistryEntry entry) async {
-    final db = await _database.database;
-    await db.insert(
-      DatabaseSchema.modelRegistry,
-      <String, Object?>{
+  Future<void> save(ModelRegistryEntry entry) {
+    return _database.run((db) async {
+      await db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
         'id': entry.id,
         'type': entry.type,
         'provider': entry.provider,
@@ -65,14 +67,15 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
         'min_ram_mb': entry.minRamMb,
         'recommended_tier': entry.recommendedTier,
         'local_path': entry.localPath,
-        'artifact_paths_json': encodeModelArtifactPathsForSqlite(entry.artifacts),
+        'artifact_paths_json': encodeModelArtifactPathsForSqlite(
+          entry.artifacts,
+        ),
         'checksum': entry.checksum,
         'enabled': entry.enabled ? 1 : 0,
         'installed_at': entry.installedAt?.millisecondsSinceEpoch,
         'integrity_status': entry.integrityStatus.name,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   ModelRegistryEntry _mapEntry(Map<String, Object?> row) {
@@ -87,14 +90,18 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
       minRamMb: row['min_ram_mb'] as int?,
       recommendedTier: row['recommended_tier'] as String?,
       localPath: row['local_path'] as String?,
-      artifacts: decodeModelArtifactPathsFromSqlite(row['artifact_paths_json'] as String?),
+      artifacts: decodeModelArtifactPathsFromSqlite(
+        row['artifact_paths_json'] as String?,
+      ),
       checksum: row['checksum'] as String?,
       enabled: (row['enabled'] as int? ?? 0) == 1,
       installedAt: row['installed_at'] == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['installed_at']! as int),
       filePresent: true,
-      integrityStatus: _parseIntegrityStatus(row['integrity_status'] as String?),
+      integrityStatus: _parseIntegrityStatus(
+        row['integrity_status'] as String?,
+      ),
     );
   }
 

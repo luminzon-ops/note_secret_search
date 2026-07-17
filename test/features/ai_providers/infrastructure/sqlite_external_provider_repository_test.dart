@@ -44,10 +44,12 @@ void main() {
 
     await repository.save(config);
 
-    final rows = await (await database.database).query(
-      DatabaseSchema.providerConfigs,
-      where: 'id = ?',
-      whereArgs: [config.id],
+    final rows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.providerConfigs,
+        where: 'id = ?',
+        whereArgs: [config.id],
+      ),
     );
     final encrypted = rows.single['encrypted_config']! as List<int>;
     expect(() => FieldEnvelopeCodec.decode(encrypted), returnsNormally);
@@ -75,15 +77,17 @@ void main() {
       enabled: true,
       allowSensitiveFields: false,
     );
-    await (await database.database).insert(DatabaseSchema.providerConfigs, {
-      'id': config.id,
-      'provider_type': config.providerType.name,
-      'name': config.displayName,
-      'encrypted_config': utf8.encode(jsonEncode(config.toJson())),
-      'enabled': 1,
-      'created_at': 1000,
-      'updated_at': 2000,
-    });
+    await database.run(
+      (db) => db.insert(DatabaseSchema.providerConfigs, {
+        'id': config.id,
+        'provider_type': config.providerType.name,
+        'name': config.displayName,
+        'encrypted_config': utf8.encode(jsonEncode(config.toJson())),
+        'enabled': 1,
+        'created_at': 1000,
+        'updated_at': 2000,
+      }),
+    );
 
     await expectLater(
       repository.loadById(config.id),

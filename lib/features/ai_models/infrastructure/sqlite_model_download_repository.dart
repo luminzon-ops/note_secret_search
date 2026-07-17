@@ -5,63 +5,68 @@ import 'package:note_secret_search/features/ai_models/domain/model_download_task
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteModelDownloadRepository implements ModelDownloadRepository {
-  SqliteModelDownloadRepository({required AppDatabase database}) : _database = database;
+  SqliteModelDownloadRepository({required AppDatabase database})
+    : _database = database;
 
   final AppDatabase _database;
 
   @override
-  Future<ModelDownloadTask?> findLatestTaskByModel(String modelId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.downloadTasks,
-      where: 'model_id = ?',
-      whereArgs: <Object>[modelId],
-      orderBy: 'updated_at DESC',
-      limit: 1,
-    );
+  Future<ModelDownloadTask?> findLatestTaskByModel(String modelId) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.downloadTasks,
+        where: 'model_id = ?',
+        whereArgs: <Object>[modelId],
+        orderBy: 'updated_at DESC',
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapTask(rows.first);
+      return _mapTask(rows.first);
+    });
   }
 
   @override
-  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(String modelId, String sourceId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.downloadTasks,
-      where: 'model_id = ? AND source_id = ?',
-      whereArgs: <Object>[modelId, sourceId],
-      orderBy: 'updated_at DESC',
-      limit: 1,
-    );
+  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(
+    String modelId,
+    String sourceId,
+  ) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.downloadTasks,
+        where: 'model_id = ? AND source_id = ?',
+        whereArgs: <Object>[modelId, sourceId],
+        orderBy: 'updated_at DESC',
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapTask(rows.first);
+      return _mapTask(rows.first);
+    });
   }
 
   @override
-  Future<List<ModelDownloadTask>> listTasks() async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.downloadTasks,
-      orderBy: 'updated_at DESC',
-    );
+  Future<List<ModelDownloadTask>> listTasks() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.downloadTasks,
+        orderBy: 'updated_at DESC',
+      );
 
-    return rows.map(_mapTask).toList(growable: false);
+      return rows.map(_mapTask).toList(growable: false);
+    });
   }
 
   @override
-  Future<void> saveTask(ModelDownloadTask task) async {
-    final db = await _database.database;
-    await db.insert(
-      DatabaseSchema.downloadTasks,
-      <String, Object?>{
+  Future<void> saveTask(ModelDownloadTask task) {
+    return _database.run((db) async {
+      await db.insert(DatabaseSchema.downloadTasks, <String, Object?>{
         'id': task.id,
         'model_id': task.modelId,
         'source_id': task.sourceId,
@@ -73,9 +78,8 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
         'resumable': task.resumable ? 1 : 0,
         'created_at': task.createdAt.millisecondsSinceEpoch,
         'updated_at': task.updatedAt.millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   ModelDownloadTask _mapTask(Map<String, Object?> row) {

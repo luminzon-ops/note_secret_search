@@ -1,14 +1,52 @@
+import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+enum DatabaseLifecycleStatus { locked, opening, open, closing, error }
+
+class DatabaseLifecycleState {
+  const DatabaseLifecycleState({
+    required this.status,
+    this.openingStage,
+    this.errorCode,
+  });
+
+  const DatabaseLifecycleState.locked()
+    : status = DatabaseLifecycleStatus.locked,
+      openingStage = null,
+      errorCode = null;
+
+  final DatabaseLifecycleStatus status;
+  final String? openingStage;
+  final String? errorCode;
+}
+
+class DatabaseAccessRevokedException implements Exception {
+  const DatabaseAccessRevokedException();
+
+  String get code => 'database_access_revoked';
+
+  @override
+  String toString() => code;
+}
+
+class DatabaseLifecycleException implements Exception {
+  const DatabaseLifecycleException(this.code);
+
+  final String code;
+
+  @override
+  String toString() => code;
+}
+
 abstract interface class AppDatabase {
-  Future<void> initialize();
+  DatabaseLifecycleState get state;
 
-  Future<void> executeBatch(List<String> statements);
+  Stream<DatabaseLifecycleState> get states;
 
-  Future<Database> get database;
+  Future<void> open(DatabaseSessionKeys sessionKeys);
 
-  Future<void> ensureDefaultVault();
+  Future<T> run<T>(Future<T> Function(Database database) operation);
 
   Future<void> close();
 }
@@ -20,8 +58,8 @@ abstract final class DatabaseMigrations {
     return switch (version) {
       2 => DatabaseSchema.chatPersistenceStatements,
       3 => const <String>[
-          'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
-        ],
+        'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
+      ],
       _ => const <String>[],
     };
   }

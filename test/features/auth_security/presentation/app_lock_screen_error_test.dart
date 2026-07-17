@@ -11,6 +11,8 @@ import 'package:note_secret_search/features/auth_security/domain/security_models
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lock_gate.dart';
 
+import '../../../support/fake_app_database.dart';
+
 void main() {
   testWidgets('biometric cancellation stays locked without an uncaught error', (
     tester,
@@ -24,6 +26,7 @@ void main() {
       sessionController: sessionController,
       pinStateController: pinStateController,
       sessionKeyStore: DatabaseSessionKeyStore(),
+      database: FakeAppDatabase(),
       logger: const AppLogger(),
       appIsForeground: () => true,
     );

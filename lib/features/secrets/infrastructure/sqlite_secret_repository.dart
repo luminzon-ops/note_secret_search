@@ -24,84 +24,88 @@ class SqliteSecretRepository implements SecretRepository {
   }
 
   @override
-  Future<SecretItem?> getById(String id) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.secretItems,
-      where: 'id = ? AND deleted_at IS NULL',
-      whereArgs: <Object>[id],
-      limit: 1,
-    );
+  Future<SecretItem?> getById(String id) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.secretItems,
+        where: 'id = ? AND deleted_at IS NULL',
+        whereArgs: <Object>[id],
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapSecret(rows.first, await _loadTags(db, id));
+      return _mapSecret(rows.first, await _loadTags(db, id));
+    });
   }
 
   @override
-  Future<List<SecretItem>> listByVault(String vaultId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.secretItems,
-      where: 'vault_id = ? AND deleted_at IS NULL',
-      whereArgs: <Object>[vaultId],
-      orderBy: 'favorite DESC, updated_at DESC',
-    );
+  Future<List<SecretItem>> listByVault(String vaultId) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.secretItems,
+        where: 'vault_id = ? AND deleted_at IS NULL',
+        whereArgs: <Object>[vaultId],
+        orderBy: 'favorite DESC, updated_at DESC',
+      );
 
-    final items = <SecretItem>[];
-    for (final row in rows) {
-      final id = row['id']! as String;
-      items.add(_mapSecret(row, await _loadTags(db, id)));
-    }
-    return items;
+      final items = <SecretItem>[];
+      for (final row in rows) {
+        final id = row['id']! as String;
+        items.add(_mapSecret(row, await _loadTags(db, id)));
+      }
+      return items;
+    });
   }
 
   @override
   Future<void> save(SecretItem item) async {
     _validateCiphertexts(item);
-    final db = await _database.database;
-    await db.transaction((txn) async {
-      await txn.insert(DatabaseSchema.secretItems, <String, Object?>{
-        'id': item.id,
-        'vault_id': item.vaultId,
-        'title': item.title,
-        'username_ciphertext': item.usernameCiphertext,
-        'password_ciphertext': item.passwordCiphertext,
-        'website_url_ciphertext': item.websiteUrlCiphertext,
-        'note_ciphertext': item.noteCiphertext,
-        'category_id': item.categoryId,
-        'favorite': item.favorite ? 1 : 0,
-        'created_at': item.createdAt.millisecondsSinceEpoch,
-        'updated_at': item.updatedAt.millisecondsSinceEpoch,
-        'last_accessed_at': item.lastAccessedAt?.millisecondsSinceEpoch,
-        'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _database.run((db) async {
+      await db.transaction((txn) async {
+        await txn.insert(DatabaseSchema.secretItems, <String, Object?>{
+          'id': item.id,
+          'vault_id': item.vaultId,
+          'title': item.title,
+          'username_ciphertext': item.usernameCiphertext,
+          'password_ciphertext': item.passwordCiphertext,
+          'website_url_ciphertext': item.websiteUrlCiphertext,
+          'note_ciphertext': item.noteCiphertext,
+          'category_id': item.categoryId,
+          'favorite': item.favorite ? 1 : 0,
+          'created_at': item.createdAt.millisecondsSinceEpoch,
+          'updated_at': item.updatedAt.millisecondsSinceEpoch,
+          'last_accessed_at': item.lastAccessedAt?.millisecondsSinceEpoch,
+          'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
 
-      await _replaceTags(txn, item.id, item.vaultId, item.tags);
-      await txn.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[item.id, SearchSourceType.secret.name],
-      );
+        await _replaceTags(txn, item.id, item.vaultId, item.tags);
+        await txn.delete(
+          DatabaseSchema.embeddingChunks,
+          where: 'source_id = ? AND source_type = ?',
+          whereArgs: <Object>[item.id, SearchSourceType.secret.name],
+        );
+      });
     });
   }
 
   @override
-  Future<void> softDelete(String id) async {
-    final db = await _database.database;
-    await db.update(
-      DatabaseSchema.secretItems,
-      <String, Object?>{'deleted_at': DateTime.now().millisecondsSinceEpoch},
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-    );
-    await db.delete(
-      DatabaseSchema.embeddingChunks,
-      where: 'source_id = ? AND source_type = ?',
-      whereArgs: <Object>[id, SearchSourceType.secret.name],
-    );
+  Future<void> softDelete(String id) {
+    return _database.run((db) async {
+      await db.update(
+        DatabaseSchema.secretItems,
+        <String, Object?>{'deleted_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+      );
+      await db.delete(
+        DatabaseSchema.embeddingChunks,
+        where: 'source_id = ? AND source_type = ?',
+        whereArgs: <Object>[id, SearchSourceType.secret.name],
+      );
+    });
   }
 
   Future<List<String>> _loadTags(DatabaseExecutor db, String itemId) async {

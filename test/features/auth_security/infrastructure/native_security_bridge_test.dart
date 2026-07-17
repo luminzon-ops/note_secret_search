@@ -522,6 +522,11 @@ class _StaticSecureKeyGateway implements SecureKeyGateway {
   }
 
   @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    return unlockWithSystemAuth();
+  }
+
+  @override
   Future<NativeUnlockResult> unlockWithSystemAuth() async {
     return NativeUnlockResult(
       keyId: _validKeyId,

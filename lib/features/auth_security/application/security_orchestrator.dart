@@ -1,6 +1,7 @@
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
@@ -13,65 +14,95 @@ class SecurityOrchestrator {
     required LockSessionController sessionController,
     required PinStateController pinStateController,
     required DatabaseSessionKeyStore sessionKeyStore,
+    required AppDatabase database,
     required AppLogger logger,
     required bool Function() appIsForeground,
-  }) : _biometricGateway = biometricGateway,
-       _screenshotProtectionGateway = screenshotProtectionGateway,
+  }) : _screenshotProtectionGateway = screenshotProtectionGateway,
        _secureKeyGateway = secureKeyGateway,
        _sessionController = sessionController,
        _pinStateController = pinStateController,
        _sessionKeyStore = sessionKeyStore,
+       _database = database,
        _logger = logger,
        _appIsForeground = appIsForeground;
 
-  final BiometricGateway _biometricGateway;
   final ScreenshotProtectionGateway _screenshotProtectionGateway;
   final SecureKeyGateway _secureKeyGateway;
   final LockSessionController _sessionController;
   final PinStateController _pinStateController;
   final DatabaseSessionKeyStore _sessionKeyStore;
+  final AppDatabase _database;
   final AppLogger _logger;
   final bool Function() _appIsForeground;
+  int _operationEpoch = 0;
+  bool _unlockInProgress = false;
 
   Future<void> initialize() async {
     _sessionKeyStore.clear();
     await _screenshotProtectionGateway.enableSensitiveWindowProtection();
-    await _secureKeyGateway.ensureRootKey();
-    await _biometricGateway.getAvailability();
+    final securityState = await _secureKeyGateway.getSecurityState();
+    _syncPinConfigured(securityState.pinConfigured);
     _logger.info('security_initialized');
     _sessionController.lock();
   }
 
-  Future<bool> unlockWithBiometrics() async {
-    final expectedLockEpoch = _sessionController.lockEpoch;
-    NativeUnlockResult? material;
-    try {
-      material = await _secureKeyGateway.unlockWithSystemAuth();
-      return await _completeUnlock(
-        UnlockMethod.biometric,
-        expectedLockEpoch: expectedLockEpoch,
-        material: material,
-      );
-    } finally {
-      material?.clear();
-    }
+  Future<bool> unlockWithBiometrics() {
+    return _runUnlockOperation(() async {
+      final expectedLockEpoch = _sessionController.lockEpoch;
+      final expectedOperationEpoch = _operationEpoch;
+      NativeUnlockResult? material;
+      try {
+        material = await _secureKeyGateway.unlockWithSystemAuth();
+        return await _completeUnlock(
+          UnlockMethod.biometric,
+          expectedLockEpoch: expectedLockEpoch,
+          expectedOperationEpoch: expectedOperationEpoch,
+          material: material,
+        );
+      } finally {
+        material?.clear();
+      }
+    });
+  }
+
+  Future<bool> provisionWithSystemAuth() {
+    return _runUnlockOperation(() async {
+      final expectedLockEpoch = _sessionController.lockEpoch;
+      final expectedOperationEpoch = _operationEpoch;
+      NativeUnlockResult? material;
+      try {
+        material = await _secureKeyGateway.provisionWithSystemAuth();
+        return await _completeUnlock(
+          UnlockMethod.biometric,
+          expectedLockEpoch: expectedLockEpoch,
+          expectedOperationEpoch: expectedOperationEpoch,
+          material: material,
+        );
+      } finally {
+        material?.clear();
+      }
+    });
   }
 
   Future<bool> unlockWithPin({
     required String pin,
     required int expectedLockEpoch,
-  }) async {
-    NativeUnlockResult? material;
-    try {
-      material = await _secureKeyGateway.unlockWithPin(pin: pin);
-      return await _completeUnlock(
-        UnlockMethod.pin,
-        expectedLockEpoch: expectedLockEpoch,
-        material: material,
-      );
-    } finally {
-      material?.clear();
-    }
+  }) {
+    return _runUnlockOperation(() async {
+      final expectedOperationEpoch = _operationEpoch;
+      NativeUnlockResult? material;
+      try {
+        material = await _secureKeyGateway.unlockWithPin(pin: pin);
+        return await _completeUnlock(
+          UnlockMethod.pin,
+          expectedLockEpoch: expectedLockEpoch,
+          expectedOperationEpoch: expectedOperationEpoch,
+          material: material,
+        );
+      } finally {
+        material?.clear();
+      }
+    });
   }
 
   Future<NativeSecurityState> refreshSecurityState() async {
@@ -90,22 +121,59 @@ class SecurityOrchestrator {
     _syncPinConfigured(false);
   }
 
+  Future<void> lock() async {
+    _operationEpoch += 1;
+    try {
+      await _screenshotProtectionGateway.updateRecentTaskProtection(
+        obscured: true,
+      );
+    } catch (_) {
+      // Database access is still revoked when platform shielding fails.
+    }
+
+    final closing = _database.close();
+    _sessionController.lock();
+    try {
+      await closing;
+    } catch (_) {
+      // The database remains access-revoked and close can be retried.
+    } finally {
+      _sessionKeyStore.clear();
+    }
+  }
+
   Future<bool> _completeUnlock(
     UnlockMethod method, {
     required int expectedLockEpoch,
+    required int expectedOperationEpoch,
     NativeUnlockResult? material,
   }) async {
-    if (!_canCompleteUnlock(expectedLockEpoch)) {
+    if (!_canCompleteUnlock(expectedLockEpoch, expectedOperationEpoch)) {
       return false;
     }
 
-    if (material != null) {
-      _sessionKeyStore.replace(
-        DatabaseSessionKeys(
-          databaseKey: material.databaseKey,
-          fieldKey: material.fieldKey,
-        ),
-      );
+    if (material == null) {
+      return false;
+    }
+
+    final sessionKeys = DatabaseSessionKeys(
+      databaseKey: material.databaseKey,
+      fieldKey: material.fieldKey,
+    );
+    _sessionKeyStore.replace(sessionKeys);
+    try {
+      await _database.open(sessionKeys);
+    } on DatabaseLifecycleException {
+      await _revokeFailedUnlock();
+      rethrow;
+    } catch (_) {
+      await _revokeFailedUnlock();
+      return false;
+    }
+
+    if (!_canCompleteUnlock(expectedLockEpoch, expectedOperationEpoch)) {
+      await _revokeFailedUnlock();
+      return false;
     }
 
     try {
@@ -113,13 +181,12 @@ class SecurityOrchestrator {
         obscured: false,
       );
     } catch (_) {
-      _sessionKeyStore.clear();
-      _sessionController.lock();
+      await _revokeFailedUnlock();
       return false;
     }
 
-    if (!_canCompleteUnlock(expectedLockEpoch)) {
-      _sessionKeyStore.clear();
+    if (!_canCompleteUnlock(expectedLockEpoch, expectedOperationEpoch)) {
+      await _revokeFailedUnlock();
       await _restoreShieldAfterStaleUnlock();
       return false;
     }
@@ -129,9 +196,34 @@ class SecurityOrchestrator {
     return true;
   }
 
-  bool _canCompleteUnlock(int expectedLockEpoch) {
+  Future<void> _revokeFailedUnlock() async {
+    final closing = _database.close();
+    _sessionController.lock();
+    try {
+      await closing;
+    } catch (_) {
+      // Access was revoked synchronously even if the native close needs retry.
+    } finally {
+      _sessionKeyStore.clear();
+    }
+  }
+
+  Future<bool> _runUnlockOperation(Future<bool> Function() operation) async {
+    if (_unlockInProgress) {
+      return false;
+    }
+    _unlockInProgress = true;
+    try {
+      return await operation();
+    } finally {
+      _unlockInProgress = false;
+    }
+  }
+
+  bool _canCompleteUnlock(int expectedLockEpoch, int expectedOperationEpoch) {
     return !_sessionController.isUnlocked &&
         _sessionController.lockEpoch == expectedLockEpoch &&
+        _operationEpoch == expectedOperationEpoch &&
         _appIsForeground();
   }
 

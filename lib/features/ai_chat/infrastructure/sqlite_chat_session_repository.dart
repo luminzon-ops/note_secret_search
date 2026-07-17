@@ -8,50 +8,55 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_session_reposito
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteChatSessionRepository implements ChatSessionRepository {
-  SqliteChatSessionRepository({required AppDatabase database}) : _database = database;
+  SqliteChatSessionRepository({required AppDatabase database})
+    : _database = database;
 
   final AppDatabase _database;
 
   @override
-  Future<ChatSession?> getSession(String sessionId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.chatSessions,
-      where: 'id = ?',
-      whereArgs: <Object>[sessionId],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    return _mapSession(rows.first);
+  Future<ChatSession?> getSession(String sessionId) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.chatSessions,
+        where: 'id = ?',
+        whereArgs: <Object>[sessionId],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+      return _mapSession(rows.first);
+    });
   }
 
   @override
-  Future<List<ChatStoredMessage>> listMessages(String sessionId) async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.chatMessages,
-      where: 'session_id = ?',
-      whereArgs: <Object>[sessionId],
-      orderBy: 'created_at ASC',
-    );
-    return rows.map(_mapMessage).toList(growable: false);
+  Future<List<ChatStoredMessage>> listMessages(String sessionId) {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.chatMessages,
+        where: 'session_id = ?',
+        whereArgs: <Object>[sessionId],
+        orderBy: 'created_at ASC',
+      );
+      return rows.map(_mapMessage).toList(growable: false);
+    });
   }
 
   @override
-  Future<List<ChatSession>> listSessions() async {
-    final db = await _database.database;
-    final rows = await db.query(DatabaseSchema.chatSessions, orderBy: 'updated_at DESC');
-    return rows.map(_mapSession).toList(growable: false);
+  Future<List<ChatSession>> listSessions() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.chatSessions,
+        orderBy: 'updated_at DESC',
+      );
+      return rows.map(_mapSession).toList(growable: false);
+    });
   }
 
   @override
-  Future<void> saveMessage(ChatStoredMessage message) async {
-    final db = await _database.database;
-    await db.insert(
-      DatabaseSchema.chatMessages,
-      <String, Object?>{
+  Future<void> saveMessage(ChatStoredMessage message) {
+    return _database.run((db) async {
+      await db.insert(DatabaseSchema.chatMessages, <String, Object?>{
         'id': message.id,
         'session_id': message.sessionId,
         'role': message.role.name,
@@ -59,20 +64,19 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
         'status': message.status.name,
         'used_private_context': message.usedPrivateContext ? 1 : 0,
         'auto_retrieved_context_summary': message.autoRetrievedContextSummary,
-        'manual_context_item_ids_json': jsonEncode(message.manualContextItemIds),
+        'manual_context_item_ids_json': jsonEncode(
+          message.manualContextItemIds,
+        ),
         'related_source_ids_json': jsonEncode(message.relatedSourceIds),
         'created_at': message.createdAt.millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   @override
-  Future<void> saveSession(ChatSession session) async {
-    final db = await _database.database;
-    await db.insert(
-      DatabaseSchema.chatSessions,
-      <String, Object?>{
+  Future<void> saveSession(ChatSession session) {
+    return _database.run((db) async {
+      await db.insert(DatabaseSchema.chatSessions, <String, Object?>{
         'id': session.id,
         'mode': session.mode.name,
         'title': session.title,
@@ -81,9 +85,8 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
         'archived': session.archived ? 1 : 0,
         'created_at': session.createdAt.millisecondsSinceEpoch,
         'updated_at': session.updatedAt.millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   ChatSession _mapSession(Map<String, Object?> row) {
@@ -107,9 +110,14 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
       content: row['content']! as String,
       status: ChatStoredMessageStatus.values.byName(row['status']! as String),
       usedPrivateContext: (row['used_private_context']! as int) == 1,
-      autoRetrievedContextSummary: row['auto_retrieved_context_summary'] as String?,
-      manualContextItemIds: _decodeStringList(row['manual_context_item_ids_json'] as String?),
-      relatedSourceIds: _decodeStringList(row['related_source_ids_json'] as String?),
+      autoRetrievedContextSummary:
+          row['auto_retrieved_context_summary'] as String?,
+      manualContextItemIds: _decodeStringList(
+        row['manual_context_item_ids_json'] as String?,
+      ),
+      relatedSourceIds: _decodeStringList(
+        row['related_source_ids_json'] as String?,
+      ),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
     );
   }

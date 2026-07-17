@@ -36,10 +36,17 @@ final cryptoServiceProvider = Provider<CryptoService>((ref) {
 });
 
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
-  return SqlCipherAppDatabase(
-    logger: ref.watch(loggerProvider),
-    databaseKeyProvider: ref.watch(databaseKeyProvider),
-  );
+  final database = SqlCipherAppDatabase(logger: ref.watch(loggerProvider));
+  ref.onDispose(() => unawaited(database.close()));
+  return database;
+});
+
+final appDatabaseLifecycleProvider = StreamProvider<DatabaseLifecycleState>((
+  ref,
+) async* {
+  final database = ref.watch(appDatabaseProvider);
+  yield database.state;
+  yield* database.states;
 });
 
 final nativeSecurityBridgeProvider = Provider<NativeSecurityBridge>((ref) {
@@ -73,11 +80,9 @@ final databaseKeyProvider = Provider<DatabaseKeyProvider>((ref) {
 
 final lockSessionControllerProvider =
     StateNotifierProvider<LockSessionController, LockSessionState>((ref) {
-      final sessionKeyStore = ref.watch(databaseSessionKeyStoreProvider);
       final nativeSecurityBridge = ref.watch(nativeSecurityBridgeProvider);
       return LockSessionController(
         onLock: () {
-          sessionKeyStore.clear();
           unawaited(_cancelNativeSecurityOperation(nativeSecurityBridge));
         },
       );
@@ -119,6 +124,7 @@ final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
     sessionController: ref.watch(lockSessionControllerProvider.notifier),
     pinStateController: ref.watch(pinStateControllerProvider.notifier),
     sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
+    database: ref.watch(appDatabaseProvider),
     logger: ref.watch(loggerProvider),
     appIsForeground: () {
       final lifecycleState = WidgetsBinding.instance.lifecycleState;
@@ -141,13 +147,13 @@ final appLockLifecycleControllerProvider = Provider<AppLockLifecycleController>(
       screenshotProtectionGateway: ref.watch(
         screenshotProtectionGatewayProvider,
       ),
+      lockApplication: ref.watch(securityOrchestratorProvider).lock,
     );
   },
 );
 
 final appBootstrapServiceProvider = Provider<AppBootstrapService>((ref) {
   return AppBootstrapService(
-    database: ref.watch(appDatabaseProvider),
     securityOrchestrator: ref.watch(securityOrchestratorProvider),
     logger: ref.watch(loggerProvider),
   );

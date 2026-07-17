@@ -46,45 +46,47 @@ class SqliteProtectedConfigurationRepository {
       throw StateError('Sync account config could not be encrypted.');
     }
 
-    final db = await _database.database;
-    await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
-      'id': account.id,
-      'provider_type': account.providerType,
-      'encrypted_config': encryptedConfig,
-      'last_sync_at': account.lastSyncAt?.millisecondsSinceEpoch,
-      'status': account.status,
-      'created_at': account.createdAt.millisecondsSinceEpoch,
-      'updated_at': account.updatedAt.millisecondsSinceEpoch,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _database.run((db) async {
+      await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
+        'id': account.id,
+        'provider_type': account.providerType,
+        'encrypted_config': encryptedConfig,
+        'last_sync_at': account.lastSyncAt?.millisecondsSinceEpoch,
+        'status': account.status,
+        'created_at': account.createdAt.millisecondsSinceEpoch,
+        'updated_at': account.updatedAt.millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<SyncAccountConfiguration?> loadSyncAccount(String id) async {
     _validateIdentifier(id, 'id');
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.syncAccounts,
-      where: 'id = ?',
-      whereArgs: <Object>[id],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.syncAccounts,
+        where: 'id = ?',
+        whereArgs: <Object>[id],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    final row = rows.single;
-    return SyncAccountConfiguration(
-      id: row['id']! as String,
-      providerType: row['provider_type']! as String,
-      configJson: _cryptoService.decryptField(
-        row['encrypted_config'] as List<int>?,
-        field: EncryptedDatabaseField.syncAccountConfig,
-        rowId: row['id']! as String,
-      ),
-      lastSyncAt: _dateTimeOrNull(row['last_sync_at']),
-      status: row['status']! as String,
-      createdAt: _dateTime(row['created_at']),
-      updatedAt: _dateTime(row['updated_at']),
-    );
+      final row = rows.single;
+      return SyncAccountConfiguration(
+        id: row['id']! as String,
+        providerType: row['provider_type']! as String,
+        configJson: _cryptoService.decryptField(
+          row['encrypted_config'] as List<int>?,
+          field: EncryptedDatabaseField.syncAccountConfig,
+          rowId: row['id']! as String,
+        ),
+        lastSyncAt: _dateTimeOrNull(row['last_sync_at']),
+        status: row['status']! as String,
+        createdAt: _dateTime(row['created_at']),
+        updatedAt: _dateTime(row['updated_at']),
+      );
+    });
   }
 
   Future<void> saveAppSetting({
@@ -101,31 +103,33 @@ class SqliteProtectedConfigurationRepository {
       throw StateError('App setting value could not be encrypted.');
     }
 
-    final db = await _database.database;
-    await db.insert(DatabaseSchema.appSettings, <String, Object?>{
-      'key': key,
-      'value_ciphertext': encryptedValue,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await _database.run((db) async {
+      await db.insert(DatabaseSchema.appSettings, <String, Object?>{
+        'key': key,
+        'value_ciphertext': encryptedValue,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Future<String?> loadAppSetting(String key) async {
     _validateIdentifier(key, 'key');
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.appSettings,
-      where: 'key = ?',
-      whereArgs: <Object>[key],
-      limit: 1,
-    );
-    if (rows.isEmpty) {
-      return null;
-    }
-    final row = rows.single;
-    return _cryptoService.decryptField(
-      row['value_ciphertext'] as List<int>?,
-      field: EncryptedDatabaseField.appSettingValue,
-      rowId: row['key']! as String,
-    );
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.appSettings,
+        where: 'key = ?',
+        whereArgs: <Object>[key],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+      final row = rows.single;
+      return _cryptoService.decryptField(
+        row['value_ciphertext'] as List<int>?,
+        field: EncryptedDatabaseField.appSettingValue,
+        rowId: row['key']! as String,
+      );
+    });
   }
 
   DateTime _dateTime(Object? value) {

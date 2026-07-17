@@ -43,10 +43,12 @@ void main() {
 
     await repository.save(item);
 
-    final rawRows = await (await database.database).query(
-      DatabaseSchema.noteItems,
-      where: 'id = ?',
-      whereArgs: [item.id],
+    final rawRows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.noteItems,
+        where: 'id = ?',
+        whereArgs: [item.id],
+      ),
     );
     expect(
       () => FieldEnvelopeCodec.decode(
@@ -68,26 +70,30 @@ void main() {
 
     await expectLater(repository.save(item), throwsFormatException);
 
-    final rows = await (await database.database).query(
-      DatabaseSchema.noteItems,
-      where: 'id = ?',
-      whereArgs: [item.id],
+    final rows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.noteItems,
+        where: 'id = ?',
+        whereArgs: [item.id],
+      ),
     );
     expect(rows, isEmpty);
   });
 
   test('rejects legacy plaintext fields loaded from the database', () async {
     final item = _legacyNote();
-    await (await database.database).insert(DatabaseSchema.noteItems, {
-      'id': item.id,
-      'vault_id': item.vaultId,
-      'title': item.title,
-      'content_ciphertext': item.contentCiphertext,
-      'summary_ciphertext': item.summaryCacheCiphertext,
-      'favorite': 0,
-      'created_at': item.createdAt.millisecondsSinceEpoch,
-      'updated_at': item.updatedAt.millisecondsSinceEpoch,
-    });
+    await database.run(
+      (db) => db.insert(DatabaseSchema.noteItems, {
+        'id': item.id,
+        'vault_id': item.vaultId,
+        'title': item.title,
+        'content_ciphertext': item.contentCiphertext,
+        'summary_ciphertext': item.summaryCacheCiphertext,
+        'favorite': 0,
+        'created_at': item.createdAt.millisecondsSinceEpoch,
+        'updated_at': item.updatedAt.millisecondsSinceEpoch,
+      }),
+    );
 
     await expectLater(repository.getById(item.id), throwsFormatException);
   });

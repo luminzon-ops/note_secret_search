@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/field_envelope.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/secrets/application/secret_form_mapper.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
@@ -50,10 +51,12 @@ void main() {
 
     await repository.save(item);
 
-    final rawRows = await (await database.database).query(
-      DatabaseSchema.secretItems,
-      where: 'id = ?',
-      whereArgs: [item.id],
+    final rawRows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.secretItems,
+        where: 'id = ?',
+        whereArgs: [item.id],
+      ),
     );
     expect(
       () => FieldEnvelopeCodec.decode(
@@ -75,30 +78,43 @@ void main() {
 
     await expectLater(repository.save(item), throwsFormatException);
 
-    final rows = await (await database.database).query(
-      DatabaseSchema.secretItems,
-      where: 'id = ?',
-      whereArgs: [item.id],
+    final rows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.secretItems,
+        where: 'id = ?',
+        whereArgs: [item.id],
+      ),
     );
     expect(rows, isEmpty);
   });
 
   test('rejects legacy plaintext fields loaded from the database', () async {
     final item = _legacySecret();
-    await (await database.database).insert(DatabaseSchema.secretItems, {
-      'id': item.id,
-      'vault_id': item.vaultId,
-      'title': item.title,
-      'username_ciphertext': item.usernameCiphertext,
-      'password_ciphertext': item.passwordCiphertext,
-      'website_url_ciphertext': item.websiteUrlCiphertext,
-      'note_ciphertext': item.noteCiphertext,
-      'favorite': 0,
-      'created_at': item.createdAt.millisecondsSinceEpoch,
-      'updated_at': item.updatedAt.millisecondsSinceEpoch,
-    });
+    await database.run(
+      (db) => db.insert(DatabaseSchema.secretItems, {
+        'id': item.id,
+        'vault_id': item.vaultId,
+        'title': item.title,
+        'username_ciphertext': item.usernameCiphertext,
+        'password_ciphertext': item.passwordCiphertext,
+        'website_url_ciphertext': item.websiteUrlCiphertext,
+        'note_ciphertext': item.noteCiphertext,
+        'favorite': 0,
+        'created_at': item.createdAt.millisecondsSinceEpoch,
+        'updated_at': item.updatedAt.millisecondsSinceEpoch,
+      }),
+    );
 
     await expectLater(repository.getById(item.id), throwsFormatException);
+  });
+
+  test('rejects repository access after the database is locked', () async {
+    await database.close();
+
+    await expectLater(
+      repository.getById('secret-1'),
+      throwsA(isA<DatabaseAccessRevokedException>()),
+    );
   });
 }
 

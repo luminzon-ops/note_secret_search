@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 
@@ -157,6 +158,12 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
             'PIN_COOLDOWN' => 'PIN 已进入冷却，请稍后重试',
             _ => 'PIN 解锁失败，请重试',
           };
+        });
+      }
+    } on DatabaseLifecycleException {
+      if (mounted) {
+        setState(() {
+          _errorText = '安全数据库暂不可用，请重试';
         });
       }
     } finally {

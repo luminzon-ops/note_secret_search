@@ -10,35 +10,38 @@ class SqliteVaultRepository implements VaultRepository {
   final AppDatabase _database;
 
   @override
-  Future<Vault?> getDefaultVault() async {
-    final db = await _database.database;
-    final rows = await db.query(
-      DatabaseSchema.vaults,
-      where: 'is_default = ?',
-      whereArgs: const <Object>[1],
-      limit: 1,
-    );
+  Future<Vault?> getDefaultVault() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.vaults,
+        where: 'is_default = ?',
+        whereArgs: const <Object>[1],
+        limit: 1,
+      );
 
-    if (rows.isEmpty) {
-      return null;
-    }
+      if (rows.isEmpty) {
+        return null;
+      }
 
-    return _mapVault(rows.first);
+      return _mapVault(rows.first);
+    });
   }
 
   @override
-  Future<List<Vault>> listAll() async {
-    final db = await _database.database;
-    final rows = await db.query(DatabaseSchema.vaults, orderBy: 'created_at ASC');
-    return rows.map(_mapVault).toList(growable: false);
+  Future<List<Vault>> listAll() {
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.vaults,
+        orderBy: 'created_at ASC',
+      );
+      return rows.map(_mapVault).toList(growable: false);
+    });
   }
 
   @override
-  Future<void> save(Vault vault) async {
-    final db = await _database.database;
-    await db.insert(
-      DatabaseSchema.vaults,
-      <String, Object?>{
+  Future<void> save(Vault vault) {
+    return _database.run((db) async {
+      await db.insert(DatabaseSchema.vaults, <String, Object?>{
         'id': vault.id,
         'name': vault.name,
         'description': vault.description,
@@ -46,9 +49,8 @@ class SqliteVaultRepository implements VaultRepository {
         'encryption_version': vault.encryptionVersion,
         'created_at': vault.createdAt.millisecondsSinceEpoch,
         'updated_at': vault.updatedAt.millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
   Vault _mapVault(Map<String, Object?> row) {

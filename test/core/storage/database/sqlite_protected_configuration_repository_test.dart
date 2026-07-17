@@ -41,10 +41,12 @@ void main() {
 
     await repository.saveSyncAccount(account);
 
-    final rows = await (await database.database).query(
-      DatabaseSchema.syncAccounts,
-      where: 'id = ?',
-      whereArgs: <Object>[account.id],
+    final rows = await database.run(
+      (db) => db.query(
+        DatabaseSchema.syncAccounts,
+        where: 'id = ?',
+        whereArgs: <Object>[account.id],
+      ),
     );
     final encrypted = rows.single['encrypted_config']! as List<int>;
     expect(() => FieldEnvelopeCodec.decode(encrypted), returnsNormally);
@@ -73,21 +75,22 @@ void main() {
         updatedAt: DateTime(2026, 7, 16),
       );
       await repository.saveSyncAccount(account);
-      final db = await database.database;
-      final source = (await db.query(
-        DatabaseSchema.syncAccounts,
-        where: 'id = ?',
-        whereArgs: <Object>[account.id],
-      )).single;
+      await database.run((db) async {
+        final source = (await db.query(
+          DatabaseSchema.syncAccounts,
+          where: 'id = ?',
+          whereArgs: <Object>[account.id],
+        )).single;
 
-      await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
-        ...source,
-        'id': 'sync-substituted',
-      });
-      await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
-        ...source,
-        'id': 'sync-legacy',
-        'encrypted_config': utf8.encode('{"token":"legacy"}'),
+        await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
+          ...source,
+          'id': 'sync-substituted',
+        });
+        await db.insert(DatabaseSchema.syncAccounts, <String, Object?>{
+          ...source,
+          'id': 'sync-legacy',
+          'encrypted_config': utf8.encode('{"token":"legacy"}'),
+        });
       });
 
       await expectLater(
@@ -106,12 +109,13 @@ void main() {
       key: 'search.private_scope',
       value: '{"passwords":false}',
     );
-    final db = await database.database;
-    final source = (await db.query(
-      DatabaseSchema.appSettings,
-      where: 'key = ?',
-      whereArgs: const <Object>['search.private_scope'],
-    )).single;
+    final source = await database.run((db) async {
+      return (await db.query(
+        DatabaseSchema.appSettings,
+        where: 'key = ?',
+        whereArgs: const <Object>['search.private_scope'],
+      )).single;
+    });
     final encrypted = source['value_ciphertext']! as List<int>;
     expect(() => FieldEnvelopeCodec.decode(encrypted), returnsNormally);
     expect(
@@ -119,13 +123,15 @@ void main() {
       '{"passwords":false}',
     );
 
-    await db.insert(DatabaseSchema.appSettings, <String, Object?>{
-      'key': 'search.substituted',
-      'value_ciphertext': encrypted,
-    });
-    await db.insert(DatabaseSchema.appSettings, <String, Object?>{
-      'key': 'search.legacy',
-      'value_ciphertext': utf8.encode('legacy-value'),
+    await database.run((db) async {
+      await db.insert(DatabaseSchema.appSettings, <String, Object?>{
+        'key': 'search.substituted',
+        'value_ciphertext': encrypted,
+      });
+      await db.insert(DatabaseSchema.appSettings, <String, Object?>{
+        'key': 'search.legacy',
+        'value_ciphertext': utf8.encode('legacy-value'),
+      });
     });
 
     await expectLater(

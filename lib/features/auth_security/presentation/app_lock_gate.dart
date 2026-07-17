@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
 class AppLockGate extends ConsumerStatefulWidget {
@@ -19,6 +20,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
   var _vaultRedirectScheduled = false;
   final Set<int> _scheduledRevealEpochs = <int>{};
   int? _revealedLockEpoch;
+  NativeSecurityState? _securityState;
 
   @override
   void didChangeDependencies() {
@@ -27,14 +29,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
       return;
     }
     _hydrationStarted = true;
-    Future<void>(() async {
-      final orchestrator = ref.read(securityOrchestratorProvider);
-      try {
-        await orchestrator.refreshSecurityState();
-      } catch (_) {
-        orchestrator.enablePinFallback(false);
-      }
-    });
+    Future<void>(_refreshSecurityState);
   }
 
   @override
@@ -42,6 +37,9 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
     final session = ref.watch(lockSessionControllerProvider);
     final pinState = ref.watch(pinStateControllerProvider);
     final router = ref.watch(appRouterProvider);
+    final databaseState =
+        ref.watch(appDatabaseLifecycleProvider).value ??
+        ref.read(appDatabaseProvider).state;
 
     return ValueListenableBuilder<RouteInformation>(
       valueListenable: router.routeInformationProvider,
@@ -52,7 +50,8 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
             session.pinEnabled &&
             pinState.enabled &&
             pinState.hasPinMaterial;
-        if (session.isUnlocked) {
+        if (session.isUnlocked &&
+            databaseState.status == DatabaseLifecycleStatus.open) {
           return widget.child;
         }
         _scheduleSafeSurfaceReveal(session.lockEpoch);
@@ -64,10 +63,28 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
         }
 
         return AppLockScreen(
+          securityState: _securityState,
+          databaseState: databaseState,
+          onProvisioned: () => _refreshSecurityState(clearCachedState: true),
           onUnlocked: () => ref.read(appRouterProvider).go('/vault'),
         );
       },
     );
+  }
+
+  Future<void> _refreshSecurityState({bool clearCachedState = false}) async {
+    final orchestrator = ref.read(securityOrchestratorProvider);
+    if (clearCachedState && mounted) {
+      setState(() => _securityState = null);
+    }
+    try {
+      final securityState = await orchestrator.refreshSecurityState();
+      if (mounted) {
+        setState(() => _securityState = securityState);
+      }
+    } catch (_) {
+      orchestrator.enablePinFallback(false);
+    }
   }
 
   void _scheduleVaultRedirect(GoRouter router) {
@@ -135,9 +152,18 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
 }
 
 class AppLockScreen extends ConsumerStatefulWidget {
-  const AppLockScreen({required this.onUnlocked, super.key});
+  const AppLockScreen({
+    required this.onUnlocked,
+    this.securityState,
+    this.databaseState,
+    this.onProvisioned,
+    super.key,
+  });
 
   final VoidCallback onUnlocked;
+  final NativeSecurityState? securityState;
+  final DatabaseLifecycleState? databaseState;
+  final Future<void> Function()? onProvisioned;
 
   @override
   ConsumerState<AppLockScreen> createState() => _AppLockScreenState();
@@ -154,6 +180,39 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
     final coolDownUntil = pinState.coolDownUntil;
     final inCoolDown =
         coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
+    final securityStatus =
+        widget.securityState?.status ?? NativeSecurityStatus.locked;
+    final provisioning = securityStatus == NativeSecurityStatus.unprovisioned;
+    final databaseOpening =
+        widget.databaseState?.status == DatabaseLifecycleStatus.opening;
+    final databaseError =
+        widget.databaseState?.status == DatabaseLifecycleStatus.error;
+    final blocked =
+        securityStatus == NativeSecurityStatus.legacyMigrationRequired ||
+        securityStatus == NativeSecurityStatus.recoveryRequired ||
+        databaseOpening ||
+        databaseError;
+    final title = databaseOpening
+        ? '正在打开安全数据库'
+        : databaseError
+        ? '安全数据库暂不可用'
+        : switch (securityStatus) {
+            NativeSecurityStatus.unprovisioned => '启用安全存储',
+            NativeSecurityStatus.legacyMigrationRequired => '需要升级安全存储',
+            NativeSecurityStatus.recoveryRequired => '需要恢复安全存储',
+            NativeSecurityStatus.locked => '应用已锁定',
+          };
+    final description = databaseOpening
+        ? '正在验证并准备本地加密数据。'
+        : databaseError
+        ? '数据库保持关闭，请重新锁定后再次尝试。'
+        : switch (securityStatus) {
+            NativeSecurityStatus.unprovisioned => '使用系统锁屏凭据创建受保护的本地密钥。',
+            NativeSecurityStatus.legacyMigrationRequired =>
+              '检测到旧版安全数据，完成升级前不会打开数据库。',
+            NativeSecurityStatus.recoveryRequired => '安全密钥暂不可用，数据库将保持关闭并等待恢复。',
+            NativeSecurityStatus.locked => '默认使用系统生物识别解锁。应用 PIN 可在解锁后的安全设置中启用。',
+          };
 
     return Scaffold(
       body: Center(
@@ -172,20 +231,29 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  '应用已锁定',
+                  title,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  '默认使用系统生物识别解锁。应用 PIN 可在解锁后的安全设置中启用。',
-                  textAlign: TextAlign.center,
-                ),
+                Text(description, textAlign: TextAlign.center),
                 const SizedBox(height: 24),
                 FilledButton.icon(
-                  onPressed: _busy ? null : _unlockWithBiometrics,
+                  onPressed: (_busy || blocked)
+                      ? null
+                      : provisioning
+                      ? _provisionWithSystemAuth
+                      : _unlockWithBiometrics,
                   icon: const Icon(Icons.fingerprint),
-                  label: Text(_busy ? '验证中...' : '使用生物识别解锁'),
+                  label: Text(
+                    _busy
+                        ? '验证中...'
+                        : provisioning
+                        ? '使用系统凭据启用'
+                        : blocked
+                        ? '安全存储不可用'
+                        : '使用生物识别解锁',
+                  ),
                 ),
                 if (_authenticationError != null) ...[
                   const SizedBox(height: 16),
@@ -197,12 +265,14 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                     ),
                   ),
                 ],
-                if (session.pinEnabled &&
+                if (!blocked &&
+                    !provisioning &&
+                    session.pinEnabled &&
                     pinState.enabled &&
                     pinState.hasPinMaterial) ...[
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
-                    onPressed: inCoolDown ? null : _openPinUnlock,
+                    onPressed: (_busy || inCoolDown) ? null : _openPinUnlock,
                     icon: const Icon(Icons.pin_outlined),
                     label: const Text('使用应用 PIN 解锁'),
                   ),
@@ -251,6 +321,50 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
             'RECOVERY_REQUIRED' => '安全存储暂不可用',
             _ => '身份验证失败，请重试',
           };
+        });
+      }
+    } on DatabaseLifecycleException {
+      if (mounted) {
+        setState(() {
+          _authenticationError = '安全数据库暂不可用，请重试';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _provisionWithSystemAuth() async {
+    setState(() {
+      _busy = true;
+      _authenticationError = null;
+    });
+    try {
+      final unlocked = await ref
+          .read(securityOrchestratorProvider)
+          .provisionWithSystemAuth();
+      if (unlocked && mounted) {
+        await widget.onProvisioned?.call();
+        if (mounted) {
+          widget.onUnlocked();
+        }
+      }
+    } on NativeSecurityException catch (error) {
+      if (mounted) {
+        setState(() {
+          _authenticationError = switch (error.code) {
+            'AUTH_CANCELLED' => '身份验证已取消',
+            'DEVICE_CREDENTIAL_NOT_SET' => '请先在系统设置中启用安全锁屏',
+            _ => '安全存储启用失败，请重试',
+          };
+        });
+      }
+    } on DatabaseLifecycleException {
+      if (mounted) {
+        setState(() {
+          _authenticationError = '安全数据库暂不可用，请重试';
         });
       }
     } finally {

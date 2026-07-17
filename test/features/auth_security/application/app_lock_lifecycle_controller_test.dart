@@ -22,6 +22,7 @@ void main() {
       sessionController: sessionController,
       autoLockSecondsLoader: () async => 60,
       screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -60,6 +61,7 @@ void main() {
         sessionController: sessionController,
         autoLockSecondsLoader: () async => 1,
         screenshotProtectionGateway: gateway,
+        lockApplication: () async => sessionController.lock(),
       );
 
       controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -91,6 +93,7 @@ void main() {
         sessionController: sessionController,
         autoLockSecondsLoader: () async => 0,
         screenshotProtectionGateway: gateway,
+        lockApplication: () async => sessionController.lock(),
       );
 
       controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -113,6 +116,7 @@ void main() {
       autoLockSecondsLoader: () =>
           Future<int>.error(StateError('settings unavailable')),
       screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -137,6 +141,7 @@ void main() {
         throw StateError('settings unavailable');
       },
       screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -164,6 +169,7 @@ void main() {
       sessionController: sessionController,
       autoLockSecondsLoader: () async => 60,
       screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -187,6 +193,7 @@ void main() {
       sessionController: sessionController,
       autoLockSecondsLoader: () async => 1,
       screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
@@ -201,6 +208,29 @@ void main() {
 
     expect(gateway.obscuredUpdates, [true]);
     expect(sessionController.state.isUnlocked, isFalse);
+  });
+
+  test('background timer locks before the app resumes', () async {
+    final sessionController = LockSessionController()
+      ..markUnlocked(UnlockMethod.biometric);
+    final gateway = _RecordingScreenshotProtectionGateway();
+    var lockCalls = 0;
+    final controller = AppLockLifecycleController(
+      sessionController: sessionController,
+      autoLockSecondsLoader: () async => 1,
+      screenshotProtectionGateway: gateway,
+      lockApplication: () async {
+        lockCalls += 1;
+        sessionController.lock();
+      },
+    );
+
+    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    await _drainEventQueue();
+
+    expect(lockCalls, 1);
+    expect(sessionController.isUnlocked, isFalse);
   });
 }
 

@@ -18,6 +18,8 @@ import 'package:note_secret_search/features/settings/presentation/pin_setup_page
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../support/fake_app_database.dart';
+
 void main() {
   testWidgets('pin setup never unlocks a locked session after save', (
     tester,
@@ -43,6 +45,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -118,6 +121,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 sessionKeyStore: DatabaseSessionKeyStore(),
+                database: FakeAppDatabase(),
                 logger: const AppLogger(),
                 appIsForeground: () => true,
               ),
@@ -227,6 +231,11 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
       strongBiometricAvailable: true,
       securityLevel: KeySecurityLevel.tee,
     );
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    return unlockWithSystemAuth();
   }
 
   @override

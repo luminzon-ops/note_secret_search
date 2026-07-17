@@ -8,9 +8,12 @@ import 'package:note_secret_search/app/app.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+
+import '../support/fake_app_database.dart';
 
 const _manualContext = ChatContextItem(
   id: 'manual-sensitive',
@@ -64,11 +67,36 @@ void main() {
   );
 
   testWidgets(
-    'unlocked to locked transition clears populated sensitive state',
+    'unlocked session keeps sensitive state blocked while database is locked',
     (tester) async {
       final sessionController = LockSessionController()
         ..markUnlocked(UnlockMethod.biometric);
       final fixture = _AppFixture(sessionController);
+      addTearDown(fixture.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: fixture.container,
+          child: const NoteSecretSearchApp(),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        fixture.container.read(sensitiveStateAccessAllowedProvider),
+        isFalse,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'unlocked to locked transition clears populated sensitive state',
+    (tester) async {
+      final sessionController = LockSessionController()
+        ..markUnlocked(UnlockMethod.biometric);
+      final fixture = _AppFixture(sessionController, databaseOpen: true);
       addTearDown(fixture.dispose);
 
       await tester.pumpWidget(
@@ -110,20 +138,29 @@ void main() {
 }
 
 class _AppFixture {
-  _AppFixture(LockSessionController sessionController)
-    : router = GoRouter(
-        initialLocation: '/',
-        routes: [
-          GoRoute(
-            path: '/',
-            builder: (context, state) => const Scaffold(body: Text('fixture')),
-          ),
-        ],
-      ),
-      bootstrapBlocker = Completer<void>() {
+  _AppFixture(
+    LockSessionController sessionController, {
+    bool databaseOpen = false,
+  }) : router = GoRouter(
+         initialLocation: '/',
+         routes: [
+           GoRoute(
+             path: '/',
+             builder: (context, state) => const Scaffold(body: Text('fixture')),
+           ),
+         ],
+       ),
+       bootstrapBlocker = Completer<void>() {
     container = ProviderContainer(
       overrides: [
         lockSessionControllerProvider.overrideWith((ref) => sessionController),
+        appDatabaseProvider.overrideWithValue(
+          FakeAppDatabase(
+            initialStatus: databaseOpen
+                ? DatabaseLifecycleStatus.open
+                : DatabaseLifecycleStatus.locked,
+          ),
+        ),
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         appRouterProvider.overrideWithValue(router),
         appBootstrapProvider.overrideWith((ref) => bootstrapBlocker.future),

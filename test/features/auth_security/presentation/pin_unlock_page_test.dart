@@ -18,6 +18,8 @@ import 'package:note_secret_search/features/auth_security/presentation/pin_unloc
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
+
+import '../../../support/fake_app_database.dart';
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
 
 void main() {
@@ -61,6 +63,7 @@ void main() {
                 sessionController: sessionController,
                 pinStateController: pinStateController,
                 sessionKeyStore: DatabaseSessionKeyStore(),
+                database: FakeAppDatabase(),
                 logger: const AppLogger(),
                 appIsForeground: () => true,
               ),
@@ -137,6 +140,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -192,6 +196,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -247,6 +252,7 @@ void main() {
               sessionController: sessionController,
               pinStateController: pinStateController,
               sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -344,6 +350,11 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
       strongBiometricAvailable: true,
       securityLevel: KeySecurityLevel.tee,
     );
+  }
+
+  @override
+  Future<NativeUnlockResult> provisionWithSystemAuth() {
+    return unlockWithSystemAuth();
   }
 
   @override
