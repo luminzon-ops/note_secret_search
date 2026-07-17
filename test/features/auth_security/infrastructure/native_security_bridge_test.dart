@@ -221,6 +221,102 @@ void main() {
     expect(result.unlockMethod, 'system');
   });
 
+  test(
+    'configurePin sends temporary bytes and clears them after use',
+    () async {
+      Uint8List? transmittedPin;
+      Uint8List? capturedPin;
+      final bridge = MethodChannelNativeSecurityBridge(
+        invoker: _CallbackNativeSecurityMethodInvoker((
+          method,
+          arguments,
+        ) async {
+          expect(method, 'configurePin');
+          final payload = arguments as Map<Object?, Object?>;
+          expect(payload['reason'], '配置备用 PIN');
+          transmittedPin = payload['pin'] as Uint8List;
+          capturedPin = Uint8List.fromList(transmittedPin!);
+          return null;
+        }),
+      );
+
+      await bridge.configurePin(pin: '2468', reason: '配置备用 PIN');
+
+      expect(capturedPin, orderedEquals('2468'.codeUnits));
+      expect(transmittedPin, everyElement(0));
+    },
+  );
+
+  test('unlockWithPin decodes pin material and clears temporary pin', () async {
+    Uint8List? transmittedPin;
+    final bridge = MethodChannelNativeSecurityBridge(
+      invoker: _CallbackNativeSecurityMethodInvoker((method, arguments) async {
+        expect(method, 'unlockWithPin');
+        final payload = arguments as Map<Object?, Object?>;
+        transmittedPin = payload['pin'] as Uint8List;
+        return _validUnlockPayload()..['unlockMethod'] = 'pin';
+      }),
+    );
+
+    final result = await bridge.unlockWithPin(pin: '2468');
+    addTearDown(result.clear);
+
+    expect(result.unlockMethod, 'pin');
+    expect(transmittedPin, everyElement(0));
+  });
+
+  test('unlockWithPin clears temporary pin when native call fails', () async {
+    Uint8List? transmittedPin;
+    final bridge = MethodChannelNativeSecurityBridge(
+      invoker: _CallbackNativeSecurityMethodInvoker((method, arguments) async {
+        final payload = arguments as Map<Object?, Object?>;
+        transmittedPin = payload['pin'] as Uint8List;
+        throw PlatformException(code: 'PIN_INCORRECT');
+      }),
+    );
+
+    await expectLater(
+      bridge.unlockWithPin(pin: '0000'),
+      throwsA(
+        isA<NativeSecurityException>().having(
+          (error) => error.code,
+          'code',
+          'PIN_INCORRECT',
+        ),
+      ),
+    );
+
+    expect(transmittedPin, everyElement(0));
+  });
+
+  test('removePin forwards its authenticated reason', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'removePin');
+      expect(call.arguments, <String, Object?>{'reason': '移除备用 PIN'});
+      return null;
+    });
+
+    await const MethodChannelNativeSecurityBridge().removePin(
+      reason: '移除备用 PIN',
+    );
+  });
+
+  test('system and pin calls reject a mismatched unlock method', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return _validUnlockPayload()
+        ..['unlockMethod'] = call.method == 'unlockWithPin' ? 'system' : 'pin';
+    });
+
+    await expectLater(
+      const MethodChannelNativeSecurityBridge().unlockWithSystemAuth(),
+      throwsFormatException,
+    );
+    await expectLater(
+      const MethodChannelNativeSecurityBridge().unlockWithPin(pin: '2468'),
+      throwsFormatException,
+    );
+  });
+
   test('unlock result rejects missing and blank keyId', () async {
     for (final keyId in <Object?>[null, '   ']) {
       messenger.setMockMethodCallHandler(channel, (call) async {
@@ -284,7 +380,7 @@ void main() {
 
   test('unlock result rejects unknown unlock method', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
-      return _validUnlockPayload()..['unlockMethod'] = 'pin';
+      return _validUnlockPayload()..['unlockMethod'] = 'password';
     });
 
     await expectLater(
@@ -412,6 +508,56 @@ class _StaticSecureKeyGateway implements SecureKeyGateway {
 
   @override
   Future<String> getDatabasePasswordMaterial() async => material;
+
+  @override
+  Future<NativeSecurityState> getSecurityState() async {
+    return const NativeSecurityState(
+      status: NativeSecurityStatus.locked,
+      keyId: _validKeyId,
+      pinConfigured: false,
+      deviceCredentialAvailable: true,
+      strongBiometricAvailable: true,
+      securityLevel: KeySecurityLevel.tee,
+    );
+  }
+
+  @override
+  Future<NativeUnlockResult> unlockWithSystemAuth() async {
+    return NativeUnlockResult(
+      keyId: _validKeyId,
+      databaseKey: Uint8List(32),
+      fieldKey: Uint8List(32),
+      unlockMethod: 'system',
+    );
+  }
+
+  @override
+  Future<void> configurePin({required String pin}) async {}
+
+  @override
+  Future<NativeUnlockResult> unlockWithPin({required String pin}) async {
+    return NativeUnlockResult(
+      keyId: _validKeyId,
+      databaseKey: Uint8List(32),
+      fieldKey: Uint8List(32),
+      unlockMethod: 'pin',
+    );
+  }
+
+  @override
+  Future<void> removePin() async {}
+}
+
+class _CallbackNativeSecurityMethodInvoker
+    implements NativeSecurityMethodInvoker {
+  _CallbackNativeSecurityMethodInvoker(this.callback);
+
+  final Future<Object?> Function(String method, Object? arguments) callback;
+
+  @override
+  Future<Object?> invokeMethod(String method, [Object? arguments]) {
+    return callback(method, arguments);
+  }
 }
 
 Map<String, Object?> _validStatePayload() {

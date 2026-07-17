@@ -63,6 +63,411 @@ internal class SecurityKeyringManagerTest : SecurityKeyringTestFixture() {
     }
 
     @Test
+    fun `security state reports a configured PIN envelope`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        val keyset = SecurityKeysetCodec.decode(store.bytes!!)
+        store.write(
+            SecurityKeysetCodec.encode(
+                keyset.copy(
+                    pinEnvelope = PinEnvelope(
+                        kdf = PinKdfParameters(
+                            memoryKiB = 65_536,
+                            iterations = 3,
+                            parallelism = 1,
+                            salt = ByteArray(16) { (it + 3).toByte() },
+                        ),
+                        nonce = ByteArray(12) { (it + 20).toByte() },
+                        ciphertext = ByteArray(32) { (it + 40).toByte() },
+                        tag = ByteArray(16) { (it + 80).toByte() },
+                    ),
+                ),
+            ),
+        )
+
+        val state = manager.getSecurityState()
+
+        assertTrue(state.pinConfigured)
+    }
+
+    @Test
+    fun `configuring a PIN authenticates the system envelope and persists a PIN envelope`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        authenticator.requests.clear()
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        val pin = "2468".toByteArray()
+        val result = RecordingNativeResult<Unit>()
+
+        manager.configurePin("Configure fallback PIN", pin, result)
+
+        assertNull(result.error)
+        assertEquals(Unit, result.value)
+        assertTrue(manager.getSecurityState().pinConfigured)
+        assertTrue(pin.all { it == 0.toByte() })
+        assertNotNull(SecurityKeysetCodec.decode(store.bytes!!).pinEnvelope)
+        assertEquals(2, store.writes)
+        assertEquals(
+            listOf(SystemAuthenticatorMode.COMBINED),
+            authenticator.requests.map { it.mode },
+        )
+    }
+
+    @Test
+    fun `PIN is cleared when keyset storage fails before configuration`() {
+        store.failReads = true
+        val pin = "2468".toByteArray()
+        val result = RecordingNativeResult<Unit>()
+
+        manager(apiLevel = 30).configurePin(
+            "Configure fallback PIN",
+            pin,
+            result,
+        )
+
+        assertEquals(
+            NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            result.error?.code,
+        )
+        assertTrue(pin.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun `PIN unlock returns the same session keys without system authentication`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        val provision = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.provisionWithSystemAuth("Create keyring", provision)
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        authenticator.requests.clear()
+        val pin = "2468".toByteArray()
+        val unlock = RecordingNativeResult<NativeUnlockMaterial>()
+
+        manager.unlockWithPin(pin, unlock)
+
+        assertNull(unlock.error)
+        assertArrayEquals(provision.value!!.databaseKey, unlock.value!!.databaseKey)
+        assertArrayEquals(provision.value!!.fieldKey, unlock.value!!.fieldKey)
+        assertEquals("pin", unlock.value!!.unlockMethod)
+        assertTrue(pin.all { it == 0.toByte() })
+        assertTrue(authenticator.requests.isEmpty())
+    }
+
+    @Test
+    fun `sixth PIN attempt is blocked after five consecutive failures`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+
+        repeat(5) {
+            val pin = "0000".toByteArray()
+            val failure = RecordingNativeResult<NativeUnlockMaterial>()
+
+            manager.unlockWithPin(pin, failure)
+
+            assertEquals(
+                NativeSecurityErrorCode.PIN_INCORRECT,
+                failure.error?.code,
+            )
+            assertTrue(pin.all { it == 0.toByte() })
+        }
+        val blockedPin = "2468".toByteArray()
+        val blocked = RecordingNativeResult<NativeUnlockMaterial>()
+
+        manager.unlockWithPin(blockedPin, blocked)
+
+        assertEquals("PIN_COOLDOWN", blocked.error?.code?.name)
+        assertNull(blocked.value)
+        assertTrue(blockedPin.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun `successful PIN unlock after cooldown clears persisted failures`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val firstProcess = manager(apiLevel = 30)
+        firstProcess.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        firstProcess.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        repeat(5) {
+            firstProcess.unlockWithPin(
+                "0000".toByteArray(),
+                RecordingNativeResult(),
+            )
+        }
+        val restartedProcess = manager(apiLevel = 30)
+        val blocked = RecordingNativeResult<NativeUnlockMaterial>()
+        restartedProcess.unlockWithPin("2468".toByteArray(), blocked)
+        assertEquals(
+            NativeSecurityErrorCode.PIN_COOLDOWN,
+            blocked.error?.code,
+        )
+        pinThrottleClock.elapsedRealtimeMs += 60_000
+        pinThrottleClock.wallClockMs += 60_000
+
+        val unlock = RecordingNativeResult<NativeUnlockMaterial>()
+        restartedProcess.unlockWithPin("2468".toByteArray(), unlock)
+
+        assertNull(unlock.error)
+        assertNotNull(unlock.value)
+        assertNull(pinThrottleStore.state)
+
+        val nextFailure = RecordingNativeResult<NativeUnlockMaterial>()
+        manager(apiLevel = 30).unlockWithPin(
+            "0000".toByteArray(),
+            nextFailure,
+        )
+        assertEquals(
+            NativeSecurityErrorCode.PIN_INCORRECT,
+            nextFailure.error?.code,
+        )
+    }
+
+    @Test
+    fun `replacing a PIN preserves system envelopes and invalidates the old PIN`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        val provisioned = SecurityKeysetCodec.decode(store.bytes!!)
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 60).toByte() })
+        random.enqueue(ByteArray(12) { (it + 100).toByte() })
+        val replacement = RecordingNativeResult<Unit>()
+
+        manager.configurePin(
+            "Replace fallback PIN",
+            "1357".toByteArray(),
+            replacement,
+        )
+
+        assertNull(replacement.error)
+        val replaced = SecurityKeysetCodec.decode(store.bytes!!)
+        assertEquals(provisioned.keyId, replaced.keyId)
+        assertEquals(provisioned.envelopes, replaced.envelopes)
+
+        val oldPin = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("2468".toByteArray(), oldPin)
+        assertEquals(
+            NativeSecurityErrorCode.PIN_INCORRECT,
+            oldPin.error?.code,
+        )
+
+        val newPin = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("1357".toByteArray(), newPin)
+        assertNull(newPin.error)
+        assertNotNull(newPin.value)
+    }
+
+    @Test
+    fun `PIN replacement storage failure preserves the previous PIN`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        val previousKeyset = store.bytes!!.clone()
+        random.enqueue(ByteArray(16) { (it + 60).toByte() })
+        random.enqueue(ByteArray(12) { (it + 100).toByte() })
+        store.failOnWrite = store.writes + 1
+        val replacement = RecordingNativeResult<Unit>()
+
+        manager.configurePin(
+            "Replace fallback PIN",
+            "1357".toByteArray(),
+            replacement,
+        )
+
+        assertEquals(
+            NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            replacement.error?.code,
+        )
+        assertArrayEquals(previousKeyset, store.bytes)
+        store.failOnWrite = null
+
+        val oldPin = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("2468".toByteArray(), oldPin)
+        assertNull(oldPin.error)
+        assertNotNull(oldPin.value)
+
+        val rejectedReplacement = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("1357".toByteArray(), rejectedReplacement)
+        assertEquals(
+            NativeSecurityErrorCode.PIN_INCORRECT,
+            rejectedReplacement.error?.code,
+        )
+    }
+
+    @Test
+    fun `replacing a PIN does not inherit the previous PIN cooldown`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        repeat(5) {
+            manager.unlockWithPin(
+                "0000".toByteArray(),
+                RecordingNativeResult(),
+            )
+        }
+        random.enqueue(ByteArray(16) { (it + 60).toByte() })
+        random.enqueue(ByteArray(12) { (it + 100).toByte() })
+        val replacement = RecordingNativeResult<Unit>()
+        manager.configurePin(
+            "Replace fallback PIN",
+            "1357".toByteArray(),
+            replacement,
+        )
+        assertNull(replacement.error)
+
+        val unlock = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("1357".toByteArray(), unlock)
+
+        assertNull(unlock.error)
+        assertNotNull(unlock.value)
+    }
+
+    @Test
+    fun `removing a PIN authenticates the system envelope and preserves system keys`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        val aliasesBefore = SecurityKeysetCodec.decode(store.bytes!!)
+            .envelopes
+            .map { it.keyAlias }
+        authenticator.requests.clear()
+        val result = RecordingNativeResult<Unit>()
+
+        manager.removePin("Remove fallback PIN", result)
+
+        assertNull(result.error)
+        assertEquals(Unit, result.value)
+        assertFalse(manager.getSecurityState().pinConfigured)
+        assertEquals(
+            aliasesBefore,
+            SecurityKeysetCodec.decode(store.bytes!!).envelopes.map {
+                it.keyAlias
+            },
+        )
+        assertEquals(3, store.writes)
+        assertEquals(
+            listOf(SystemAuthenticatorMode.COMBINED),
+            authenticator.requests.map { it.mode },
+        )
+    }
+
+    @Test
+    fun `removing an absent PIN authenticates without rewriting the keyset`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        random.enqueue(ByteArray(16) { (it + 40).toByte() })
+        random.enqueue(ByteArray(12) { (it + 80).toByte() })
+        manager.configurePin(
+            "Configure fallback PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        manager.removePin(
+            "Remove fallback PIN",
+            RecordingNativeResult(),
+        )
+        val writesAfterRemoval = store.writes
+        authenticator.requests.clear()
+        val repeated = RecordingNativeResult<Unit>()
+
+        manager.removePin("Remove fallback PIN again", repeated)
+
+        assertNull(repeated.error)
+        assertEquals(Unit, repeated.value)
+        assertEquals(writesAfterRemoval, store.writes)
+        assertEquals(
+            listOf(SystemAuthenticatorMode.COMBINED),
+            authenticator.requests.map { it.mode },
+        )
+    }
+
+    @Test
     fun `api 29 provisions device then optional biometric envelopes`() {
         random.enqueue(ByteArray(16) { (it + 2).toByte() })
         random.enqueue(ByteArray(32) { it.toByte() })
@@ -298,6 +703,7 @@ internal class SecurityKeyringManagerTest : SecurityKeyringTestFixture() {
                 capabilities.copy(deviceCredentialAvailable = false)
             },
             random = random,
+            pinThrottle = testPinAttemptThrottle(),
         )
         val result = RecordingNativeResult<NativeUnlockMaterial>()
 

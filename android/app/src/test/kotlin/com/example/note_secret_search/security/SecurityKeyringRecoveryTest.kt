@@ -154,6 +154,7 @@ internal class SecurityKeyringRecoveryTest : SecurityKeyringTestFixture() {
             authenticator = authenticator,
             capabilities = { capabilities },
             random = random,
+            pinThrottle = testPinAttemptThrottle(),
         )
         manager.provisionWithSystemAuth(
             "Create keyring",

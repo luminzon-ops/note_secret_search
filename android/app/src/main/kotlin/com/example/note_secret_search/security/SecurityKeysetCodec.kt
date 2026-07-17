@@ -24,7 +24,15 @@ object SecurityEnvelopeAad {
 @OptIn(ExperimentalEncodingApi::class)
 object SecurityKeysetCodec {
     const val ALGORITHM = "AES-256-GCM"
-    private const val VERSION = 2
+    const val PIN_KDF_ALGORITHM = "Argon2id"
+    private const val LEGACY_VERSION = 2
+    private const val CURRENT_VERSION = 3
+    private const val PIN_PURPOSE = "pin"
+    private const val PIN_MEMORY_KIB = 65_536
+    private const val PIN_ITERATIONS = 3
+    private const val PIN_PARALLELISM = 1
+    private const val PIN_SALT_BYTES = 16
+    private const val PIN_OUTPUT_BYTES = 32
     private const val NONCE_BYTES = 12
     private const val CIPHERTEXT_BYTES = 32
     private const val TAG_BYTES = 16
@@ -45,10 +53,14 @@ object SecurityKeysetCodec {
                     .put("securityLevel", envelope.securityLevel.channelValue),
             )
         }
-        return JSONObject()
-            .put("version", VERSION)
+        val root = JSONObject()
+            .put("version", CURRENT_VERSION)
             .put("keyId", keyset.keyId)
             .put("envelopes", envelopes)
+        keyset.pinEnvelope?.let {
+            root.put("pinEnvelope", encodePinEnvelope(it))
+        }
+        return root
             .toString()
             .toByteArray(StandardCharsets.UTF_8)
     }
@@ -59,10 +71,18 @@ object SecurityKeysetCodec {
         }
         return try {
             val root = JSONObject(value.toString(StandardCharsets.UTF_8))
-            requireExactKeys(root, setOf("version", "keyId", "envelopes"))
-            if (root.getInt("version") != VERSION) {
-                corrupt()
+            val version = root.getInt("version")
+            val rootKeys = mutableSetOf("version", "keyId", "envelopes")
+            when (version) {
+                LEGACY_VERSION -> Unit
+                CURRENT_VERSION -> {
+                    if (root.has("pinEnvelope")) {
+                        rootKeys += "pinEnvelope"
+                    }
+                }
+                else -> corrupt()
             }
+            requireExactKeys(root, rootKeys)
             val keyId = root.getString("keyId")
             val array = root.getJSONArray("envelopes")
             val envelopes = buildList {
@@ -70,7 +90,15 @@ object SecurityKeysetCodec {
                     add(decodeEnvelope(array.getJSONObject(index)))
                 }
             }
-            SecurityKeyset(keyId, envelopes).also(::validateKeyset)
+            SecurityKeyset(
+                keyId = keyId,
+                envelopes = envelopes,
+                pinEnvelope = if (root.has("pinEnvelope")) {
+                    decodePinEnvelope(root.getJSONObject("pinEnvelope"))
+                } else {
+                    null
+                },
+            ).also(::validateKeyset)
         } catch (error: NativeSecurityException) {
             throw error
         } catch (error: Exception) {
@@ -106,6 +134,72 @@ object SecurityKeysetCodec {
         )
     }
 
+    private fun encodePinEnvelope(envelope: PinEnvelope): JSONObject {
+        return JSONObject()
+            .put("purpose", PIN_PURPOSE)
+            .put("algorithm", ALGORITHM)
+            .put(
+                "kdf",
+                JSONObject()
+                    .put("algorithm", PIN_KDF_ALGORITHM)
+                    .put("memoryKiB", envelope.kdf.memoryKiB)
+                    .put("iterations", envelope.kdf.iterations)
+                    .put("parallelism", envelope.kdf.parallelism)
+                    .put("salt", encodeBase64(envelope.kdf.salt))
+                    .put("outputBytes", PIN_OUTPUT_BYTES),
+            )
+            .put("nonce", encodeBase64(envelope.nonce))
+            .put("ciphertext", encodeBase64(envelope.ciphertext))
+            .put("tag", encodeBase64(envelope.tag))
+    }
+
+    private fun decodePinEnvelope(value: JSONObject): PinEnvelope {
+        requireExactKeys(
+            value,
+            setOf(
+                "purpose",
+                "algorithm",
+                "kdf",
+                "nonce",
+                "ciphertext",
+                "tag",
+            ),
+        )
+        if (value.getString("purpose") != PIN_PURPOSE ||
+            value.getString("algorithm") != ALGORITHM
+        ) {
+            corrupt()
+        }
+        val kdf = value.getJSONObject("kdf")
+        requireExactKeys(
+            kdf,
+            setOf(
+                "algorithm",
+                "memoryKiB",
+                "iterations",
+                "parallelism",
+                "salt",
+                "outputBytes",
+            ),
+        )
+        if (kdf.getString("algorithm") != PIN_KDF_ALGORITHM ||
+            kdf.getInt("outputBytes") != PIN_OUTPUT_BYTES
+        ) {
+            corrupt()
+        }
+        return PinEnvelope(
+            kdf = PinKdfParameters(
+                memoryKiB = kdf.getInt("memoryKiB"),
+                iterations = kdf.getInt("iterations"),
+                parallelism = kdf.getInt("parallelism"),
+                salt = decodeBase64(kdf.getString("salt")),
+            ),
+            nonce = decodeBase64(value.getString("nonce")),
+            ciphertext = decodeBase64(value.getString("ciphertext")),
+            tag = decodeBase64(value.getString("tag")),
+        )
+    }
+
     private fun validateKeyset(keyset: SecurityKeyset) {
         val keyId = try {
             UUID.fromString(keyset.keyId).toString()
@@ -129,6 +223,20 @@ object SecurityKeysetCodec {
             ) {
                 corrupt()
             }
+        }
+        keyset.pinEnvelope?.let(::validatePinEnvelope)
+    }
+
+    private fun validatePinEnvelope(envelope: PinEnvelope) {
+        if (envelope.kdf.memoryKiB != PIN_MEMORY_KIB ||
+            envelope.kdf.iterations != PIN_ITERATIONS ||
+            envelope.kdf.parallelism != PIN_PARALLELISM ||
+            envelope.kdf.salt.size != PIN_SALT_BYTES ||
+            envelope.nonce.size != NONCE_BYTES ||
+            envelope.ciphertext.size != CIPHERTEXT_BYTES ||
+            envelope.tag.size != TAG_BYTES
+        ) {
+            corrupt()
         }
     }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 
 class NoteListPage extends ConsumerWidget {
@@ -38,7 +39,7 @@ class _NoteListSection extends StatelessWidget {
   });
 
   final AsyncValue<List> noteListAsync;
-  final dynamic cryptoService;
+  final CryptoService cryptoService;
 
   @override
   Widget build(BuildContext context) {
@@ -65,10 +66,16 @@ class _NoteListSection extends StatelessWidget {
                 ListTile(
                   title: Text(item.title as String),
                   subtitle: Text(
-                    cryptoService.decryptNullable(item.summaryCacheCiphertext as List<int>?) as String,
+                    cryptoService.decryptField(
+                      item.summaryCacheCiphertext as List<int>?,
+                      field: EncryptedDatabaseField.noteSummary,
+                      rowId: item.id as String,
+                    ),
                   ),
                   leading: Icon(
-                    (item.favorite as bool) ? Icons.star_rounded : Icons.note_outlined,
+                    (item.favorite as bool)
+                        ? Icons.star_rounded
+                        : Icons.note_outlined,
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/notes/item/${item.id}'),

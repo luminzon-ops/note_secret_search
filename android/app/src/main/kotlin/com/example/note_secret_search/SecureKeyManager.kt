@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import com.example.note_secret_search.security.AndroidKeystoreWrappingKeyBackend
+import com.example.note_secret_search.security.AndroidPinThrottleClock
 import com.example.note_secret_search.security.AndroidSystemAuthCapabilities
 import com.example.note_secret_search.security.AndroidWrappingKeyRepository
 import com.example.note_secret_search.security.AtomicFileSecurityEnvelopeStore
@@ -12,6 +13,8 @@ import com.example.note_secret_search.security.NativeKeyringOperations
 import com.example.note_secret_search.security.NativeResult
 import com.example.note_secret_search.security.NativeSecurityState
 import com.example.note_secret_search.security.NativeUnlockMaterial
+import com.example.note_secret_search.security.PersistentPinAttemptThrottle
+import com.example.note_secret_search.security.SharedPreferencesPinThrottleStore
 import com.example.note_secret_search.security.SharedPreferencesLegacySecurityDetector
 import com.example.note_secret_search.security.SystemAuthenticator
 import java.util.UUID
@@ -103,6 +106,10 @@ class SecureKeyManager internal constructor(
             ),
             authenticator = authenticator,
             capabilities = capabilities::read,
+            pinThrottle = PersistentPinAttemptThrottle(
+                store = SharedPreferencesPinThrottleStore(context),
+                clock = AndroidPinThrottleClock(context),
+            ),
         )
     }
 
@@ -161,8 +168,40 @@ class SecureKeyManager internal constructor(
         requireNativeKeyring().unlockWithSystemAuth(reason, result)
     }
 
+    override fun configurePin(
+        reason: String,
+        pin: ByteArray,
+        result: NativeResult<Unit>,
+    ) {
+        requireNativeKeyring().configurePin(reason, pin, result)
+    }
+
+    override fun unlockWithPin(
+        pin: ByteArray,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        requireNativeKeyring().unlockWithPin(pin, result)
+    }
+
+    override fun removePin(
+        reason: String,
+        result: NativeResult<Unit>,
+    ) {
+        requireNativeKeyring().removePin(reason, result)
+    }
+
     override fun lock(): Any? {
         return requireNativeKeyring().lock()
+    }
+
+    fun close() {
+        val keyring = nativeKeyring
+        nativeKeyring = null
+        if (keyring is AutoCloseable) {
+            keyring.close()
+        } else {
+            keyring?.lock()
+        }
     }
 
     private fun requireNativeKeyring(): NativeKeyringOperations {

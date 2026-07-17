@@ -1,3 +1,4 @@
+import 'package:note_secret_search/core/security/field_envelope.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
@@ -47,24 +48,21 @@ class SqliteNoteRepository implements NoteRepository {
 
   @override
   Future<void> save(NoteItem item) async {
+    _validateCiphertexts(item);
     final db = await _database.database;
     await db.transaction((txn) async {
-      await txn.insert(
-        DatabaseSchema.noteItems,
-        <String, Object?>{
-          'id': item.id,
-          'vault_id': item.vaultId,
-          'title': item.title,
-          'content_ciphertext': item.contentCiphertext,
-          'summary_ciphertext': item.summaryCacheCiphertext,
-          'category_id': item.categoryId,
-          'favorite': item.favorite ? 1 : 0,
-          'created_at': item.createdAt.millisecondsSinceEpoch,
-          'updated_at': item.updatedAt.millisecondsSinceEpoch,
-          'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert(DatabaseSchema.noteItems, <String, Object?>{
+        'id': item.id,
+        'vault_id': item.vaultId,
+        'title': item.title,
+        'content_ciphertext': item.contentCiphertext,
+        'summary_ciphertext': item.summaryCacheCiphertext,
+        'category_id': item.categoryId,
+        'favorite': item.favorite ? 1 : 0,
+        'created_at': item.createdAt.millisecondsSinceEpoch,
+        'updated_at': item.updatedAt.millisecondsSinceEpoch,
+        'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
 
       await _replaceTags(txn, item.id, item.vaultId, item.tags);
       await txn.delete(
@@ -118,27 +116,20 @@ class SqliteNoteRepository implements NoteRepository {
       whereArgs: <Object>[itemId, 'note'],
     );
 
-    for (final tagName in tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty)) {
+    for (final tagName
+        in tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty)) {
       final tagId = '$vaultId:$tagName';
-      await db.insert(
-        DatabaseSchema.tags,
-        <String, Object?>{
-          'id': tagId,
-          'vault_id': vaultId,
-          'name': tagName,
-          'created_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-      await db.insert(
-        DatabaseSchema.itemTags,
-        <String, Object?>{
-          'item_id': itemId,
-          'item_type': 'note',
-          'tag_id': tagId,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await db.insert(DatabaseSchema.tags, <String, Object?>{
+        'id': tagId,
+        'vault_id': vaultId,
+        'name': tagName,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await db.insert(DatabaseSchema.itemTags, <String, Object?>{
+        'item_id': itemId,
+        'item_type': 'note',
+        'tag_id': tagId,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
   }
 
@@ -147,8 +138,10 @@ class SqliteNoteRepository implements NoteRepository {
       id: row['id']! as String,
       vaultId: row['vault_id']! as String,
       title: row['title']! as String,
-      contentCiphertext: row['content_ciphertext']! as List<int>,
-      summaryCacheCiphertext: row['summary_ciphertext'] as List<int>?,
+      contentCiphertext: _requireNssf(row['content_ciphertext']! as List<int>),
+      summaryCacheCiphertext: _requireOptionalNssf(
+        row['summary_ciphertext'] as List<int>?,
+      ),
       tags: tags,
       categoryId: row['category_id'] as String?,
       favorite: (row['favorite']! as int) == 1,
@@ -158,5 +151,22 @@ class SqliteNoteRepository implements NoteRepository {
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['deleted_at']! as int),
     );
+  }
+
+  void _validateCiphertexts(NoteItem item) {
+    _requireNssf(item.contentCiphertext);
+    _requireOptionalNssf(item.summaryCacheCiphertext);
+  }
+
+  List<int> _requireNssf(List<int> ciphertext) {
+    FieldEnvelopeCodec.decode(ciphertext);
+    return ciphertext;
+  }
+
+  List<int>? _requireOptionalNssf(List<int>? ciphertext) {
+    if (ciphertext != null) {
+      _requireNssf(ciphertext);
+    }
+    return ciphertext;
   }
 }

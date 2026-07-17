@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinSetupPage extends ConsumerStatefulWidget {
@@ -35,9 +34,7 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: Text(
-                  '当前版本仅完成 PIN 备用入口的 MVP 骨架。后续会切换到 Argon2id + KeyStore 包裹设计，避免将 PIN 以当前方式长期存储。',
-                ),
+                child: Text('PIN 仅作为系统认证之外的备用解锁方式。设置或更新 PIN 时需要再次完成系统认证。'),
               ),
             ),
             const SizedBox(height: 16),
@@ -47,7 +44,7 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               keyboardType: TextInputType.number,
               obscureText: true,
               validator: (value) {
-                final raw = value?.trim() ?? '';
+                final raw = value ?? '';
                 if (raw.length < 4 || raw.length > 8) {
                   return 'PIN 长度需为 4-8 位';
                 }
@@ -64,7 +61,7 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               keyboardType: TextInputType.number,
               obscureText: true,
               validator: (value) {
-                if ((value?.trim() ?? '') != _pinController.text.trim()) {
+                if ((value ?? '') != _pinController.text) {
                   return '两次输入的 PIN 不一致';
                 }
                 return null;
@@ -89,25 +86,19 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
     setState(() => _submitting = true);
     try {
-      final repository = await ref.read(
-        securitySettingsRepositoryProvider.future,
-      );
-      final currentSettings = await repository.load();
-      final nextSettings = currentSettings.copyWith(pinEnabled: true);
-      await repository.savePinMaterial(_pinController.text.trim());
-      await repository.save(nextSettings);
-      ref.read(securityOrchestratorProvider).enablePinFallback(true);
-      ref.read(pinStateControllerProvider.notifier).markPinMaterialReady();
-      ref.read(pinStateControllerProvider.notifier).configureEnabled(true);
+      await ref.read(securitySettingsRepositoryProvider.future);
+      await ref
+          .read(securitySettingsControllerProvider.notifier)
+          .setPin(_pinController.text);
       if (mounted) {
-        ref.invalidate(securitySettingsRepositoryProvider);
-        ref.invalidate(securitySettingsControllerProvider);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
         Navigator.of(context).pop();
       }
     } finally {
+      _pinController.clear();
+      _confirmController.clear();
       if (mounted) {
         setState(() => _submitting = false);
       }

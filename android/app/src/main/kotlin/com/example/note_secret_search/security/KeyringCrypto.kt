@@ -82,11 +82,13 @@ internal object KeyringCrypto {
     fun deriveMaterial(
         keyId: String,
         masterKey: ByteArray,
+        unlockMethod: String = "system",
     ): NativeUnlockMaterial {
         return NativeUnlockMaterial(
             keyId = keyId,
             databaseKey = HkdfSha256.derive(masterKey, KeyDerivationLabels.DATABASE),
             fieldKey = HkdfSha256.derive(masterKey, KeyDerivationLabels.FIELD),
+            unlockMethod = unlockMethod,
         )
     }
 

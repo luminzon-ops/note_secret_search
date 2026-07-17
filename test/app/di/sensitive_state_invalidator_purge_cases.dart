@@ -80,6 +80,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       final container = ProviderContainer(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(_plaintextCryptoService),
           sharedPreferencesProvider.overrideWith(
             (ref) async => SharedPreferences.getInstance(),
           ),
@@ -105,7 +106,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
           searchIndexServiceProvider.overrideWithValue(
             SearchIndexService(
               repository: searchRepository,
-              cryptoService: const MvpCryptoService(),
+              cryptoService: _plaintextCryptoService,
               embeddingEngine: embeddingEngine,
             ),
           ),
@@ -114,21 +115,24 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       addTearDown(container.dispose);
 
       container.read(searchQueryProvider.notifier).state = 'Sensitive';
-      container.read(searchIndexTaskStateProvider.notifier).state =
-          SearchIndexTaskState(
+      container
+          .read(searchIndexTaskStateProvider.notifier)
+          .state = SearchIndexTaskState(
         running: true,
         lastCompletedAt: DateTime(2026, 7, 14),
         lastIndexedCount: 2,
         lastError: 'sensitive index error',
       );
-      container.read(searchRefreshSessionProvider.notifier).state =
-          SearchRefreshSessionState(
+      container
+          .read(searchRefreshSessionProvider.notifier)
+          .state = SearchRefreshSessionState(
         refreshing: true,
         message: 'sensitive refresh state',
         lastCompletedAt: DateTime(2026, 7, 14),
       );
-      container.read(searchRefreshFeedbackProvider.notifier).state =
-          SearchRefreshFeedbackState(
+      container
+          .read(searchRefreshFeedbackProvider.notifier)
+          .state = SearchRefreshFeedbackState(
         visible: true,
         headline: 'sensitive feedback',
         message: 'sensitive result summary',
@@ -136,8 +140,9 @@ void registerSensitiveStateInvalidatorPurgeTests() {
         queryAtRefresh: 'Sensitive',
         completedAt: DateTime(2026, 7, 14),
       );
-      container.read(searchPendingReindexHandoffProvider.notifier).state =
-          const SearchPendingReindexHandoffState(
+      container
+          .read(searchPendingReindexHandoffProvider.notifier)
+          .state = const SearchPendingReindexHandoffState(
         visible: true,
         message: 'sensitive handoff',
       );
@@ -237,8 +242,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       expect(
         (await container.read(
           activeModelSelectionProvider.future,
-        ))
-            .activeEmbeddingModelId,
+        )).activeEmbeddingModelId,
         _embeddingModel.id,
       );
       expect(
@@ -357,8 +361,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       expect(
         (await container.read(
           activeModelSelectionProvider.future,
-        ))
-            .activeEmbeddingModelId,
+        )).activeEmbeddingModelId,
         isNull,
       );
       expect(

@@ -13,10 +13,26 @@ interface NativeKeyringOperations {
         result: NativeResult<NativeUnlockMaterial>,
     )
 
+    fun configurePin(
+        reason: String,
+        pin: ByteArray,
+        result: NativeResult<Unit>,
+    )
+
+    fun unlockWithPin(
+        pin: ByteArray,
+        result: NativeResult<NativeUnlockMaterial>,
+    )
+
+    fun removePin(
+        reason: String,
+        result: NativeResult<Unit>,
+    )
+
     fun lock(): Any?
 }
 
-class NativeKeyringManager(
+internal class NativeKeyringManager(
     private val apiLevel: Int,
     private val envelopeStore: SecurityEnvelopeStore,
     private val legacyDetector: LegacySecurityDetector,
@@ -24,10 +40,14 @@ class NativeKeyringManager(
     private val authenticator: SystemAuthenticator,
     private val capabilities: () -> SystemAuthCapabilities,
     random: RandomSource = SecureRandomSource(),
-) : NativeKeyringOperations {
+    pinKdfEngine: PinKdfEngine = Argon2KtPinKdfEngine(),
+    private val pinWorker: PinWorkScheduler = SerialPinWorkScheduler(),
+    pinThrottle: PinAttemptThrottle,
+) : NativeKeyringOperations, AutoCloseable {
     private val operationLock = Any()
     private var activeOperation: CompletingResult<*>? = null
     private var nextOperationId = 1L
+    private var closed = false
     private val provisioner = KeyringProvisioner(
         apiLevel = apiLevel,
         envelopeStore = envelopeStore,
@@ -38,6 +58,17 @@ class NativeKeyringManager(
     private val unlocker = KeyringUnlocker(
         wrappingKeys = wrappingKeys,
         authenticator = authenticator,
+    )
+    private val pinCoordinator = PinKeyringCoordinator(
+        envelopeStore = envelopeStore,
+        unlocker = unlocker,
+        capabilities = capabilities,
+        crypto = PinEnvelopeCrypto(
+            keyDeriver = PinKeyDeriver(pinKdfEngine),
+            random = random,
+        ),
+        worker = pinWorker,
+        throttle = pinThrottle,
     )
 
     override fun getSecurityState(): NativeSecurityState = synchronized(operationLock) {
@@ -65,6 +96,7 @@ class NativeKeyringManager(
             ?: return@synchronized state(
                 SecurityStatus.RECOVERY_REQUIRED,
                 keyId = keyset.keyId,
+                pinConfigured = keyset.pinEnvelope != null,
                 auth = auth,
             )
         val handle = try {
@@ -87,6 +119,7 @@ class NativeKeyringManager(
             state(
                 status = SecurityStatus.LOCKED,
                 keyId = keyset.keyId,
+                pinConfigured = keyset.pinEnvelope != null,
                 securityLevel = resolvedSecurityLevel,
                 auth = auth,
             )
@@ -94,6 +127,7 @@ class NativeKeyringManager(
             state(
                 status = SecurityStatus.RECOVERY_REQUIRED,
                 keyId = keyset.keyId,
+                pinConfigured = keyset.pinEnvelope != null,
                 auth = auth,
             )
         }
@@ -172,9 +206,135 @@ class NativeKeyringManager(
         }
     }
 
+    override fun configurePin(
+        reason: String,
+        pin: ByteArray,
+        result: NativeResult<Unit>,
+    ) {
+        start(reason, result, rejected = { pin.fill(0) }) { operation ->
+            var transferred = false
+            try {
+                if (legacyDetector.hasLegacyPassword()) {
+                    operation.error(NativeSecurityException(
+                        NativeSecurityErrorCode.MIGRATION_REQUIRED,
+                    ))
+                    return@start
+                }
+                val encoded = envelopeStore.read()
+                if (encoded == null) {
+                    operation.error(NativeSecurityException(
+                        NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
+                    ))
+                    return@start
+                }
+                val keyset = try {
+                    SecurityKeysetCodec.decode(encoded)
+                } catch (error: NativeSecurityException) {
+                    operation.error(error)
+                    return@start
+                }
+                transferred = true
+                pinCoordinator.configurePin(reason, keyset, pin, operation)
+            } finally {
+                if (!transferred) {
+                    pin.fill(0)
+                }
+            }
+        }
+    }
+
+    override fun unlockWithPin(
+        pin: ByteArray,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        start(PIN_UNLOCK_OPERATION, result, rejected = { pin.fill(0) }) { operation ->
+            var transferred = false
+            try {
+                if (legacyDetector.hasLegacyPassword()) {
+                    operation.error(NativeSecurityException(
+                        NativeSecurityErrorCode.MIGRATION_REQUIRED,
+                    ))
+                    return@start
+                }
+                val encoded = envelopeStore.read()
+                if (encoded == null) {
+                    operation.error(NativeSecurityException(
+                        NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
+                    ))
+                    return@start
+                }
+                val keyset = try {
+                    SecurityKeysetCodec.decode(encoded)
+                } catch (error: NativeSecurityException) {
+                    operation.error(error)
+                    return@start
+                }
+                transferred = true
+                pinCoordinator.unlockWithPin(keyset, pin, operation)
+            } finally {
+                if (!transferred) {
+                    pin.fill(0)
+                }
+            }
+        }
+    }
+
+    override fun removePin(
+        reason: String,
+        result: NativeResult<Unit>,
+    ) {
+        start(reason, result) { operation ->
+            if (legacyDetector.hasLegacyPassword()) {
+                operation.error(NativeSecurityException(
+                    NativeSecurityErrorCode.MIGRATION_REQUIRED,
+                ))
+                return@start
+            }
+            val encoded = envelopeStore.read()
+            if (encoded == null) {
+                operation.error(NativeSecurityException(
+                    NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
+                ))
+                return@start
+            }
+            val keyset = try {
+                SecurityKeysetCodec.decode(encoded)
+            } catch (error: NativeSecurityException) {
+                operation.error(error)
+                return@start
+            }
+            pinCoordinator.removePin(reason, keyset, operation)
+        }
+    }
+
     override fun lock(): Any? {
+        cancelActiveOperation()
+        return null
+    }
+
+    override fun close() {
+        val shouldClose = synchronized(operationLock) {
+            if (closed) {
+                false
+            } else {
+                closed = true
+                true
+            }
+        }
+        if (!shouldClose) {
+            return
+        }
+        cancelActiveOperation()
+        try {
+            pinWorker.close()
+        } catch (_: Throwable) {
+            // Operation material is already revoked.
+        }
+    }
+
+    private fun cancelActiveOperation() {
         val operation = synchronized(operationLock) {
-            val active = activeOperation ?: return null
+            val active = activeOperation ?: return
             activeOperation = null
             active
         }
@@ -184,7 +344,6 @@ class NativeKeyringManager(
         } catch (_: Throwable) {
             // The operation is already revoked and its sensitive buffers cleared.
         }
-        return null
     }
 
     private fun requiredStateEnvelope(
@@ -200,12 +359,14 @@ class NativeKeyringManager(
     private fun state(
         status: SecurityStatus,
         keyId: String? = null,
+        pinConfigured: Boolean = false,
         securityLevel: KeySecurityLevel = KeySecurityLevel.UNKNOWN,
         auth: SystemAuthCapabilities,
     ): NativeSecurityState {
         return NativeSecurityState(
             status = status,
             keyId = keyId,
+            pinConfigured = pinConfigured,
             deviceCredentialAvailable = auth.deviceCredentialAvailable,
             strongBiometricAvailable = auth.strongBiometricAvailable,
             securityLevel = securityLevel,
@@ -215,9 +376,11 @@ class NativeKeyringManager(
     private fun <T> start(
         reason: String,
         result: NativeResult<T>,
+        rejected: () -> Unit = {},
         operation: (CompletingResult<T>) -> Unit,
     ) {
         if (reason.isBlank() || reason.length > MAX_REASON_LENGTH) {
+            rejected()
             result.error(NativeSecurityException(
                 NativeSecurityErrorCode.INVALID_ARGUMENT,
             ))
@@ -225,7 +388,15 @@ class NativeKeyringManager(
         }
         lateinit var completing: CompletingResult<T>
         synchronized(operationLock) {
+            if (closed) {
+                rejected()
+                result.error(NativeSecurityException(
+                    NativeSecurityErrorCode.AUTH_CANCELLED,
+                ))
+                return
+            }
             if (activeOperation != null) {
+                rejected()
                 result.error(NativeSecurityException(NativeSecurityErrorCode.BUSY))
                 return
             }
@@ -307,114 +478,6 @@ class NativeKeyringManager(
 
     companion object {
         private const val MAX_REASON_LENGTH = 200
+        private const val PIN_UNLOCK_OPERATION = "PIN unlock"
     }
-}
-
-internal class CompletingResult<T>(
-    override val operationId: Long,
-    private val delegate: NativeResult<T>,
-    private val complete: (
-        CompletingResult<T>,
-        () -> Unit,
-    ) -> CompletionOutcome,
-    private val isActive: (CompletingResult<T>) -> Boolean,
-    private val registerCleanupDelegate: (
-        CompletingResult<T>,
-        () -> Unit,
-    ) -> Boolean,
-    private val runIfActiveDelegate: (CompletingResult<T>, () -> Unit) -> Boolean,
-) : NativeResult<T>, OperationAwareResult {
-    private val cancellationCleanups = mutableListOf<() -> Unit>()
-
-    override fun isActiveOperation(): Boolean = isActive(this)
-
-    override fun registerCancellationCleanup(cleanup: () -> Unit): Boolean {
-        return registerCleanupDelegate(this, cleanup)
-    }
-
-    override fun runIfActive(operation: () -> Unit): Boolean {
-        return runIfActiveDelegate(this, operation)
-    }
-
-    override fun success(value: T) {
-        val outcome = complete(this) {
-            delegate.success(value)
-        }
-        if (outcome != CompletionOutcome.DELIVERED && value is NativeUnlockMaterial) {
-            value.zeroize()
-        }
-    }
-
-    override fun error(error: NativeSecurityException) {
-        complete(this) {
-            delegate.error(error)
-        }
-    }
-
-    fun cancelLocked() {
-        val cleanups = cancellationCleanups.toList()
-        cancellationCleanups.clear()
-        cleanups.forEach { cleanup ->
-            try {
-                cleanup()
-            } catch (_: Throwable) {
-                // Continue clearing the remaining operation-owned material.
-            }
-        }
-        try {
-            delegate.error(NativeSecurityException(
-                NativeSecurityErrorCode.AUTH_CANCELLED,
-            ))
-        } catch (_: Throwable) {
-            // Transport failures must not skip prompt cancellation.
-        }
-    }
-
-    fun addCancellationCleanup(cleanup: () -> Unit) {
-        cancellationCleanups += cleanup
-    }
-
-    fun discardCancellationCleanups() {
-        cancellationCleanups.clear()
-    }
-}
-
-internal enum class CompletionOutcome {
-    INACTIVE,
-    DELIVERED,
-    DELIVERY_FAILED,
-}
-
-internal interface OperationAwareResult {
-    val operationId: Long
-
-    fun isActiveOperation(): Boolean
-
-    fun registerCancellationCleanup(cleanup: () -> Unit): Boolean
-
-    fun runIfActive(operation: () -> Unit): Boolean
-}
-
-internal fun NativeResult<*>.isActiveOperation(): Boolean {
-    return (this as? OperationAwareResult)?.isActiveOperation() ?: true
-}
-
-internal fun NativeResult<*>.operationId(): Long {
-    return (this as? OperationAwareResult)?.operationId ?: 0
-}
-
-internal fun NativeResult<*>.registerCancellationCleanup(
-    cleanup: () -> Unit,
-): Boolean {
-    return (this as? OperationAwareResult)
-        ?.registerCancellationCleanup(cleanup)
-        ?: true
-}
-
-internal fun NativeResult<*>.runIfActive(operation: () -> Unit): Boolean {
-    return (this as? OperationAwareResult)?.runIfActive(operation)
-        ?: run {
-            operation()
-            true
-        }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
@@ -94,7 +95,7 @@ class _SecretDetailBody extends StatefulWidget {
   });
 
   final SecretItem secret;
-  final dynamic cryptoService;
+  final CryptoService cryptoService;
   final String? searchQuery;
   final String? searchSource;
   final String? searchContext;
@@ -114,14 +115,25 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
     final searchSource = widget.searchSource;
     final searchContext = widget.searchContext;
     final searchFocusHint = resolveSecretDetailSearchFocusHint(searchContext);
-    final searchHitExplanation = resolveSecretDetailHitExplanation(searchContext) ?? searchContext;
+    final searchHitExplanation =
+        resolveSecretDetailHitExplanation(searchContext) ?? searchContext;
     final semanticOnlyHandoffHint = _semanticOnlyHandoffHint(searchSource);
     final hitTarget = resolveSecretDetailSearchHitTarget(searchContext);
-    final titleKey = hitTarget == SecretDetailSearchHitTarget.title ? GlobalKey() : null;
-    final usernameKey = hitTarget == SecretDetailSearchHitTarget.username ? GlobalKey() : null;
-    final websiteKey = hitTarget == SecretDetailSearchHitTarget.website ? GlobalKey() : null;
-    final tagsKey = hitTarget == SecretDetailSearchHitTarget.tags ? GlobalKey() : null;
-    final noteKey = hitTarget == SecretDetailSearchHitTarget.note ? GlobalKey() : null;
+    final titleKey = hitTarget == SecretDetailSearchHitTarget.title
+        ? GlobalKey()
+        : null;
+    final usernameKey = hitTarget == SecretDetailSearchHitTarget.username
+        ? GlobalKey()
+        : null;
+    final websiteKey = hitTarget == SecretDetailSearchHitTarget.website
+        ? GlobalKey()
+        : null;
+    final tagsKey = hitTarget == SecretDetailSearchHitTarget.tags
+        ? GlobalKey()
+        : null;
+    final noteKey = hitTarget == SecretDetailSearchHitTarget.note
+        ? GlobalKey()
+        : null;
 
     final scrollTargetKey = switch (hitTarget) {
       SecretDetailSearchHitTarget.title => titleKey,
@@ -147,47 +159,67 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
       });
     }
 
-    final username = cryptoService.decryptNullable(secret.usernameCiphertext) as String;
-    final password = cryptoService.decryptNullable(secret.passwordCiphertext) as String;
-    final website = cryptoService.decryptNullable(secret.websiteUrlCiphertext) as String;
-    final note = cryptoService.decryptNullable(secret.noteCiphertext) as String;
+    final username = cryptoService.decryptField(
+      secret.usernameCiphertext,
+      field: EncryptedDatabaseField.secretUsername,
+      rowId: secret.id,
+    );
+    final password = cryptoService.decryptField(
+      secret.passwordCiphertext,
+      field: EncryptedDatabaseField.secretPassword,
+      rowId: secret.id,
+    );
+    final website = cryptoService.decryptField(
+      secret.websiteUrlCiphertext,
+      field: EncryptedDatabaseField.secretWebsiteUrl,
+      rowId: secret.id,
+    );
+    final note = cryptoService.decryptField(
+      secret.noteCiphertext,
+      field: EncryptedDatabaseField.secretNote,
+      rowId: secret.id,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if ((searchSource ?? '').isNotEmpty || (searchQuery ?? '').isNotEmpty || (searchContext ?? '').isNotEmpty)
+        if ((searchSource ?? '').isNotEmpty ||
+            (searchQuery ?? '').isNotEmpty ||
+            (searchContext ?? '').isNotEmpty)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('来自搜索'),
-                    if ((searchSource ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('命中方式：${_searchSourceLabel(searchSource)}'),
-                    ],
-                    if ((searchQuery ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('查询词：$searchQuery'),
-                    ],
-                    if ((searchContext ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('命中说明：$searchHitExplanation'),
-                    ],
-                    if (searchFocusHint != null) ...[
-                      const SizedBox(height: 8),
-                      Text('优先查看：$searchFocusHint'),
-                    ],
-                    if (semanticOnlyHandoffHint != null) ...[
-                      const SizedBox(height: 8),
-                      Text('承接说明：$semanticOnlyHandoffHint'),
-                    ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('来自搜索'),
+                  if ((searchSource ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('命中方式：${_searchSourceLabel(searchSource)}'),
                   ],
-                ),
+                  if ((searchQuery ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('查询词：$searchQuery'),
+                  ],
+                  if ((searchContext ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('命中说明：$searchHitExplanation'),
+                  ],
+                  if (searchFocusHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text('优先查看：$searchFocusHint'),
+                  ],
+                  if (semanticOnlyHandoffHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text('承接说明：$semanticOnlyHandoffHint'),
+                  ],
+                ],
               ),
+            ),
           ),
-        if ((searchSource ?? '').isNotEmpty || (searchQuery ?? '').isNotEmpty || (searchContext ?? '').isNotEmpty)
+        if ((searchSource ?? '').isNotEmpty ||
+            (searchQuery ?? '').isNotEmpty ||
+            (searchContext ?? '').isNotEmpty)
           const SizedBox(height: 12),
         Card(
           child: Padding(
@@ -201,14 +233,18 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                   markerKey: hitTarget == SecretDetailSearchHitTarget.title
                       ? const ValueKey('secret-hit-title')
                       : null,
-                  child: Text(secret.title, style: Theme.of(context).textTheme.headlineSmall),
+                  child: Text(
+                    secret.title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 _SecretDetailRow(
                   label: '账号',
                   value: username,
                   highlightKey: usernameKey,
-                  highlightMarkerKey: hitTarget == SecretDetailSearchHitTarget.username
+                  highlightMarkerKey:
+                      hitTarget == SecretDetailSearchHitTarget.username
                       ? const ValueKey('secret-hit-username')
                       : null,
                 ),
@@ -217,7 +253,8 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                   label: '网址',
                   value: website,
                   highlightKey: websiteKey,
-                  highlightMarkerKey: hitTarget == SecretDetailSearchHitTarget.website
+                  highlightMarkerKey:
+                      hitTarget == SecretDetailSearchHitTarget.website
                       ? const ValueKey('secret-hit-website')
                       : null,
                 ),
@@ -225,7 +262,8 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                   label: '标签',
                   value: secret.tags.join(', '),
                   highlightKey: tagsKey,
-                  highlightMarkerKey: hitTarget == SecretDetailSearchHitTarget.tags
+                  highlightMarkerKey:
+                      hitTarget == SecretDetailSearchHitTarget.tags
                       ? const ValueKey('secret-hit-tags')
                       : null,
                 ),
@@ -233,7 +271,8 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                   label: '备注',
                   value: note,
                   highlightKey: noteKey,
-                  highlightMarkerKey: hitTarget == SecretDetailSearchHitTarget.note
+                  highlightMarkerKey:
+                      hitTarget == SecretDetailSearchHitTarget.note
                       ? const ValueKey('secret-hit-note')
                       : null,
                 ),
@@ -279,7 +318,9 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
       padding: highlight ? const EdgeInsets.all(8) : EdgeInsets.zero,
       decoration: highlight
           ? BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
+              color: Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.45),
               borderRadius: BorderRadius.circular(12),
             )
           : null,
@@ -326,10 +367,14 @@ class _SecretDetailRowState extends State<_SecretDetailRow> {
       padding: const EdgeInsets.only(bottom: 16),
       child: Container(
         key: widget.highlightKey,
-        padding: widget.highlightMarkerKey != null ? const EdgeInsets.all(8) : EdgeInsets.zero,
+        padding: widget.highlightMarkerKey != null
+            ? const EdgeInsets.all(8)
+            : EdgeInsets.zero,
         decoration: widget.highlightMarkerKey != null
             ? BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
+                color: Theme.of(
+                  context,
+                ).colorScheme.primaryContainer.withValues(alpha: 0.45),
                 borderRadius: BorderRadius.circular(12),
               )
             : null,
@@ -345,14 +390,18 @@ class _SecretDetailRowState extends State<_SecretDetailRow> {
                 if (widget.obscure)
                   IconButton(
                     onPressed: () => setState(() => _revealed = !_revealed),
-                    icon: Icon(_revealed ? Icons.visibility_off : Icons.visibility),
+                    icon: Icon(
+                      _revealed ? Icons.visibility_off : Icons.visibility,
+                    ),
                   ),
                 IconButton(
                   onPressed: widget.value.isEmpty
                       ? null
                       : () async {
                           final messenger = ScaffoldMessenger.of(context);
-                          await Clipboard.setData(ClipboardData(text: widget.value));
+                          await Clipboard.setData(
+                            ClipboardData(text: widget.value),
+                          );
                           if (mounted) {
                             messenger.showSnackBar(
                               SnackBar(content: Text('${widget.label}已复制')),

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
@@ -14,6 +16,12 @@ abstract interface class NativeSecurityBridge {
 
   Future<NativeUnlockResult> unlockWithSystemAuth({String reason = '解锁保险库'});
 
+  Future<void> configurePin({required String pin, String reason = '配置备用 PIN'});
+
+  Future<NativeUnlockResult> unlockWithPin({required String pin});
+
+  Future<void> removePin({String reason = '移除备用 PIN'});
+
   Future<void> lock();
 
   /// Compatibility-only until production orchestration moves to the P2A API.
@@ -29,12 +37,17 @@ abstract interface class NativeSecurityBridge {
   Future<bool> authenticateWithBiometrics({String reason = '解锁保险库'});
 }
 
-class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
-  const MethodChannelNativeSecurityBridge();
+abstract interface class NativeSecurityMethodInvoker {
+  Future<Object?> invokeMethod(String method, [Object? arguments]);
+}
 
-  static const MethodChannel _channel = MethodChannel(
-    'note_secret_search/native_security',
-  );
+class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
+  const MethodChannelNativeSecurityBridge({
+    NativeSecurityMethodInvoker invoker =
+        const _MethodChannelNativeSecurityMethodInvoker(),
+  }) : _invoker = invoker;
+
+  final NativeSecurityMethodInvoker _invoker;
 
   @override
   Future<void> enableScreenshotProtection() async {
@@ -79,7 +92,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
       'provisionWithSystemAuth',
       <String, Object?>{'reason': reason},
     );
-    return parseNativeUnlockResult(payload);
+    return parseNativeUnlockResult(payload, expectedUnlockMethod: 'system');
   }
 
   @override
@@ -90,7 +103,42 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
       'unlockWithSystemAuth',
       <String, Object?>{'reason': reason},
     );
-    return parseNativeUnlockResult(payload);
+    return parseNativeUnlockResult(payload, expectedUnlockMethod: 'system');
+  }
+
+  @override
+  Future<void> configurePin({
+    required String pin,
+    String reason = '配置备用 PIN',
+  }) async {
+    final pinBytes = Uint8List.fromList(utf8.encode(pin));
+    try {
+      await _invokeMethod<void>('configurePin', <String, Object?>{
+        'reason': reason,
+        'pin': pinBytes,
+      });
+    } finally {
+      _clearReceivedKey(pinBytes);
+    }
+  }
+
+  @override
+  Future<NativeUnlockResult> unlockWithPin({required String pin}) async {
+    final pinBytes = Uint8List.fromList(utf8.encode(pin));
+    try {
+      final payload = await _invokeMethod<Object?>(
+        'unlockWithPin',
+        <String, Object?>{'pin': pinBytes},
+      );
+      return parseNativeUnlockResult(payload, expectedUnlockMethod: 'pin');
+    } finally {
+      _clearReceivedKey(pinBytes);
+    }
+  }
+
+  @override
+  Future<void> removePin({String reason = '移除备用 PIN'}) async {
+    await _invokeMethod<void>('removePin', <String, Object?>{'reason': reason});
   }
 
   @override
@@ -138,7 +186,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
 
   Future<T?> _invokeMethod<T>(String method, [Object? arguments]) async {
     try {
-      return await _channel.invokeMethod<T>(method, arguments);
+      return await _invoker.invokeMethod(method, arguments) as T?;
     } on PlatformException catch (error, stackTrace) {
       Error.throwWithStackTrace(
         NativeSecurityException(
@@ -149,6 +197,20 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
         stackTrace,
       );
     }
+  }
+}
+
+class _MethodChannelNativeSecurityMethodInvoker
+    implements NativeSecurityMethodInvoker {
+  const _MethodChannelNativeSecurityMethodInvoker();
+
+  static const MethodChannel _channel = MethodChannel(
+    'note_secret_search/native_security',
+  );
+
+  @override
+  Future<Object?> invokeMethod(String method, [Object? arguments]) {
+    return _channel.invokeMethod<Object?>(method, arguments);
   }
 }
 
@@ -172,7 +234,10 @@ KeySecurityLevel _parseSecurityLevel(Object? value) {
   };
 }
 
-NativeUnlockResult parseNativeUnlockResult(Object? payload) {
+NativeUnlockResult parseNativeUnlockResult(
+  Object? payload, {
+  String? expectedUnlockMethod,
+}) {
   if (payload is! Map) {
     throw const FormatException('Invalid native unlock payload.');
   }
@@ -186,7 +251,9 @@ NativeUnlockResult parseNativeUnlockResult(Object? payload) {
         fieldKey is! Uint8List ||
         databaseKey.length != 32 ||
         fieldKey.length != 32 ||
-        unlockMethod != 'system') {
+        (unlockMethod != 'system' && unlockMethod != 'pin') ||
+        (expectedUnlockMethod != null &&
+            unlockMethod != expectedUnlockMethod)) {
       throw const FormatException('Invalid native unlock payload.');
     }
 
@@ -194,7 +261,7 @@ NativeUnlockResult parseNativeUnlockResult(Object? payload) {
       keyId: _parseKeyId(keyId, requiredForPayload: true)!,
       databaseKey: databaseKey,
       fieldKey: fieldKey,
-      unlockMethod: 'system',
+      unlockMethod: unlockMethod as String,
     );
   } catch (_) {
     _clearReceivedKey(databaseKey);

@@ -54,6 +54,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("com.lambdapioneer.argon2kt:argon2kt:1.6.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
     implementation(files("../third_party/llamacpp-kotlin-0.2.0-huawei-safe.aar"))
 

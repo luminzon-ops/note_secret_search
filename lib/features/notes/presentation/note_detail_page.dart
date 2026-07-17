@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
@@ -94,7 +95,7 @@ class _NoteDetailBody extends StatefulWidget {
   });
 
   final NoteItem note;
-  final dynamic cryptoService;
+  final CryptoService cryptoService;
   final String? searchQuery;
   final String? searchSource;
   final String? searchContext;
@@ -114,13 +115,22 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
     final searchSource = widget.searchSource;
     final searchContext = widget.searchContext;
     final searchFocusHint = resolveNoteDetailSearchFocusHint(searchContext);
-    final searchHitExplanation = resolveNoteDetailHitExplanation(searchContext) ?? searchContext;
+    final searchHitExplanation =
+        resolveNoteDetailHitExplanation(searchContext) ?? searchContext;
     final semanticOnlyHandoffHint = _semanticOnlyHandoffHint(searchSource);
     final hitTarget = resolveNoteDetailSearchHitTarget(searchContext);
-    final titleKey = hitTarget == NoteDetailSearchHitTarget.title ? GlobalKey() : null;
-    final summaryKey = hitTarget == NoteDetailSearchHitTarget.summary ? GlobalKey() : null;
-    final tagsKey = hitTarget == NoteDetailSearchHitTarget.tags ? GlobalKey() : null;
-    final contentKey = hitTarget == NoteDetailSearchHitTarget.content ? GlobalKey() : null;
+    final titleKey = hitTarget == NoteDetailSearchHitTarget.title
+        ? GlobalKey()
+        : null;
+    final summaryKey = hitTarget == NoteDetailSearchHitTarget.summary
+        ? GlobalKey()
+        : null;
+    final tagsKey = hitTarget == NoteDetailSearchHitTarget.tags
+        ? GlobalKey()
+        : null;
+    final contentKey = hitTarget == NoteDetailSearchHitTarget.content
+        ? GlobalKey()
+        : null;
 
     final scrollTargetKey = switch (hitTarget) {
       NoteDetailSearchHitTarget.title => titleKey,
@@ -145,45 +155,57 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
       });
     }
 
-    final summary = cryptoService.decryptNullable(note.summaryCacheCiphertext) as String;
-    final content = cryptoService.decryptNullable(note.contentCiphertext) as String;
+    final summary = cryptoService.decryptField(
+      note.summaryCacheCiphertext,
+      field: EncryptedDatabaseField.noteSummary,
+      rowId: note.id,
+    );
+    final content = cryptoService.decryptField(
+      note.contentCiphertext,
+      field: EncryptedDatabaseField.noteContent,
+      rowId: note.id,
+    );
 
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if ((searchSource ?? '').isNotEmpty || (searchQuery ?? '').isNotEmpty || (searchContext ?? '').isNotEmpty)
+        if ((searchSource ?? '').isNotEmpty ||
+            (searchQuery ?? '').isNotEmpty ||
+            (searchContext ?? '').isNotEmpty)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('来自搜索'),
-                    if ((searchSource ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('命中方式：${_searchSourceLabel(searchSource)}'),
-                    ],
-                    if ((searchQuery ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('查询词：$searchQuery'),
-                    ],
-                    if ((searchContext ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text('命中说明：$searchHitExplanation'),
-                    ],
-                    if (searchFocusHint != null) ...[
-                      const SizedBox(height: 8),
-                      Text('优先查看：$searchFocusHint'),
-                    ],
-                    if (semanticOnlyHandoffHint != null) ...[
-                      const SizedBox(height: 8),
-                      Text('承接说明：$semanticOnlyHandoffHint'),
-                    ],
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('来自搜索'),
+                  if ((searchSource ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('命中方式：${_searchSourceLabel(searchSource)}'),
                   ],
-                ),
+                  if ((searchQuery ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('查询词：$searchQuery'),
+                  ],
+                  if ((searchContext ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text('命中说明：$searchHitExplanation'),
+                  ],
+                  if (searchFocusHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text('优先查看：$searchFocusHint'),
+                  ],
+                  if (semanticOnlyHandoffHint != null) ...[
+                    const SizedBox(height: 8),
+                    Text('承接说明：$semanticOnlyHandoffHint'),
+                  ],
+                ],
               ),
+            ),
           ),
-        if ((searchSource ?? '').isNotEmpty || (searchQuery ?? '').isNotEmpty || (searchContext ?? '').isNotEmpty)
+        if ((searchSource ?? '').isNotEmpty ||
+            (searchQuery ?? '').isNotEmpty ||
+            (searchContext ?? '').isNotEmpty)
           const SizedBox(height: 12),
         Card(
           child: Padding(
@@ -197,7 +219,10 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
                   markerKey: hitTarget == NoteDetailSearchHitTarget.title
                       ? const ValueKey('note-hit-title')
                       : null,
-                  child: Text(note.title, style: Theme.of(context).textTheme.headlineSmall),
+                  child: Text(
+                    note.title,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
                 ),
                 if (summary.isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -207,7 +232,10 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
                     markerKey: hitTarget == NoteDetailSearchHitTarget.summary
                         ? const ValueKey('note-hit-summary')
                         : null,
-                    child: Text(summary, style: Theme.of(context).textTheme.bodyMedium),
+                    child: Text(
+                      summary,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
                   ),
                 ],
                 const SizedBox(height: 16),
@@ -235,7 +263,9 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
                       : () async {
                           final messenger = ScaffoldMessenger.of(context);
                           await Clipboard.setData(ClipboardData(text: content));
-                          messenger.showSnackBar(const SnackBar(content: Text('笔记正文已复制')));
+                          messenger.showSnackBar(
+                            const SnackBar(content: Text('笔记正文已复制')),
+                          );
                         },
                   icon: const Icon(Icons.copy_outlined),
                   label: const Text('复制正文'),
@@ -281,7 +311,9 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
       padding: highlight ? const EdgeInsets.all(8) : EdgeInsets.zero,
       decoration: highlight
           ? BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
+              color: Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.45),
               borderRadius: BorderRadius.circular(12),
             )
           : null,

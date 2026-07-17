@@ -30,6 +30,7 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
             authenticator = deferredAuthenticator,
             capabilities = { capabilities },
             random = random,
+            pinThrottle = testPinAttemptThrottle(),
         )
         val result = RecordingNativeResult<NativeUnlockMaterial>()
 
@@ -59,6 +60,7 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
             authenticator = deferredAuthenticator,
             capabilities = { capabilities },
             random = referenceRandom,
+            pinThrottle = testPinAttemptThrottle(),
         )
         val result = RecordingNativeResult<NativeUnlockMaterial>()
 
@@ -86,6 +88,7 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
                 enqueue(ByteArray(16) { (it + 2).toByte() })
                 enqueue(ByteArray(32) { it.toByte() })
             },
+            pinThrottle = testPinAttemptThrottle(),
         )
         val executor = Executors.newFixedThreadPool(2)
 
@@ -128,6 +131,7 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
                 enqueue(ByteArray(16) { (it + 18).toByte() })
                 enqueue(ByteArray(32) { (it + 32).toByte() })
             },
+            pinThrottle = testPinAttemptThrottle(),
         )
         val first = ConcurrentRecordingNativeResult<NativeUnlockMaterial>()
         val second = ConcurrentRecordingNativeResult<NativeUnlockMaterial>()
@@ -173,6 +177,7 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
             authenticator = deferredAuthenticator,
             capabilities = { capabilities },
             random = random,
+            pinThrottle = testPinAttemptThrottle(),
         )
         val result = RecordingNativeResult<NativeUnlockMaterial>()
 
@@ -186,6 +191,46 @@ internal class SecurityKeyringCancellationTest : SecurityKeyringTestFixture() {
         )
         assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, result.error?.code)
         assertNull(result.value)
+    }
+
+    @Test
+    fun `closing keyring cancels pin work and rejects later operations`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val scheduler = RecordingPinWorkScheduler()
+        val manager = NativeKeyringManager(
+            apiLevel = 30,
+            envelopeStore = store,
+            legacyDetector = legacy,
+            wrappingKeys = keys,
+            authenticator = authenticator,
+            capabilities = { capabilities },
+            random = random,
+            pinWorker = scheduler,
+            pinThrottle = testPinAttemptThrottle(),
+        )
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        val pendingPin = "2468".toByteArray()
+        val pending = RecordingNativeResult<Unit>()
+        manager.configurePin("Configure fallback PIN", pendingPin, pending)
+
+        manager.close()
+
+        assertEquals(1, scheduler.cancelCalls)
+        assertEquals(1, scheduler.closeCalls)
+        assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, pending.error?.code)
+        assertTrue(pendingPin.all { it == 0.toByte() })
+
+        val laterPin = "1357".toByteArray()
+        val later = RecordingNativeResult<Unit>()
+        manager.configurePin("Configure another PIN", laterPin, later)
+
+        assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, later.error?.code)
+        assertTrue(laterPin.all { it == 0.toByte() })
+        assertEquals(1, scheduler.executeCalls)
     }
 }
 
@@ -295,5 +340,22 @@ private class BlockingGlobalCancelAuthenticator : SystemAuthenticator {
         authentication.terminal.failed(
             NativeSecurityException(NativeSecurityErrorCode.AUTH_CANCELLED),
         )
+    }
+}
+
+private class RecordingPinWorkScheduler : PinWorkScheduler {
+    var executeCalls = 0
+    var cancelCalls = 0
+    var closeCalls = 0
+
+    override fun execute(task: () -> Unit): PinWorkHandle {
+        executeCalls += 1
+        return PinWorkHandle {
+            cancelCalls += 1
+        }
+    }
+
+    override fun close() {
+        closeCalls += 1
     }
 }

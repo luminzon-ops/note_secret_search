@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
@@ -19,64 +21,82 @@ import 'package:note_secret_search/features/settings/domain/security_settings.da
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
 
 void main() {
-  testWidgets('pin unlock falls back to vault route when opened as top-level route', (tester) async {
-    final sessionController = LockSessionController();
-    final pinStateController = PinStateController()..markPinMaterialReady();
-    final repository = _FakeSecuritySettingsRepository(pin: '2468');
-    final router = GoRouter(
-      initialLocation: '/unlock/pin',
-      routes: [
-        GoRoute(path: '/unlock/pin', builder: (context, state) => const PinUnlockPage()),
-        GoRoute(
-          path: '/vault',
-          builder: (context, state) => const Scaffold(body: Text('vault home')),
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          appRouterProvider.overrideWithValue(router),
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
-          pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          securityOrchestratorProvider.overrideWith(
-            (ref) => SecurityOrchestrator(
-              biometricGateway: _FakeBiometricGateway(),
-              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
-              sessionController: sessionController,
-              pinStateController: pinStateController,
-              logger: const AppLogger(),
-              appIsForeground: () => true,
-            ),
+  testWidgets(
+    'pin unlock falls back to vault route when opened as top-level route',
+    (tester) async {
+      final sessionController = LockSessionController();
+      final pinStateController = PinStateController()..markPinMaterialReady();
+      final repository = _FakeSecuritySettingsRepository();
+      final secureKeyGateway = _FakeSecureKeyGateway(pin: '2468');
+      final router = GoRouter(
+        initialLocation: '/unlock/pin',
+        routes: [
+          GoRoute(
+            path: '/unlock/pin',
+            builder: (context, state) => const PinUnlockPage(),
           ),
-          securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
-          securitySettingsControllerProvider.overrideWith(
-            (ref) => SecuritySettingsController(
-              repository: repository,
-              securityOrchestrator: ref.read(securityOrchestratorProvider),
-              pinStateController: pinStateController,
-            ),
+          GoRoute(
+            path: '/vault',
+            builder: (context, state) =>
+                const Scaffold(body: Text('vault home')),
           ),
         ],
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
+      );
 
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField), '2468');
-    await tester.tap(find.text('解锁'));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            appRouterProvider.overrideWithValue(router),
+            lockSessionControllerProvider.overrideWith(
+              (ref) => sessionController,
+            ),
+            pinStateControllerProvider.overrideWith(
+              (ref) => pinStateController,
+            ),
+            securityOrchestratorProvider.overrideWith(
+              (ref) => SecurityOrchestrator(
+                biometricGateway: _FakeBiometricGateway(),
+                screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+                secureKeyGateway: secureKeyGateway,
+                sessionController: sessionController,
+                pinStateController: pinStateController,
+                sessionKeyStore: DatabaseSessionKeyStore(),
+                logger: const AppLogger(),
+                appIsForeground: () => true,
+              ),
+            ),
+            securitySettingsRepositoryProvider.overrideWith(
+              (ref) async => repository,
+            ),
+            securitySettingsControllerProvider.overrideWith(
+              (ref) => SecuritySettingsController(
+                repository: repository,
+                securityOrchestrator: ref.read(securityOrchestratorProvider),
+                pinStateController: pinStateController,
+              ),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
 
-    expect(sessionController.state.isUnlocked, isTrue);
-    expect(find.text('vault home'), findsOneWidget);
-  });
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField), '2468');
+      await tester.tap(find.text('解锁'));
+      await tester.pumpAndSettle();
 
-  testWidgets('pin unlock succeeds when opened from a parent route', (tester) async {
+      expect(sessionController.state.isUnlocked, isTrue);
+      expect(find.text('vault home'), findsOneWidget);
+    },
+  );
+
+  testWidgets('pin unlock succeeds when opened from a parent route', (
+    tester,
+  ) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController()..markPinMaterialReady();
-    final repository = _FakeSecuritySettingsRepository(pin: '2468');
+    final repository = _FakeSecuritySettingsRepository();
+    final secureKeyGateway = _FakeSecureKeyGateway(pin: '2468');
     bool? result;
     final router = GoRouter(
       initialLocation: '/',
@@ -94,7 +114,10 @@ void main() {
             ),
           ),
         ),
-        GoRoute(path: '/unlock/pin', builder: (context, state) => const PinUnlockPage()),
+        GoRoute(
+          path: '/unlock/pin',
+          builder: (context, state) => const PinUnlockPage(),
+        ),
       ],
     );
 
@@ -102,20 +125,25 @@ void main() {
       ProviderScope(
         overrides: [
           appRouterProvider.overrideWithValue(router),
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
           securityOrchestratorProvider.overrideWith(
             (ref) => SecurityOrchestrator(
               biometricGateway: _FakeBiometricGateway(),
               screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
+              secureKeyGateway: secureKeyGateway,
               sessionController: sessionController,
               pinStateController: pinStateController,
+              sessionKeyStore: DatabaseSessionKeyStore(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,
@@ -141,28 +169,36 @@ void main() {
     expect(find.text('open unlock'), findsOneWidget);
   });
 
-  testWidgets('pin unlock shows error and increments failures for wrong pin', (tester) async {
+  testWidgets('pin unlock shows error and increments failures for wrong pin', (
+    tester,
+  ) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController()..markPinMaterialReady();
-    final repository = _FakeSecuritySettingsRepository(pin: '2468');
+    final repository = _FakeSecuritySettingsRepository();
+    final secureKeyGateway = _FakeSecureKeyGateway(pin: '2468');
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          lockSessionControllerProvider.overrideWith((ref) => sessionController),
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
           securityOrchestratorProvider.overrideWith(
             (ref) => SecurityOrchestrator(
               biometricGateway: _FakeBiometricGateway(),
               screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-              secureKeyGateway: _FakeSecureKeyGateway(),
+              secureKeyGateway: secureKeyGateway,
               sessionController: sessionController,
               pinStateController: pinStateController,
+              sessionKeyStore: DatabaseSessionKeyStore(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith((ref) async => repository),
+          securitySettingsRepositoryProvider.overrideWith(
+            (ref) async => repository,
+          ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,
@@ -185,15 +221,14 @@ void main() {
     expect(sessionController.state.isUnlocked, isFalse);
   });
 
-  testWidgets('pin verification result cannot override a newer lock', (
-    tester,
-  ) async {
+  testWidgets('native pin result cannot override a newer lock', (tester) async {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController()..markPinMaterialReady();
-    final verificationBlocker = Completer<bool>();
-    final repository = _FakeSecuritySettingsRepository(
+    final unlockBlocker = Completer<NativeUnlockResult>();
+    final repository = _FakeSecuritySettingsRepository();
+    final secureKeyGateway = _FakeSecureKeyGateway(
       pin: '2468',
-      verificationResult: verificationBlocker.future,
+      unlockResult: unlockBlocker.future,
     );
     final screenshotGateway = _FakeScreenshotProtectionGateway();
 
@@ -208,9 +243,10 @@ void main() {
             (ref) => SecurityOrchestrator(
               biometricGateway: _FakeBiometricGateway(),
               screenshotProtectionGateway: screenshotGateway,
-              secureKeyGateway: _FakeSecureKeyGateway(),
+              secureKeyGateway: secureKeyGateway,
               sessionController: sessionController,
               pinStateController: pinStateController,
+              sessionKeyStore: DatabaseSessionKeyStore(),
               logger: const AppLogger(),
               appIsForeground: () => true,
             ),
@@ -236,7 +272,7 @@ void main() {
     await tester.pump();
 
     sessionController.lock();
-    verificationBlocker.complete(true);
+    unlockBlocker.complete(_pinUnlockMaterial());
     await tester.pumpAndSettle();
 
     expect(find.text('安全解锁失败，请重试'), findsOneWidget);
@@ -246,18 +282,9 @@ void main() {
 }
 
 class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
-  _FakeSecuritySettingsRepository({
-    required String pin,
-    Future<bool>? verificationResult,
-  }) : _pin = pin,
-       _verificationResult = verificationResult;
-
-  SecuritySettings _settings = const SecuritySettings.defaults().copyWith(pinEnabled: true);
-  String _pin;
-  final Future<bool>? _verificationResult;
-
-  @override
-  Future<bool> hasPinMaterial() async => _pin.isNotEmpty;
+  SecuritySettings _settings = const SecuritySettings.defaults().copyWith(
+    pinEnabled: true,
+  );
 
   @override
   Future<SecuritySettings> load() async => _settings;
@@ -269,20 +296,6 @@ class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
   Future<void> save(SecuritySettings settings) async {
     _settings = settings;
   }
-
-  @override
-  Future<void> savePinMaterial(String pin) async {
-    _pin = pin;
-  }
-
-  @override
-  Future<bool> verifyPin(String pin) async {
-    final verificationResult = _verificationResult;
-    if (verificationResult != null) {
-      return verificationResult;
-    }
-    return _pin == pin;
-  }
 }
 
 class _FakeBiometricGateway implements BiometricGateway {
@@ -290,7 +303,8 @@ class _FakeBiometricGateway implements BiometricGateway {
   Future<bool> authenticate() async => false;
 
   @override
-  Future<BiometricAvailability> getAvailability() async => BiometricAvailability.available;
+  Future<BiometricAvailability> getAvailability() async =>
+      BiometricAvailability.available;
 }
 
 class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
@@ -306,9 +320,64 @@ class _FakeScreenshotProtectionGateway implements ScreenshotProtectionGateway {
 }
 
 class _FakeSecureKeyGateway implements SecureKeyGateway {
+  _FakeSecureKeyGateway({required this.pin, this.unlockResult});
+
+  final String pin;
+  final Future<NativeUnlockResult>? unlockResult;
+
+  @override
+  Future<void> configurePin({required String pin}) async {}
+
   @override
   Future<void> ensureRootKey() async {}
 
   @override
   Future<String> getDatabasePasswordMaterial() async => 'material';
+
+  @override
+  Future<NativeSecurityState> getSecurityState() async {
+    return const NativeSecurityState(
+      status: NativeSecurityStatus.locked,
+      keyId: '123e4567-e89b-42d3-a456-426614174000',
+      pinConfigured: true,
+      deviceCredentialAvailable: true,
+      strongBiometricAvailable: true,
+      securityLevel: KeySecurityLevel.tee,
+    );
+  }
+
+  @override
+  Future<NativeUnlockResult> unlockWithSystemAuth() async {
+    return NativeUnlockResult(
+      keyId: '123e4567-e89b-42d3-a456-426614174000',
+      databaseKey: Uint8List(32),
+      fieldKey: Uint8List(32),
+      unlockMethod: 'system',
+    );
+  }
+
+  @override
+  Future<void> removePin() async {}
+
+  @override
+  Future<NativeUnlockResult> unlockWithPin({required String pin}) async {
+    if (pin != this.pin) {
+      throw const NativeSecurityException(
+        code: 'PIN_INCORRECT',
+        message: null,
+        details: null,
+      );
+    }
+    return await (unlockResult ??
+        Future<NativeUnlockResult>.value(_pinUnlockMaterial()));
+  }
+}
+
+NativeUnlockResult _pinUnlockMaterial() {
+  return NativeUnlockResult(
+    keyId: '123e4567-e89b-42d3-a456-426614174000',
+    databaseKey: Uint8List(32),
+    fieldKey: Uint8List(32),
+    unlockMethod: 'pin',
+  );
 }

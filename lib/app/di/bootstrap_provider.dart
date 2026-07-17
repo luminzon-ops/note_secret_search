@@ -4,6 +4,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/database_session_keys.dart';
+import 'package:note_secret_search/core/security/field_crypto.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/sqlcipher_database.dart';
@@ -19,7 +21,19 @@ import 'package:note_secret_search/features/settings/application/security_settin
 
 final loggerProvider = Provider<AppLogger>((ref) => const AppLogger());
 
-final cryptoServiceProvider = Provider<CryptoService>((ref) => const MvpCryptoService());
+final databaseSessionKeyStoreProvider = Provider<DatabaseSessionKeyStore>((
+  ref,
+) {
+  final store = DatabaseSessionKeyStore();
+  ref.onDispose(store.clear);
+  return store;
+});
+
+final cryptoServiceProvider = Provider<CryptoService>((ref) {
+  return AesGcmFieldCrypto(
+    sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
+  );
+});
 
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
   return SqlCipherAppDatabase(
@@ -33,17 +47,22 @@ final nativeSecurityBridgeProvider = Provider<NativeSecurityBridge>((ref) {
 });
 
 final biometricGatewayProvider = Provider<BiometricGateway>((ref) {
-  return DeviceBiometricGateway(bridge: ref.watch(nativeSecurityBridgeProvider));
-});
-
-final screenshotProtectionGatewayProvider = Provider<ScreenshotProtectionGateway>((ref) {
-  return DeviceScreenshotProtectionGateway(
+  return DeviceBiometricGateway(
     bridge: ref.watch(nativeSecurityBridgeProvider),
   );
 });
 
+final screenshotProtectionGatewayProvider =
+    Provider<ScreenshotProtectionGateway>((ref) {
+      return DeviceScreenshotProtectionGateway(
+        bridge: ref.watch(nativeSecurityBridgeProvider),
+      );
+    });
+
 final secureKeyGatewayProvider = Provider<SecureKeyGateway>((ref) {
-  return DeviceSecureKeyGateway(bridge: ref.watch(nativeSecurityBridgeProvider));
+  return DeviceSecureKeyGateway(
+    bridge: ref.watch(nativeSecurityBridgeProvider),
+  );
 });
 
 final databaseKeyProvider = Provider<DatabaseKeyProvider>((ref) {
@@ -52,9 +71,27 @@ final databaseKeyProvider = Provider<DatabaseKeyProvider>((ref) {
   );
 });
 
-final lockSessionControllerProvider = StateNotifierProvider<LockSessionController, LockSessionState>(
-  (ref) => LockSessionController(),
-);
+final lockSessionControllerProvider =
+    StateNotifierProvider<LockSessionController, LockSessionState>((ref) {
+      final sessionKeyStore = ref.watch(databaseSessionKeyStoreProvider);
+      final nativeSecurityBridge = ref.watch(nativeSecurityBridgeProvider);
+      return LockSessionController(
+        onLock: () {
+          sessionKeyStore.clear();
+          unawaited(_cancelNativeSecurityOperation(nativeSecurityBridge));
+        },
+      );
+    });
+
+Future<void> _cancelNativeSecurityOperation(
+  NativeSecurityBridge nativeSecurityBridge,
+) async {
+  try {
+    await nativeSecurityBridge.lock();
+  } catch (_) {
+    // Dart-side keys are already revoked; P2C will make database close awaitable.
+  }
+}
 
 final sensitiveStateAccessAllowedProvider = StateProvider<bool>((ref) => false);
 
@@ -69,9 +106,10 @@ FutureOr<T> guardSensitiveFuture<T>(
   return load();
 }
 
-final pinStateControllerProvider = StateNotifierProvider<PinStateController, PinState>(
-  (ref) => PinStateController(),
-);
+final pinStateControllerProvider =
+    StateNotifierProvider<PinStateController, PinState>(
+      (ref) => PinStateController(),
+    );
 
 final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
   return SecurityOrchestrator(
@@ -80,6 +118,7 @@ final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
     secureKeyGateway: ref.watch(secureKeyGatewayProvider),
     sessionController: ref.watch(lockSessionControllerProvider.notifier),
     pinStateController: ref.watch(pinStateControllerProvider.notifier),
+    sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
     logger: ref.watch(loggerProvider),
     appIsForeground: () {
       final lifecycleState = WidgetsBinding.instance.lifecycleState;
@@ -89,16 +128,22 @@ final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
   );
 });
 
-final appLockLifecycleControllerProvider = Provider<AppLockLifecycleController>((ref) {
-  return AppLockLifecycleController(
-    sessionController: ref.watch(lockSessionControllerProvider.notifier),
-    autoLockSecondsLoader: () async {
-      final repository = await ref.read(securitySettingsRepositoryProvider.future);
-      return repository.loadAutoLockSeconds();
-    },
-    screenshotProtectionGateway: ref.watch(screenshotProtectionGatewayProvider),
-  );
-});
+final appLockLifecycleControllerProvider = Provider<AppLockLifecycleController>(
+  (ref) {
+    return AppLockLifecycleController(
+      sessionController: ref.watch(lockSessionControllerProvider.notifier),
+      autoLockSecondsLoader: () async {
+        final repository = await ref.read(
+          securitySettingsRepositoryProvider.future,
+        );
+        return repository.loadAutoLockSeconds();
+      },
+      screenshotProtectionGateway: ref.watch(
+        screenshotProtectionGatewayProvider,
+      ),
+    );
+  },
+);
 
 final appBootstrapServiceProvider = Provider<AppBootstrapService>((ref) {
   return AppBootstrapService(

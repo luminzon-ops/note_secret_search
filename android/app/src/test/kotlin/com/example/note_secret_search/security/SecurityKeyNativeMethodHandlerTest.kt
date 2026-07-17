@@ -53,6 +53,68 @@ class SecurityKeyNativeMethodHandlerTest {
     }
 
     @Test
+    fun `configure pin forwards owned bytes and returns void`() {
+        val result = RecordingMethodResult()
+        val pin = "2468".toByteArray()
+
+        handler.configurePin("Configure fallback PIN", pin, result)
+
+        assertEquals("Configure fallback PIN", operations.lastReason)
+        assertArrayEquals("2468".toByteArray(), operations.lastPin)
+        assertTrue(pin.all { it == 0.toByte() })
+        assertEquals(1, result.successCalls)
+        assertNull(result.value)
+    }
+
+    @Test
+    fun `pin unlock returns byte arrays and pin unlock method`() {
+        val result = CopyingMethodResult()
+        val pin = "2468".toByteArray()
+
+        handler.unlockWithPin(pin, result)
+
+        val map = result.value as Map<*, *>
+        assertEquals("pin", map["unlockMethod"])
+        assertArrayEquals("2468".toByteArray(), operations.lastPin)
+        assertTrue(pin.all { it == 0.toByte() })
+        assertTrue(operations.lastMaterial!!.databaseKey.all { it == 0.toByte() })
+        assertTrue(operations.lastMaterial!!.fieldKey.all { it == 0.toByte() })
+    }
+
+    @Test
+    fun `remove pin forwards reason and returns void`() {
+        val result = RecordingMethodResult()
+
+        handler.removePin("Remove fallback PIN", result)
+
+        assertEquals("Remove fallback PIN", operations.lastReason)
+        assertEquals(1, result.successCalls)
+        assertNull(result.value)
+    }
+
+    @Test
+    fun `invalid configure reason clears supplied pin`() {
+        val result = RecordingMethodResult()
+        val pin = "2468".toByteArray()
+
+        handler.configurePin(" ", pin, result)
+
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertTrue(pin.all { it == 0.toByte() })
+        assertNull(operations.lastPin)
+    }
+
+    @Test
+    fun `non byte pin payload maps to invalid argument`() {
+        val result = RecordingMethodResult()
+
+        handler.unlockWithPin("2468", result)
+
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertNull(operations.lastPin)
+    }
+
+    @Test
     fun `invalid reason maps to stable invalid argument error`() {
         val result = RecordingMethodResult()
 
@@ -106,6 +168,7 @@ class SecurityKeyNativeMethodHandlerTest {
 private class RecordingNativeKeyringOperations : NativeKeyringOperations {
     var lastReason: String? = null
     var lastMaterial: NativeUnlockMaterial? = null
+    var lastPin: ByteArray? = null
 
     override fun getSecurityState(): NativeSecurityState {
         return NativeSecurityState(
@@ -131,6 +194,34 @@ private class RecordingNativeKeyringOperations : NativeKeyringOperations {
     ) {
         lastReason = reason
         result.success(material())
+    }
+
+    override fun configurePin(
+        reason: String,
+        pin: ByteArray,
+        result: NativeResult<Unit>,
+    ) {
+        lastReason = reason
+        lastPin = pin.clone()
+        pin.fill(0)
+        result.success(Unit)
+    }
+
+    override fun unlockWithPin(
+        pin: ByteArray,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        lastPin = pin.clone()
+        pin.fill(0)
+        result.success(material().copy(unlockMethod = "pin"))
+    }
+
+    override fun removePin(
+        reason: String,
+        result: NativeResult<Unit>,
+    ) {
+        lastReason = reason
+        result.success(Unit)
     }
 
     override fun lock(): Any? = null
@@ -171,8 +262,10 @@ private class RecordingLegacyBiometricOperations : LegacyBiometricOperations {
 private class RecordingMethodResult : MethodChannel.Result {
     var value: Any? = null
     var errorCode: String? = null
+    var successCalls = 0
 
     override fun success(result: Any?) {
+        successCalls += 1
         value = result
     }
 

@@ -8,6 +8,7 @@ void registerSensitiveStateInvalidatorWidgetTests() {
       final container = ProviderContainer(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(_plaintextCryptoService),
           secretRepositoryProvider.overrideWithValue(secretRepository),
         ],
       );

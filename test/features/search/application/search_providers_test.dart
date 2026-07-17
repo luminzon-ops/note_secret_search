@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
@@ -21,7 +23,10 @@ class _FakeCryptoService implements CryptoService {
   const _FakeCryptoService();
 
   @override
-  String decryptNullable(List<int>? ciphertext) {
+  String decryptNullable(
+    List<int>? ciphertext, {
+    required FieldCryptoContext context,
+  }) {
     if (ciphertext == null) {
       return '';
     }
@@ -29,7 +34,12 @@ class _FakeCryptoService implements CryptoService {
   }
 
   @override
-  List<int>? encryptNullable(String? plaintext) => plaintext?.codeUnits;
+  Uint8List? encryptNullable(
+    String? plaintext, {
+    required FieldCryptoContext context,
+  }) {
+    return plaintext == null ? null : Uint8List.fromList(plaintext.codeUnits);
+  }
 }
 
 class _FakeSearchRepository implements SearchRepository {
@@ -43,10 +53,14 @@ class _FakeSearchRepository implements SearchRepository {
   }
 
   @override
-  Future<SearchScopeConfig> loadScopeConfig() async => const SearchScopeConfig.defaults();
+  Future<SearchScopeConfig> loadScopeConfig() async =>
+      const SearchScopeConfig.defaults();
 
   @override
-  Future<void> removeChunksBySource(String sourceId, SearchSourceType sourceType) async {}
+  Future<void> removeChunksBySource(
+    String sourceId,
+    SearchSourceType sourceType,
+  ) async {}
 
   @override
   Future<void> saveScopeConfig(SearchScopeConfig config) async {}
@@ -75,11 +89,11 @@ class _FakeEmbeddingEngine implements EmbeddingEngine {
 
 class _FakeSearchIndexService extends SearchIndexService {
   _FakeSearchIndexService()
-      : super(
-          repository: _FakeSearchRepository(),
-          cryptoService: const _FakeCryptoService(),
-          embeddingEngine: const _FakeEmbeddingEngine(),
-        );
+    : super(
+        repository: _FakeSearchRepository(),
+        cryptoService: const _FakeCryptoService(),
+        embeddingEngine: const _FakeEmbeddingEngine(),
+      );
 
   @override
   Future<void> indexPendingItems({
@@ -132,124 +146,180 @@ List<SearchResultItem> _results(List<String> ids) {
 }
 
 void main() {
-  test('indexPendingAndRefresh writes empty-query feedback after refresh completes', () async {
-    final container = ProviderContainer(
-      overrides: [
-        lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
-        ),
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
-        searchQueryProvider.overrideWith((ref) => ''),
-        searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
-        activeEmbeddingModelProvider.overrideWith((ref) async => _fakeEmbeddingModel),
-        searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
-        searchIndexServiceProvider.overrideWith((ref) => _FakeSearchIndexService()),
-        unifiedSearchResultsProvider.overrideWith((ref) async => const <SearchResultItem>[]),
-        semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),
-      ],
-    );
+  test(
+    'indexPendingAndRefresh writes empty-query feedback after refresh completes',
+    () async {
+      final container = ProviderContainer(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+          ),
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
+          searchQueryProvider.overrideWith((ref) => ''),
+          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          activeEmbeddingModelProvider.overrideWith(
+            (ref) async => _fakeEmbeddingModel,
+          ),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
+          searchIndexServiceProvider.overrideWith(
+            (ref) => _FakeSearchIndexService(),
+          ),
+          unifiedSearchResultsProvider.overrideWith(
+            (ref) async => const <SearchResultItem>[],
+          ),
+          semanticSearchResultsProvider.overrideWith(
+            (ref) async => const <SemanticSearchResult>[],
+          ),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(searchIndexControllerProvider).indexPendingAndRefresh();
+      await container
+          .read(searchIndexControllerProvider)
+          .indexPendingAndRefresh();
 
-    final feedback = container.read(searchRefreshFeedbackProvider);
-    expect(feedback.visible, isTrue);
-    expect(feedback.headline, '搜索状态已刷新');
-    expect(feedback.message, '输入关键词后可查看最新结果。');
-    expect(feedback.changed, isNull);
-  });
+      final feedback = container.read(searchRefreshFeedbackProvider);
+      expect(feedback.visible, isTrue);
+      expect(feedback.headline, '搜索状态已刷新');
+      expect(feedback.message, '输入关键词后可查看最新结果。');
+      expect(feedback.changed, isNull);
+    },
+  );
 
-  test('indexPendingAndRefresh writes unchanged feedback when unified result ids stay the same', () async {
-    final container = ProviderContainer(
-      overrides: [
-        lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
-        ),
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
-        searchQueryProvider.overrideWith((ref) => 'bank'),
-        searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
-        activeEmbeddingModelProvider.overrideWith((ref) async => _fakeEmbeddingModel),
-        searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
-        searchIndexServiceProvider.overrideWith((ref) => _FakeSearchIndexService()),
-        unifiedSearchResultsProvider.overrideWith((ref) async => _results(['a', 'b'])),
-        semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),
-      ],
-    );
+  test(
+    'indexPendingAndRefresh writes unchanged feedback when unified result ids stay the same',
+    () async {
+      final container = ProviderContainer(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+          ),
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
+          searchQueryProvider.overrideWith((ref) => 'bank'),
+          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          activeEmbeddingModelProvider.overrideWith(
+            (ref) async => _fakeEmbeddingModel,
+          ),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
+          searchIndexServiceProvider.overrideWith(
+            (ref) => _FakeSearchIndexService(),
+          ),
+          unifiedSearchResultsProvider.overrideWith(
+            (ref) async => _results(['a', 'b']),
+          ),
+          semanticSearchResultsProvider.overrideWith(
+            (ref) async => const <SemanticSearchResult>[],
+          ),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(searchIndexControllerProvider).indexPendingAndRefresh();
+      await container
+          .read(searchIndexControllerProvider)
+          .indexPendingAndRefresh();
 
-    final feedback = container.read(searchRefreshFeedbackProvider);
-    expect(feedback.visible, isTrue);
-    expect(feedback.changed, isFalse);
-    expect(feedback.message, '当前结果已更新，本轮刷新未改变当前结果。');
-  });
+      final feedback = container.read(searchRefreshFeedbackProvider);
+      expect(feedback.visible, isTrue);
+      expect(feedback.changed, isFalse);
+      expect(feedback.message, '当前结果已更新，本轮刷新未改变当前结果。');
+    },
+  );
 
-  test('indexPendingAndRefresh writes changed-count feedback when result count changes', () async {
-    var callCount = 0;
-    final container = ProviderContainer(
-      overrides: [
-        lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
-        ),
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
-        searchQueryProvider.overrideWith((ref) => 'bank'),
-        searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
-        activeEmbeddingModelProvider.overrideWith((ref) async => _fakeEmbeddingModel),
-        searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
-        searchIndexServiceProvider.overrideWith((ref) => _FakeSearchIndexService()),
-        unifiedSearchResultsProvider.overrideWith((ref) async {
-          callCount++;
-          return callCount == 1 ? _results(['a']) : _results(['a', 'b', 'c']);
-        }),
-        semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),
-      ],
-    );
+  test(
+    'indexPendingAndRefresh writes changed-count feedback when result count changes',
+    () async {
+      var callCount = 0;
+      final container = ProviderContainer(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+          ),
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
+          searchQueryProvider.overrideWith((ref) => 'bank'),
+          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          activeEmbeddingModelProvider.overrideWith(
+            (ref) async => _fakeEmbeddingModel,
+          ),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
+          searchIndexServiceProvider.overrideWith(
+            (ref) => _FakeSearchIndexService(),
+          ),
+          unifiedSearchResultsProvider.overrideWith((ref) async {
+            callCount++;
+            return callCount == 1 ? _results(['a']) : _results(['a', 'b', 'c']);
+          }),
+          semanticSearchResultsProvider.overrideWith(
+            (ref) async => const <SemanticSearchResult>[],
+          ),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(searchIndexControllerProvider).indexPendingAndRefresh();
+      await container
+          .read(searchIndexControllerProvider)
+          .indexPendingAndRefresh();
 
-    final feedback = container.read(searchRefreshFeedbackProvider);
-    expect(feedback.visible, isTrue);
-    expect(feedback.changed, isTrue);
-    expect(feedback.message, '当前结果已更新，结果数量从 1 条变为 3 条。');
-  });
+      final feedback = container.read(searchRefreshFeedbackProvider);
+      expect(feedback.visible, isTrue);
+      expect(feedback.changed, isTrue);
+      expect(feedback.message, '当前结果已更新，结果数量从 1 条变为 3 条。');
+    },
+  );
 
-  test('indexPendingAndRefresh writes reorder feedback when ids change order with same count', () async {
-    var callCount = 0;
-    final container = ProviderContainer(
-      overrides: [
-        lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
-        ),
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
-        searchQueryProvider.overrideWith((ref) => 'bank'),
-        searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
-        activeEmbeddingModelProvider.overrideWith((ref) async => _fakeEmbeddingModel),
-        searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
-        searchIndexServiceProvider.overrideWith((ref) => _FakeSearchIndexService()),
-        unifiedSearchResultsProvider.overrideWith((ref) async {
-          callCount++;
-          return callCount == 1 ? _results(['a', 'b']) : _results(['b', 'a']);
-        }),
-        semanticSearchResultsProvider.overrideWith((ref) async => const <SemanticSearchResult>[]),
-      ],
-    );
+  test(
+    'indexPendingAndRefresh writes reorder feedback when ids change order with same count',
+    () async {
+      var callCount = 0;
+      final container = ProviderContainer(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+          ),
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
+          searchQueryProvider.overrideWith((ref) => 'bank'),
+          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          activeEmbeddingModelProvider.overrideWith(
+            (ref) async => _fakeEmbeddingModel,
+          ),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
+          searchIndexServiceProvider.overrideWith(
+            (ref) => _FakeSearchIndexService(),
+          ),
+          unifiedSearchResultsProvider.overrideWith((ref) async {
+            callCount++;
+            return callCount == 1 ? _results(['a', 'b']) : _results(['b', 'a']);
+          }),
+          semanticSearchResultsProvider.overrideWith(
+            (ref) async => const <SemanticSearchResult>[],
+          ),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(searchIndexControllerProvider).indexPendingAndRefresh();
+      await container
+          .read(searchIndexControllerProvider)
+          .indexPendingAndRefresh();
 
-    final feedback = container.read(searchRefreshFeedbackProvider);
-    expect(feedback.visible, isTrue);
-    expect(feedback.changed, isTrue);
-    expect(feedback.message, '当前结果已更新，本轮刷新调整了结果排序。');
-  });
+      final feedback = container.read(searchRefreshFeedbackProvider);
+      expect(feedback.visible, isTrue);
+      expect(feedback.changed, isTrue);
+      expect(feedback.message, '当前结果已更新，本轮刷新调整了结果排序。');
+    },
+  );
 }

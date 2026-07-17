@@ -35,16 +35,20 @@ class SecuritySettingsPage extends ConsumerWidget {
                           await context.push('/settings/security/pin');
                           return;
                         }
-                        await ref.read(securitySettingsControllerProvider.notifier).updatePinEnabled(value);
+                        await ref
+                            .read(securitySettingsControllerProvider.notifier)
+                            .updatePinEnabled(value);
                       },
                       title: const Text('启用应用 PIN 备用解锁'),
                       subtitle: Text(
-                        pinState.hasPinMaterial ? 'PIN 材料已存在，可作为备用入口' : '尚未配置 PIN',
+                        pinState.hasPinMaterial
+                            ? 'PIN 已配置，可作为备用入口'
+                            : '尚未配置 PIN',
                       ),
                     ),
                     ListTile(
                       title: const Text('设置 / 更新 PIN'),
-                      subtitle: const Text('当前为 MVP 骨架，后续会切换到真实 KDF / 安全包裹方案'),
+                      subtitle: const Text('设置或更新时需要再次完成系统认证'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => context.push('/settings/security/pin'),
                     ),
@@ -57,7 +61,9 @@ class SecuritySettingsPage extends ConsumerWidget {
                           if (value == null) {
                             return;
                           }
-                          ref.read(securitySettingsControllerProvider.notifier).updateAutoLockSeconds(value);
+                          ref
+                              .read(securitySettingsControllerProvider.notifier)
+                              .updateAutoLockSeconds(value);
                         },
                         items: const [
                           DropdownMenuItem(value: 0, child: Text('立即')),

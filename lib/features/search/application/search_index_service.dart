@@ -15,9 +15,9 @@ class SearchIndexService {
     required SearchRepository repository,
     required CryptoService cryptoService,
     required EmbeddingEngine embeddingEngine,
-  })  : _repository = repository,
-        _cryptoService = cryptoService,
-        _embeddingEngine = embeddingEngine;
+  }) : _repository = repository,
+       _cryptoService = cryptoService,
+       _embeddingEngine = embeddingEngine;
 
   final SearchRepository _repository;
   final CryptoService _cryptoService;
@@ -40,8 +40,12 @@ class SearchIndexService {
 
     final engineState = await _embeddingEngine.getState(activeEmbeddingModel);
     final pending = <SearchIndexPendingItem>[];
-    pending.addAll(await _detectPendingSecrets(secrets, activeEmbeddingModel.id, settings));
-    pending.addAll(await _detectPendingNotes(notes, activeEmbeddingModel.id, settings));
+    pending.addAll(
+      await _detectPendingSecrets(secrets, activeEmbeddingModel.id, settings),
+    );
+    pending.addAll(
+      await _detectPendingNotes(notes, activeEmbeddingModel.id, settings),
+    );
 
     pending.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
@@ -65,7 +69,10 @@ class SearchIndexService {
       final segments = _splitText(item.indexPlainText, settings.maxChunkLength);
       for (var chunkIndex = 0; chunkIndex < segments.length; chunkIndex++) {
         final vector = await _embeddingEngine.embed(
-          EmbeddingRequest(model: activeEmbeddingModel, text: segments[chunkIndex]),
+          EmbeddingRequest(
+            model: activeEmbeddingModel,
+            text: segments[chunkIndex],
+          ),
         );
 
         chunks.add(
@@ -97,8 +104,14 @@ class SearchIndexService {
     for (final item in secrets) {
       final plainText = _secretPlainText(item, settings);
       final plainTextHash = _hashText(plainText);
-      final chunks = await _repository.getChunksBySource(item.id, SearchSourceType.secret, modelId);
-      final hasFreshChunk = chunks.any((chunk) => chunk.plainTextHash == plainTextHash);
+      final chunks = await _repository.getChunksBySource(
+        item.id,
+        SearchSourceType.secret,
+        modelId,
+      );
+      final hasFreshChunk = chunks.any(
+        (chunk) => chunk.plainTextHash == plainTextHash,
+      );
       if (!hasFreshChunk) {
         pending.add(
           SearchIndexPendingItem(
@@ -124,8 +137,14 @@ class SearchIndexService {
     for (final item in notes) {
       final plainText = _notePlainText(item, settings);
       final plainTextHash = _hashText(plainText);
-      final chunks = await _repository.getChunksBySource(item.id, SearchSourceType.note, modelId);
-      final hasFreshChunk = chunks.any((chunk) => chunk.plainTextHash == plainTextHash);
+      final chunks = await _repository.getChunksBySource(
+        item.id,
+        SearchSourceType.note,
+        modelId,
+      );
+      final hasFreshChunk = chunks.any(
+        (chunk) => chunk.plainTextHash == plainTextHash,
+      );
       if (!hasFreshChunk) {
         pending.add(
           SearchIndexPendingItem(
@@ -145,9 +164,22 @@ class SearchIndexService {
   String _secretPlainText(SecretItem item, SearchIndexSettings settings) {
     return <String>[
       item.title,
-      _cryptoService.decryptNullable(item.usernameCiphertext),
-      _cryptoService.decryptNullable(item.websiteUrlCiphertext),
-      if (settings.includeSecretNotes) _cryptoService.decryptNullable(item.noteCiphertext),
+      _cryptoService.decryptField(
+        item.usernameCiphertext,
+        field: EncryptedDatabaseField.secretUsername,
+        rowId: item.id,
+      ),
+      _cryptoService.decryptField(
+        item.websiteUrlCiphertext,
+        field: EncryptedDatabaseField.secretWebsiteUrl,
+        rowId: item.id,
+      ),
+      if (settings.includeSecretNotes)
+        _cryptoService.decryptField(
+          item.noteCiphertext,
+          field: EncryptedDatabaseField.secretNote,
+          rowId: item.id,
+        ),
       item.tags.join(' '),
     ].where((part) => part.trim().isNotEmpty).join('\n');
   }
@@ -155,8 +187,17 @@ class SearchIndexService {
   String _notePlainText(NoteItem item, SearchIndexSettings settings) {
     return <String>[
       item.title,
-      _cryptoService.decryptNullable(item.summaryCacheCiphertext),
-      if (settings.includeNoteBody) _cryptoService.decryptNullable(item.contentCiphertext),
+      _cryptoService.decryptField(
+        item.summaryCacheCiphertext,
+        field: EncryptedDatabaseField.noteSummary,
+        rowId: item.id,
+      ),
+      if (settings.includeNoteBody)
+        _cryptoService.decryptField(
+          item.contentCiphertext,
+          field: EncryptedDatabaseField.noteContent,
+          rowId: item.id,
+        ),
       item.tags.join(' '),
     ].where((part) => part.trim().isNotEmpty).join('\n');
   }
@@ -184,7 +225,8 @@ class SearchIndexService {
       buffer.clear();
     }
 
-    for (final paragraph in paragraphs.isEmpty ? <String>[normalized] : paragraphs) {
+    for (final paragraph
+        in paragraphs.isEmpty ? <String>[normalized] : paragraphs) {
       if (paragraph.length > maxChunkLength) {
         flush();
         for (var index = 0; index < paragraph.length; index += maxChunkLength) {
@@ -194,7 +236,9 @@ class SearchIndexService {
         continue;
       }
 
-      final candidate = buffer.isEmpty ? paragraph : '${buffer.toString()}\n\n$paragraph';
+      final candidate = buffer.isEmpty
+          ? paragraph
+          : '${buffer.toString()}\n\n$paragraph';
       if (candidate.length > maxChunkLength) {
         flush();
         buffer.write(paragraph);

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
@@ -17,7 +18,10 @@ class _FakeCryptoService implements CryptoService {
   const _FakeCryptoService();
 
   @override
-  String decryptNullable(List<int>? ciphertext) {
+  String decryptNullable(
+    List<int>? ciphertext, {
+    required FieldCryptoContext context,
+  }) {
     if (ciphertext == null) {
       return '';
     }
@@ -25,7 +29,12 @@ class _FakeCryptoService implements CryptoService {
   }
 
   @override
-  List<int>? encryptNullable(String? plaintext) => plaintext?.codeUnits;
+  Uint8List? encryptNullable(
+    String? plaintext, {
+    required FieldCryptoContext context,
+  }) {
+    return plaintext == null ? null : Uint8List.fromList(plaintext.codeUnits);
+  }
 }
 
 class _FakeSearchRepository implements SearchRepository {
@@ -43,10 +52,14 @@ class _FakeSearchRepository implements SearchRepository {
   }
 
   @override
-  Future<SearchScopeConfig> loadScopeConfig() async => const SearchScopeConfig.defaults();
+  Future<SearchScopeConfig> loadScopeConfig() async =>
+      const SearchScopeConfig.defaults();
 
   @override
-  Future<void> removeChunksBySource(String sourceId, SearchSourceType sourceType) async {}
+  Future<void> removeChunksBySource(
+    String sourceId,
+    SearchSourceType sourceType,
+  ) async {}
 
   @override
   Future<void> saveScopeConfig(SearchScopeConfig config) async {}
@@ -301,345 +314,444 @@ NoteItem _noteItem({
 }
 
 void main() {
-  test('Semantic quality policy uses stricter thresholds for weaker fields', () {
-    const policy = SemanticQualityPolicy.conservativeMvp();
+  test(
+    'Semantic quality policy uses stricter thresholds for weaker fields',
+    () {
+      const policy = SemanticQualityPolicy.conservativeMvp();
 
-    expect(
-      policy.minimumThresholdFor(SemanticHitField.title),
-      lessThan(policy.minimumThresholdFor(SemanticHitField.noteBody)),
-    );
-    expect(
-      policy.minimumThresholdFor(SemanticHitField.tags),
-      greaterThanOrEqualTo(policy.minimumThresholdFor(SemanticHitField.noteBody)),
-    );
-  });
-
-  test('SemanticSearchService keeps a strong title hit above the quality gate', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'secret-1': [
-            _chunk(
-              sourceId: 'secret-1',
-              sourceType: SearchSourceType.secret,
-              chunkIndex: 0,
-              vector: const [1, 0],
-            ),
-          ],
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'bank account',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: [_secretItem()],
-      notes: const <NoteItem>[],
-    );
-
-    expect(results, hasLength(1));
-    expect(results.first.item.id, 'secret-1');
-    expect(results.first.hitField, SemanticHitField.title);
-  });
-
-  test('SemanticSearchService filters a weak tags-only hit below the conservative quality gate', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-1': [
-            _chunk(
-              sourceId: 'note-1',
-              sourceType: SearchSourceType.note,
-              chunkIndex: 3,
-              vector: const [0.25, 0.9682458366],
-            ),
-          ],
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'backup tag',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [_noteItem()],
-    );
-
-    expect(results, isEmpty);
-  });
-
-  test('SemanticSearchService applies a stricter gate to note-body hits than title hits', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-1': [
-            _chunk(
-              sourceId: 'note-1',
-              sourceType: SearchSourceType.note,
-              chunkIndex: 2,
-              vector: const [0.7, 0.7141428429],
-            ),
-          ],
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'backup steps',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [_noteItem()],
-    );
-
-    expect(results, isEmpty);
-  });
-
-  test('SemanticSearchService keeps high-quality field hits inside semantic top-k before lower-priority fields', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.8090909091, 0.5876836192],
-          ),
-          'note-assist-1': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-1',
-            bodyVector: const [0.99, 0.1410673598],
-          ),
-          'note-assist-2': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-2',
-            bodyVector: const [0.985, 0.1725543390],
-          ),
-          'note-assist-3': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-3',
-            bodyVector: const [0.982, 0.1888581482],
-          ),
-          'note-assist-4': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-4',
-            bodyVector: const [0.98, 0.1989974874],
-          ),
-          'note-assist-5': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-5',
-            bodyVector: const [0.979, 0.2038847714],
-          ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'backup recovery',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [
-        _noteItem(id: 'note-summary', title: 'Strong Summary', summary: 'strong semantic summary'),
-        _noteItem(id: 'note-assist-1', title: 'Assist 1', content: 'assist body 1'),
-        _noteItem(id: 'note-assist-2', title: 'Assist 2', content: 'assist body 2'),
-        _noteItem(id: 'note-assist-3', title: 'Assist 3', content: 'assist body 3'),
-        _noteItem(id: 'note-assist-4', title: 'Assist 4', content: 'assist body 4'),
-        _noteItem(id: 'note-assist-5', title: 'Assist 5', content: 'assist body 5'),
-      ],
-    );
-
-    expect(results, hasLength(5));
-    expect(results.map((result) => result.item.id), contains('note-summary'));
-    expect(results.map((result) => result.item.id), isNot(contains('note-assist-5')));
-  });
-
-  test('SemanticSearchService still backfills semantic top-k with assist fields when high-quality hits are fewer than k', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.85, 0.5267826876],
-          ),
-          'note-assist-1': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-1',
-            bodyVector: const [0.99, 0.1410673598],
-          ),
-          'note-assist-2': _noteBodyOnlyChunks(
-            sourceId: 'note-assist-2',
-            bodyVector: const [0.985, 0.1725543390],
-          ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'backup recovery',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [
-        _noteItem(id: 'note-summary', title: 'Strong Summary', summary: 'strong semantic summary'),
-        _noteItem(id: 'note-assist-1', title: 'Assist 1', content: 'assist body 1'),
-        _noteItem(id: 'note-assist-2', title: 'Assist 2', content: 'assist body 2'),
-      ],
-    );
-
-    expect(results, hasLength(3));
-    expect(results.map((result) => result.item.id), ['note-summary', 'note-assist-1', 'note-assist-2']);
-  });
-
-  test('SemanticSearchService prefers url semantic hits for URL-like queries', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'secret-url': _secretUrlOnlyChunks(
-            sourceId: 'secret-url',
-            urlVector: const [0.87, 0.4930517214],
-          ),
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.91, 0.4146082488],
-          ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'bank.example.com',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: [
-        _secretItemWith(
-          id: 'secret-url',
-          title: 'Bank Login',
-          username: 'alice@example.com',
-          website: 'bank.example.com',
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.title),
+        lessThan(policy.minimumThresholdFor(SemanticHitField.noteBody)),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.tags),
+        greaterThanOrEqualTo(
+          policy.minimumThresholdFor(SemanticHitField.noteBody),
         ),
-      ],
-      notes: [
-        _noteItem(id: 'note-summary', title: 'Recovery Guide', summary: 'bank recovery summary'),
-      ],
-    );
+      );
+    },
+  );
 
-    expect(results, hasLength(2));
-    expect(results.first.item.id, 'secret-url');
-    expect(results.first.hitField, SemanticHitField.url);
-  });
-
-  test('SemanticSearchService prefers username semantic hits for account-like queries', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'secret-username': _secretUsernameOnlyChunks(
-            sourceId: 'secret-username',
-            usernameVector: const [0.86, 0.5102940329],
-          ),
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.91, 0.4146082488],
-          ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'alice@example.com',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: [
-        _secretItemWith(
-          id: 'secret-username',
-          title: 'Bank Login',
-          username: 'alice@example.com',
-          website: 'bank.example.com',
+  test(
+    'SemanticSearchService keeps a strong title hit above the quality gate',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'secret-1': [
+              _chunk(
+                sourceId: 'secret-1',
+                sourceType: SearchSourceType.secret,
+                chunkIndex: 0,
+                vector: const [1, 0],
+              ),
+            ],
+          },
         ),
-      ],
-      notes: [
-        _noteItem(id: 'note-summary', title: 'Recovery Guide', summary: 'bank recovery summary'),
-      ],
-    );
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
 
-    expect(results, hasLength(2));
-    expect(results.first.item.id, 'secret-username');
-    expect(results.first.hitField, SemanticHitField.username);
-  });
+      final results = await service.search(
+        query: 'bank account',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: [_secretItem()],
+        notes: const <NoteItem>[],
+      );
 
-  test('SemanticSearchService prefers tags semantic hits for tag-like queries', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-tags': _noteTagsOnlyChunks(
-            sourceId: 'note-tags',
-            tagsVector: const [0.94, 0.3411744422],
+      expect(results, hasLength(1));
+      expect(results.first.item.id, 'secret-1');
+      expect(results.first.hitField, SemanticHitField.title);
+    },
+  );
+
+  test(
+    'SemanticSearchService filters a weak tags-only hit below the conservative quality gate',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-1': [
+              _chunk(
+                sourceId: 'note-1',
+                sourceType: SearchSourceType.note,
+                chunkIndex: 3,
+                vector: const [0.25, 0.9682458366],
+              ),
+            ],
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup tag',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [_noteItem()],
+      );
+
+      expect(results, isEmpty);
+    },
+  );
+
+  test(
+    'SemanticSearchService applies a stricter gate to note-body hits than title hits',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-1': [
+              _chunk(
+                sourceId: 'note-1',
+                sourceType: SearchSourceType.note,
+                chunkIndex: 2,
+                vector: const [0.7, 0.7141428429],
+              ),
+            ],
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup steps',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [_noteItem()],
+      );
+
+      expect(results, isEmpty);
+    },
+  );
+
+  test(
+    'SemanticSearchService keeps high-quality field hits inside semantic top-k before lower-priority fields',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.8090909091, 0.5876836192],
+            ),
+            'note-assist-1': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-1',
+              bodyVector: const [0.99, 0.1410673598],
+            ),
+            'note-assist-2': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-2',
+              bodyVector: const [0.985, 0.1725543390],
+            ),
+            'note-assist-3': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-3',
+              bodyVector: const [0.982, 0.1888581482],
+            ),
+            'note-assist-4': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-4',
+              bodyVector: const [0.98, 0.1989974874],
+            ),
+            'note-assist-5': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-5',
+              bodyVector: const [0.979, 0.2038847714],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup recovery',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [
+          _noteItem(
+            id: 'note-summary',
+            title: 'Strong Summary',
+            summary: 'strong semantic summary',
           ),
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.91, 0.4146082488],
+          _noteItem(
+            id: 'note-assist-1',
+            title: 'Assist 1',
+            content: 'assist body 1',
           ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
-
-    final results = await service.search(
-      query: 'backup',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [
-        _noteItem(id: 'note-tags', title: 'Backup Labels', tags: const ['backup']),
-        _noteItem(id: 'note-summary', title: 'Recovery Guide', summary: 'backup recovery summary'),
-      ],
-    );
-
-    expect(results, hasLength(2));
-    expect(results.first.item.id, 'note-tags');
-    expect(results.first.hitField, SemanticHitField.tags);
-  });
-
-  test('SemanticSearchService does not boost tags for non-tag-like queries', () async {
-    final service = SemanticSearchService(
-      repository: _FakeSearchRepository(
-        chunksBySource: {
-          'note-tags': _noteTagsOnlyChunks(
-            sourceId: 'note-tags',
-            tagsVector: const [0.94, 0.3411744422],
+          _noteItem(
+            id: 'note-assist-2',
+            title: 'Assist 2',
+            content: 'assist body 2',
           ),
-          'note-summary': _noteSummaryOnlyChunks(
-            sourceId: 'note-summary',
-            summaryVector: const [0.91, 0.4146082488],
+          _noteItem(
+            id: 'note-assist-3',
+            title: 'Assist 3',
+            content: 'assist body 3',
           ),
-        },
-      ),
-      embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
-      cryptoService: const _FakeCryptoService(),
-    );
+          _noteItem(
+            id: 'note-assist-4',
+            title: 'Assist 4',
+            content: 'assist body 4',
+          ),
+          _noteItem(
+            id: 'note-assist-5',
+            title: 'Assist 5',
+            content: 'assist body 5',
+          ),
+        ],
+      );
 
-    final results = await service.search(
-      query: 'backup steps',
-      scope: const SearchScopeConfig.defaults(),
-      activeEmbeddingModel: _model,
-      secrets: const <SecretItem>[],
-      notes: [
-        _noteItem(id: 'note-tags', title: 'Backup Labels', tags: const ['backup']),
-        _noteItem(id: 'note-summary', title: 'Recovery Guide', summary: 'backup recovery summary'),
-      ],
-    );
+      expect(results, hasLength(5));
+      expect(results.map((result) => result.item.id), contains('note-summary'));
+      expect(
+        results.map((result) => result.item.id),
+        isNot(contains('note-assist-5')),
+      );
+    },
+  );
 
-    expect(results, hasLength(2));
-    expect(results.first.item.id, 'note-summary');
-    expect(results.first.hitField, SemanticHitField.summary);
-  });
+  test(
+    'SemanticSearchService still backfills semantic top-k with assist fields when high-quality hits are fewer than k',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.85, 0.5267826876],
+            ),
+            'note-assist-1': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-1',
+              bodyVector: const [0.99, 0.1410673598],
+            ),
+            'note-assist-2': _noteBodyOnlyChunks(
+              sourceId: 'note-assist-2',
+              bodyVector: const [0.985, 0.1725543390],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup recovery',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [
+          _noteItem(
+            id: 'note-summary',
+            title: 'Strong Summary',
+            summary: 'strong semantic summary',
+          ),
+          _noteItem(
+            id: 'note-assist-1',
+            title: 'Assist 1',
+            content: 'assist body 1',
+          ),
+          _noteItem(
+            id: 'note-assist-2',
+            title: 'Assist 2',
+            content: 'assist body 2',
+          ),
+        ],
+      );
+
+      expect(results, hasLength(3));
+      expect(results.map((result) => result.item.id), [
+        'note-summary',
+        'note-assist-1',
+        'note-assist-2',
+      ]);
+    },
+  );
+
+  test(
+    'SemanticSearchService prefers url semantic hits for URL-like queries',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'secret-url': _secretUrlOnlyChunks(
+              sourceId: 'secret-url',
+              urlVector: const [0.87, 0.4930517214],
+            ),
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.91, 0.4146082488],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'bank.example.com',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: [
+          _secretItemWith(
+            id: 'secret-url',
+            title: 'Bank Login',
+            username: 'alice@example.com',
+            website: 'bank.example.com',
+          ),
+        ],
+        notes: [
+          _noteItem(
+            id: 'note-summary',
+            title: 'Recovery Guide',
+            summary: 'bank recovery summary',
+          ),
+        ],
+      );
+
+      expect(results, hasLength(2));
+      expect(results.first.item.id, 'secret-url');
+      expect(results.first.hitField, SemanticHitField.url);
+    },
+  );
+
+  test(
+    'SemanticSearchService prefers username semantic hits for account-like queries',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'secret-username': _secretUsernameOnlyChunks(
+              sourceId: 'secret-username',
+              usernameVector: const [0.86, 0.5102940329],
+            ),
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.91, 0.4146082488],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'alice@example.com',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: [
+          _secretItemWith(
+            id: 'secret-username',
+            title: 'Bank Login',
+            username: 'alice@example.com',
+            website: 'bank.example.com',
+          ),
+        ],
+        notes: [
+          _noteItem(
+            id: 'note-summary',
+            title: 'Recovery Guide',
+            summary: 'bank recovery summary',
+          ),
+        ],
+      );
+
+      expect(results, hasLength(2));
+      expect(results.first.item.id, 'secret-username');
+      expect(results.first.hitField, SemanticHitField.username);
+    },
+  );
+
+  test(
+    'SemanticSearchService prefers tags semantic hits for tag-like queries',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-tags': _noteTagsOnlyChunks(
+              sourceId: 'note-tags',
+              tagsVector: const [0.94, 0.3411744422],
+            ),
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.91, 0.4146082488],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [
+          _noteItem(
+            id: 'note-tags',
+            title: 'Backup Labels',
+            tags: const ['backup'],
+          ),
+          _noteItem(
+            id: 'note-summary',
+            title: 'Recovery Guide',
+            summary: 'backup recovery summary',
+          ),
+        ],
+      );
+
+      expect(results, hasLength(2));
+      expect(results.first.item.id, 'note-tags');
+      expect(results.first.hitField, SemanticHitField.tags);
+    },
+  );
+
+  test(
+    'SemanticSearchService does not boost tags for non-tag-like queries',
+    () async {
+      final service = SemanticSearchService(
+        repository: _FakeSearchRepository(
+          chunksBySource: {
+            'note-tags': _noteTagsOnlyChunks(
+              sourceId: 'note-tags',
+              tagsVector: const [0.94, 0.3411744422],
+            ),
+            'note-summary': _noteSummaryOnlyChunks(
+              sourceId: 'note-summary',
+              summaryVector: const [0.91, 0.4146082488],
+            ),
+          },
+        ),
+        embeddingEngine: const _FakeEmbeddingEngine(values: <double>[1, 0]),
+        cryptoService: const _FakeCryptoService(),
+      );
+
+      final results = await service.search(
+        query: 'backup steps',
+        scope: const SearchScopeConfig.defaults(),
+        activeEmbeddingModel: _model,
+        secrets: const <SecretItem>[],
+        notes: [
+          _noteItem(
+            id: 'note-tags',
+            title: 'Backup Labels',
+            tags: const ['backup'],
+          ),
+          _noteItem(
+            id: 'note-summary',
+            title: 'Recovery Guide',
+            summary: 'backup recovery summary',
+          ),
+        ],
+      );
+
+      expect(results, hasLength(2));
+      expect(results.first.item.id, 'note-summary');
+      expect(results.first.hitField, SemanticHitField.summary);
+    },
+  );
 }

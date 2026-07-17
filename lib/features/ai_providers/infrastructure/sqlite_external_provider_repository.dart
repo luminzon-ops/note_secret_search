@@ -8,9 +8,11 @@ import 'package:note_secret_search/features/ai_providers/domain/external_provide
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteExternalProviderRepository implements ExternalProviderRepository {
-  SqliteExternalProviderRepository({required AppDatabase database, required CryptoService cryptoService})
-      : _database = database,
-        _cryptoService = cryptoService;
+  SqliteExternalProviderRepository({
+    required AppDatabase database,
+    required CryptoService cryptoService,
+  }) : _database = database,
+       _cryptoService = cryptoService;
 
   final AppDatabase _database;
   final CryptoService _cryptoService;
@@ -69,13 +71,20 @@ class SqliteExternalProviderRepository implements ExternalProviderRepository {
       if (normalized.enabled) {
         await txn.update(
           DatabaseSchema.providerConfigs,
-          <String, Object?>{'enabled': 0, 'updated_at': now.millisecondsSinceEpoch},
+          <String, Object?>{
+            'enabled': 0,
+            'updated_at': now.millisecondsSinceEpoch,
+          },
           where: 'provider_type = ?',
           whereArgs: <Object>[normalized.providerType.name],
         );
       }
 
-      final encryptedConfig = _cryptoService.encryptNullable(jsonEncode(normalized.toJson()));
+      final encryptedConfig = _cryptoService.encryptField(
+        jsonEncode(normalized.toJson()),
+        field: EncryptedDatabaseField.providerConfig,
+        rowId: normalized.id,
+      );
       if (encryptedConfig == null) {
         throw StateError('External provider config could not be encrypted.');
       }
@@ -97,11 +106,17 @@ class SqliteExternalProviderRepository implements ExternalProviderRepository {
   }
 
   ExternalProviderConfig _mapRow(Map<String, Object?> row) {
-    final decrypted = _cryptoService.decryptNullable(row['encrypted_config'] as List<int>?);
+    final decrypted = _cryptoService.decryptField(
+      row['encrypted_config'] as List<int>?,
+      field: EncryptedDatabaseField.providerConfig,
+      rowId: row['id']! as String,
+    );
     final decoded = jsonDecode(decrypted) as Map<String, Object?>;
     final config = ExternalProviderConfig.fromJson(decoded);
     return config.copyWith(
-      providerType: ExternalProviderType.values.byName(row['provider_type']! as String),
+      providerType: ExternalProviderType.values.byName(
+        row['provider_type']! as String,
+      ),
       displayName: row['name']! as String,
       enabled: (row['enabled'] as int? ?? 0) == 1,
       createdAt: row['created_at'] == null

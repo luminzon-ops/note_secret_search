@@ -5,7 +5,8 @@ import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 class SearchService {
-  const SearchService({required CryptoService cryptoService}) : _cryptoService = cryptoService;
+  const SearchService({required CryptoService cryptoService})
+    : _cryptoService = cryptoService;
 
   final CryptoService _cryptoService;
 
@@ -44,10 +45,34 @@ class SearchService {
     final results = <SearchResultItem>[];
     for (final item in secrets) {
       final title = item.title;
-      final username = _cryptoService.decryptNullable(item.usernameCiphertext);
-      final website = _cryptoService.decryptNullable(item.websiteUrlCiphertext);
-      final note = _cryptoService.decryptNullable(item.noteCiphertext);
-      final password = _cryptoService.decryptNullable(item.passwordCiphertext);
+      final username = scope.includeUsername
+          ? _cryptoService.decryptField(
+              item.usernameCiphertext,
+              field: EncryptedDatabaseField.secretUsername,
+              rowId: item.id,
+            )
+          : '';
+      final website = scope.includeUrl
+          ? _cryptoService.decryptField(
+              item.websiteUrlCiphertext,
+              field: EncryptedDatabaseField.secretWebsiteUrl,
+              rowId: item.id,
+            )
+          : '';
+      final note = scope.includeSecretNote
+          ? _cryptoService.decryptField(
+              item.noteCiphertext,
+              field: EncryptedDatabaseField.secretNote,
+              rowId: item.id,
+            )
+          : '';
+      final password = scope.includePasswordField
+          ? _cryptoService.decryptField(
+              item.passwordCiphertext,
+              field: EncryptedDatabaseField.secretPassword,
+              rowId: item.id,
+            )
+          : '';
 
       final haystacks = <String>[
         if (scope.includeTitle) title,
@@ -83,14 +108,26 @@ class SearchService {
     final results = <SearchResultItem>[];
     for (final item in notes) {
       final title = item.title;
-      final summary = _cryptoService.decryptNullable(item.summaryCacheCiphertext);
-      final content = _cryptoService.decryptNullable(item.contentCiphertext);
+      final summary = scope.includeNoteBody
+          ? _cryptoService.decryptField(
+              item.summaryCacheCiphertext,
+              field: EncryptedDatabaseField.noteSummary,
+              rowId: item.id,
+            )
+          : '';
+      final content = scope.includeNoteBody
+          ? _cryptoService.decryptField(
+              item.contentCiphertext,
+              field: EncryptedDatabaseField.noteContent,
+              rowId: item.id,
+            )
+          : '';
 
       final haystacks = <String>[
         if (scope.includeTitle) title,
         if (scope.includeNoteBody) content,
+        if (scope.includeNoteBody) summary,
         if (scope.includeTags) item.tags.join(' '),
-        summary,
       ];
 
       if (_matches(query, haystacks)) {

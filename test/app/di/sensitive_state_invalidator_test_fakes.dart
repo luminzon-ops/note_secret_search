@@ -8,6 +8,41 @@ const _manualContext = ChatContextItem(
   summary: 'private summary',
 );
 
+const _plaintextCryptoService = _PlaintextTestCryptoService();
+
+class _PlaintextTestCryptoService implements CryptoService {
+  const _PlaintextTestCryptoService();
+
+  @override
+  Uint8List? encryptNullable(
+    String? plaintext, {
+    required FieldCryptoContext context,
+  }) {
+    return plaintext == null
+        ? null
+        : Uint8List.fromList(utf8.encode(plaintext));
+  }
+
+  @override
+  String decryptNullable(
+    List<int>? ciphertext, {
+    required FieldCryptoContext context,
+  }) {
+    return ciphertext == null ? '' : utf8.decode(ciphertext);
+  }
+}
+
+Uint8List _plaintextCiphertext(String value) {
+  return _plaintextCryptoService.encryptNullable(
+    value,
+    context: FieldCryptoContext(
+      table: 'test_fixture',
+      rowId: 'sensitive-state',
+      column: 'plaintext',
+    ),
+  )!;
+}
+
 class _VaultRepository implements VaultRepository {
   var reads = 0;
 
@@ -35,10 +70,10 @@ class _SecretRepository implements SecretRepository {
     id: 'secret-sensitive',
     vaultId: 'vault-sensitive',
     title: 'Sensitive secret',
-    usernameCiphertext: 'private-user'.codeUnits,
-    passwordCiphertext: 'private-password'.codeUnits,
+    usernameCiphertext: _plaintextCiphertext('private-user'),
+    passwordCiphertext: _plaintextCiphertext('private-password'),
     websiteUrlCiphertext: null,
-    noteCiphertext: 'private note'.codeUnits,
+    noteCiphertext: _plaintextCiphertext('private note'),
     tags: const ['private'],
     categoryId: null,
     favorite: true,
@@ -68,8 +103,8 @@ class _NoteRepository implements NoteRepository {
     id: 'note-sensitive',
     vaultId: 'vault-sensitive',
     title: 'Sensitive note',
-    contentCiphertext: 'private note body'.codeUnits,
-    summaryCacheCiphertext: 'private summary'.codeUnits,
+    contentCiphertext: _plaintextCiphertext('private note body'),
+    summaryCacheCiphertext: _plaintextCiphertext('private summary'),
     tags: const ['private'],
     categoryId: null,
     favorite: true,
@@ -283,7 +318,7 @@ class _SensitiveSemanticSearchService extends SemanticSearchService {
   _SensitiveSemanticSearchService({
     required super.repository,
     required super.embeddingEngine,
-  }) : super(cryptoService: const MvpCryptoService());
+  }) : super(cryptoService: _plaintextCryptoService);
 
   var searchReads = 0;
 

@@ -40,7 +40,11 @@ class LockSessionState {
 }
 
 class LockSessionController extends StateNotifier<LockSessionState> {
-  LockSessionController() : super(const LockSessionState.initial());
+  LockSessionController({void Function()? onLock})
+    : _onLock = onLock,
+      super(const LockSessionState.initial());
+
+  final void Function()? _onLock;
 
   bool get isUnlocked => state.isUnlocked;
   int get lockEpoch => state.lockEpoch;
@@ -50,11 +54,15 @@ class LockSessionController extends StateNotifier<LockSessionState> {
   }
 
   void lock() {
-    state = state.copyWith(
-      isUnlocked: false,
-      clearUnlockMethod: true,
-      lockEpoch: state.lockEpoch + 1,
-    );
+    try {
+      _onLock?.call();
+    } finally {
+      state = state.copyWith(
+        isUnlocked: false,
+        clearUnlockMethod: true,
+        lockEpoch: state.lockEpoch + 1,
+      );
+    }
   }
 
   void setPinEnabled(bool enabled) {

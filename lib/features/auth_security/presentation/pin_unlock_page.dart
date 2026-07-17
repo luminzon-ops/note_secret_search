@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinUnlockPage extends ConsumerStatefulWidget {
   const PinUnlockPage({super.key});
@@ -73,9 +73,12 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                 errorText: _errorText,
               ),
               validator: (value) {
-                final raw = value?.trim() ?? '';
-                if (raw.isEmpty) {
-                  return '请输入 PIN';
+                final raw = value ?? '';
+                if (raw.length < 4 || raw.length > 8) {
+                  return 'PIN 长度需为 4-8 位';
+                }
+                if (!RegExp(r'^\d+$').hasMatch(raw)) {
+                  return 'PIN 仅支持数字';
                 }
                 return null;
               },
@@ -102,50 +105,58 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
       _errorText = null;
     });
 
+    final pin = _pinController.text;
+    _pinController.clear();
     try {
       final expectedLockEpoch = ref
           .read(lockSessionControllerProvider)
           .lockEpoch;
-      final matched = await ref
-          .read(securitySettingsControllerProvider.notifier)
-          .verifyPin(_pinController.text.trim());
-
-      if (matched) {
-        final unlocked = await ref
-            .read(securityOrchestratorProvider)
-            .unlockWithPin(expectedLockEpoch: expectedLockEpoch);
-        if (!unlocked) {
-          if (mounted) {
-            setState(() {
-              _errorText = '安全解锁失败，请重试';
-            });
-          }
-          return;
-        }
+      final unlocked = await ref
+          .read(securityOrchestratorProvider)
+          .unlockWithPin(pin: pin, expectedLockEpoch: expectedLockEpoch);
+      if (!unlocked) {
         if (mounted) {
-          final router = GoRouter.maybeOf(context);
-          final navigator = Navigator.of(context);
-          if (navigator.canPop()) {
-            navigator.pop(true);
-          } else if (router != null && router.canPop()) {
-            router.pop(true);
-          } else if (router != null) {
-            router.go('/vault');
-          }
+          setState(() {
+            _errorText = '安全解锁失败，请重试';
+          });
         }
         return;
       }
 
-      ref
-          .read(securityOrchestratorProvider)
-          .registerPinFailure(
-            maxFailures: SecuritySettingsController.maxPinFailures,
-            coolDown: SecuritySettingsController.pinCoolDown,
-          );
-
+      if (mounted) {
+        final router = GoRouter.maybeOf(context);
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop(true);
+        } else if (router != null && router.canPop()) {
+          router.pop(true);
+        } else if (router != null) {
+          router.go('/vault');
+        }
+      }
+    } on NativeSecurityException catch (error) {
+      if (error.code == 'PIN_INCORRECT') {
+        ref
+            .read(securityOrchestratorProvider)
+            .registerPinFailure(
+              maxFailures: SecuritySettingsController.maxPinFailures,
+              coolDown: SecuritySettingsController.pinCoolDown,
+            );
+      } else if (error.code == 'PIN_COOLDOWN') {
+        ref
+            .read(securityOrchestratorProvider)
+            .registerPinFailure(
+              maxFailures: 1,
+              coolDown: SecuritySettingsController.pinCoolDown,
+            );
+      }
       if (mounted) {
         setState(() {
-          _errorText = 'PIN 错误';
+          _errorText = switch (error.code) {
+            'PIN_INCORRECT' => 'PIN 错误',
+            'PIN_COOLDOWN' => 'PIN 已进入冷却，请稍后重试',
+            _ => 'PIN 解锁失败，请重试',
+          };
         });
       }
     } finally {

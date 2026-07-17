@@ -12,9 +12,28 @@ internal class KeyringUnlocker(
         capabilities: SystemAuthCapabilities,
         result: NativeResult<NativeUnlockMaterial>,
     ) {
+        withMasterKey(reason, keyset, capabilities, result) { masterKey ->
+            KeyringCrypto.deriveMaterial(keyset.keyId, masterKey)
+        }
+    }
+
+    fun <T> withMasterKey(
+        reason: String,
+        keyset: SecurityKeyset,
+        capabilities: SystemAuthCapabilities,
+        result: NativeResult<T>,
+        consume: (ByteArray) -> T,
+    ) {
         val combined = envelope(keyset, EnvelopeKind.COMBINED)
         if (combined != null) {
-            unlockEnvelope(reason, keyset.keyId, combined, result, result::error)
+            unlockEnvelope(
+                reason,
+                keyset.keyId,
+                combined,
+                result,
+                consume,
+                result::error,
+            )
             return
         }
 
@@ -25,7 +44,14 @@ internal class KeyringUnlocker(
         }
         val biometric = envelope(keyset, EnvelopeKind.BIOMETRIC)
         if (!capabilities.strongBiometricAvailable || biometric == null) {
-            unlockEnvelope(reason, keyset.keyId, device, result, result::error)
+            unlockEnvelope(
+                reason,
+                keyset.keyId,
+                device,
+                result,
+                consume,
+                result::error,
+            )
             return
         }
         unlockEnvelope(
@@ -33,6 +59,7 @@ internal class KeyringUnlocker(
             keyset.keyId,
             biometric,
             result,
+            consume,
         ) fallback@{ error ->
             if (!result.isActiveOperation()) {
                 return@fallback
@@ -43,6 +70,7 @@ internal class KeyringUnlocker(
                     keyset.keyId,
                     device,
                     result,
+                    consume,
                     result::error,
                 )
             } else {
@@ -66,11 +94,12 @@ internal class KeyringUnlocker(
         }
     }
 
-    private fun unlockEnvelope(
+    private fun <T> unlockEnvelope(
         reason: String,
         keyId: String,
         envelope: SecurityEnvelope,
-        result: NativeResult<NativeUnlockMaterial>,
+        result: NativeResult<T>,
+        consume: (ByteArray) -> T,
         onError: (NativeSecurityException) -> Unit,
     ) {
         val handle = try {
@@ -114,21 +143,35 @@ internal class KeyringUnlocker(
                             try {
                                 val activeCipher = cipher
                                     ?: handle.decryptionCipher(envelope.nonce)
-                                masterKey = KeyringCrypto.unwrap(
-                                    keyId,
-                                    envelope,
-                                    activeCipher,
-                                )
-                                if (masterKey.size != KeyringCrypto.MASTER_KEY_BYTES) {
-                                    throw NativeSecurityException(
-                                        NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                                masterKey = try {
+                                    KeyringCrypto.unwrap(
+                                        keyId,
+                                        envelope,
+                                        activeCipher,
                                     )
+                                } catch (error: Throwable) {
+                                    onError(KeyringCrypto.mapUnlockError(error))
+                                    return@runIfActive
                                 }
-                                result.success(
-                                    KeyringCrypto.deriveMaterial(keyId, masterKey),
-                                )
-                            } catch (error: Throwable) {
-                                onError(KeyringCrypto.mapUnlockError(error))
+                                if (masterKey.size != KeyringCrypto.MASTER_KEY_BYTES) {
+                                    onError(NativeSecurityException(
+                                        NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                                    ))
+                                    return@runIfActive
+                                }
+                                val consumed = try {
+                                    consume(masterKey)
+                                } catch (error: NativeSecurityException) {
+                                    onError(error)
+                                    return@runIfActive
+                                } catch (error: Throwable) {
+                                    onError(NativeSecurityException(
+                                        NativeSecurityErrorCode.INTERNAL_ERROR,
+                                        error,
+                                    ))
+                                    return@runIfActive
+                                }
+                                result.success(consumed)
                             } finally {
                                 masterKey?.fill(0)
                             }

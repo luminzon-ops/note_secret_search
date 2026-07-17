@@ -22,7 +22,7 @@ class SecurityStatusCard extends ConsumerWidget {
             const SizedBox(height: 4),
             Text(session.pinEnabled ? '已启用应用 PIN 备用入口' : '尚未启用应用 PIN'),
             const SizedBox(height: 4),
-            Text(pinState.hasPinMaterial ? 'PIN 材料已准备' : 'PIN 材料未初始化'),
+            Text(pinState.hasPinMaterial ? 'PIN 已配置' : 'PIN 尚未配置'),
           ],
         ),
       ),

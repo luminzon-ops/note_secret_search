@@ -6,6 +6,8 @@ internal open class SecurityKeyringTestFixture {
     protected val keys = FakeWrappingKeyRepository()
     protected val authenticator = FakeSystemAuthenticator()
     protected val random = FixedRandomSource()
+    protected val pinThrottleStore = FakePinThrottleStore()
+    protected val pinThrottleClock = FakePinThrottleClock()
     protected val capabilities = SystemAuthCapabilities(
         deviceCredentialAvailable = true,
         strongBiometricAvailable = true,
@@ -32,6 +34,12 @@ internal open class SecurityKeyringTestFixture {
             authenticator = authenticator,
             capabilities = { authCapabilities },
             random = random,
+            pinKdfEngine = DeterministicPinKdfEngine(),
+            pinWorker = ImmediatePinWorkScheduler(),
+            pinThrottle = testPinAttemptThrottle(
+                store = pinThrottleStore,
+                clock = pinThrottleClock,
+            ),
         )
     }
 

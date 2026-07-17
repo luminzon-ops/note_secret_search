@@ -1,3 +1,4 @@
+import 'package:note_secret_search/core/security/field_envelope.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
@@ -11,8 +12,8 @@ class SqliteSecretRepository implements SecretRepository {
   SqliteSecretRepository({
     required AppDatabase database,
     required VaultRepository vaultRepository,
-  })  : _database = database,
-        _vaultRepository = vaultRepository;
+  }) : _database = database,
+       _vaultRepository = vaultRepository;
 
   final AppDatabase _database;
   final VaultRepository _vaultRepository;
@@ -59,27 +60,24 @@ class SqliteSecretRepository implements SecretRepository {
 
   @override
   Future<void> save(SecretItem item) async {
+    _validateCiphertexts(item);
     final db = await _database.database;
     await db.transaction((txn) async {
-      await txn.insert(
-        DatabaseSchema.secretItems,
-        <String, Object?>{
-          'id': item.id,
-          'vault_id': item.vaultId,
-          'title': item.title,
-          'username_ciphertext': item.usernameCiphertext,
-          'password_ciphertext': item.passwordCiphertext,
-          'website_url_ciphertext': item.websiteUrlCiphertext,
-          'note_ciphertext': item.noteCiphertext,
-          'category_id': item.categoryId,
-          'favorite': item.favorite ? 1 : 0,
-          'created_at': item.createdAt.millisecondsSinceEpoch,
-          'updated_at': item.updatedAt.millisecondsSinceEpoch,
-          'last_accessed_at': item.lastAccessedAt?.millisecondsSinceEpoch,
-          'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await txn.insert(DatabaseSchema.secretItems, <String, Object?>{
+        'id': item.id,
+        'vault_id': item.vaultId,
+        'title': item.title,
+        'username_ciphertext': item.usernameCiphertext,
+        'password_ciphertext': item.passwordCiphertext,
+        'website_url_ciphertext': item.websiteUrlCiphertext,
+        'note_ciphertext': item.noteCiphertext,
+        'category_id': item.categoryId,
+        'favorite': item.favorite ? 1 : 0,
+        'created_at': item.createdAt.millisecondsSinceEpoch,
+        'updated_at': item.updatedAt.millisecondsSinceEpoch,
+        'last_accessed_at': item.lastAccessedAt?.millisecondsSinceEpoch,
+        'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
 
       await _replaceTags(txn, item.id, item.vaultId, item.tags);
       await txn.delete(
@@ -133,27 +131,20 @@ class SqliteSecretRepository implements SecretRepository {
       whereArgs: <Object>[itemId, 'secret'],
     );
 
-    for (final tagName in tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty)) {
+    for (final tagName
+        in tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty)) {
       final tagId = '$vaultId:$tagName';
-      await db.insert(
-        DatabaseSchema.tags,
-        <String, Object?>{
-          'id': tagId,
-          'vault_id': vaultId,
-          'name': tagName,
-          'created_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
-      );
-      await db.insert(
-        DatabaseSchema.itemTags,
-        <String, Object?>{
-          'item_id': itemId,
-          'item_type': 'secret',
-          'tag_id': tagId,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+      await db.insert(DatabaseSchema.tags, <String, Object?>{
+        'id': tagId,
+        'vault_id': vaultId,
+        'name': tagName,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await db.insert(DatabaseSchema.itemTags, <String, Object?>{
+        'item_id': itemId,
+        'item_type': 'secret',
+        'tag_id': tagId,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
   }
 
@@ -162,10 +153,16 @@ class SqliteSecretRepository implements SecretRepository {
       id: row['id']! as String,
       vaultId: row['vault_id']! as String,
       title: row['title']! as String,
-      usernameCiphertext: row['username_ciphertext'] as List<int>?,
-      passwordCiphertext: row['password_ciphertext'] as List<int>?,
-      websiteUrlCiphertext: row['website_url_ciphertext'] as List<int>?,
-      noteCiphertext: row['note_ciphertext'] as List<int>?,
+      usernameCiphertext: _requireNssf(
+        row['username_ciphertext'] as List<int>?,
+      ),
+      passwordCiphertext: _requireNssf(
+        row['password_ciphertext'] as List<int>?,
+      ),
+      websiteUrlCiphertext: _requireNssf(
+        row['website_url_ciphertext'] as List<int>?,
+      ),
+      noteCiphertext: _requireNssf(row['note_ciphertext'] as List<int>?),
       tags: tags,
       categoryId: row['category_id'] as String?,
       favorite: (row['favorite']! as int) == 1,
@@ -173,10 +170,26 @@ class SqliteSecretRepository implements SecretRepository {
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at']! as int),
       lastAccessedAt: row['last_accessed_at'] == null
           ? null
-          : DateTime.fromMillisecondsSinceEpoch(row['last_accessed_at']! as int),
+          : DateTime.fromMillisecondsSinceEpoch(
+              row['last_accessed_at']! as int,
+            ),
       deletedAt: row['deleted_at'] == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['deleted_at']! as int),
     );
+  }
+
+  void _validateCiphertexts(SecretItem item) {
+    _requireNssf(item.usernameCiphertext);
+    _requireNssf(item.passwordCiphertext);
+    _requireNssf(item.websiteUrlCiphertext);
+    _requireNssf(item.noteCiphertext);
+  }
+
+  List<int>? _requireNssf(List<int>? ciphertext) {
+    if (ciphertext != null) {
+      FieldEnvelopeCodec.decode(ciphertext);
+    }
+    return ciphertext;
   }
 }

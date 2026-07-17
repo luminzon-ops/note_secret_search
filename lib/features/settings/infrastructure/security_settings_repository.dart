@@ -6,10 +6,4 @@ abstract interface class SecuritySettingsRepository {
   Future<void> save(SecuritySettings settings);
 
   Future<int> loadAutoLockSeconds();
-
-  Future<void> savePinMaterial(String pin);
-
-  Future<bool> verifyPin(String pin);
-
-  Future<bool> hasPinMaterial();
 }

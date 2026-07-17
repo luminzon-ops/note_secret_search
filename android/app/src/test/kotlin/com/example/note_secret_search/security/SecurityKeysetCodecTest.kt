@@ -22,18 +22,37 @@ class SecurityKeysetCodecTest {
     )
 
     @Test
-    fun `round trips a versioned AES GCM keyset without plaintext key fields`() {
+    fun `round trips the current version 3 keyset without plaintext key fields`() {
         val encoded = SecurityKeysetCodec.encode(keyset)
         val json = encoded.toString(StandardCharsets.UTF_8)
 
         assertEquals(keyset, SecurityKeysetCodec.decode(encoded))
-        assertTrue(json.contains("\"version\":2"))
+        assertTrue(json.contains("\"version\":3"))
         assertTrue(json.contains("\"algorithm\":\"AES-256-GCM\""))
         assertTrue(json.contains("\"ciphertext\":"))
         assertTrue(json.contains("\"tag\":"))
         assertFalse(json.contains("databaseKey"))
         assertFalse(json.contains("fieldKey"))
         assertFalse(json.contains("masterKey"))
+    }
+
+    @Test
+    fun `decodes a pre PIN version 2 system keyset fixture`() {
+        val fixture = (
+            """{"version":2,"keyId":"123e4567-e89b-12d3-a456-426614174000",""" +
+                """"envelopes":[{"kind":"combined",""" +
+                """"keyAlias":"note_secret_search.keyring.v2.""" +
+                """123e4567-e89b-12d3-a456-426614174000.combined",""" +
+                """"algorithm":"AES-256-GCM",""" +
+                """"nonce":"AAECAwQFBgcICQoL",""" +
+                """"ciphertext":"CgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCk=",""" +
+                """"tag":"KissLS4vMDEyMzQ1Njc4OQ==",""" +
+                """"securityLevel":"tee"}]}"""
+            ).toByteArray(StandardCharsets.UTF_8)
+
+        val decoded = SecurityKeysetCodec.decode(fixture)
+
+        assertEquals(keyset, decoded)
     }
 
     @Test
@@ -65,6 +84,29 @@ class SecurityKeysetCodecTest {
         val decoded = SecurityKeysetCodec.decode(SecurityKeysetCodec.encode(unknown))
 
         assertEquals(KeySecurityLevel.UNKNOWN, decoded.envelopes.single().securityLevel)
+    }
+
+    @Test
+    fun `round trips an Argon2id PIN envelope beside system envelopes`() {
+        val pinEnvelope = PinEnvelope(
+            kdf = PinKdfParameters(
+                memoryKiB = 65_536,
+                iterations = 3,
+                parallelism = 1,
+                salt = ByteArray(16) { (it + 3).toByte() },
+            ),
+            nonce = ByteArray(12) { (it + 20).toByte() },
+            ciphertext = ByteArray(32) { (it + 40).toByte() },
+            tag = ByteArray(16) { (it + 80).toByte() },
+        )
+        val withPin = keyset.copy(pinEnvelope = pinEnvelope)
+
+        val decoded = SecurityKeysetCodec.decode(
+            SecurityKeysetCodec.encode(withPin),
+        )
+
+        assertEquals(listOf(envelope), decoded.envelopes)
+        assertEquals(pinEnvelope, decoded.pinEnvelope)
     }
 
     @Test(expected = NativeSecurityException::class)

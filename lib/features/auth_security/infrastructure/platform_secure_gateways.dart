@@ -11,6 +11,16 @@ abstract interface class SecureKeyGateway {
   Future<void> ensureRootKey();
 
   Future<String> getDatabasePasswordMaterial();
+
+  Future<NativeSecurityState> getSecurityState();
+
+  Future<NativeUnlockResult> unlockWithSystemAuth();
+
+  Future<void> configurePin({required String pin});
+
+  Future<NativeUnlockResult> unlockWithPin({required String pin});
+
+  Future<void> removePin();
 }
 
 abstract interface class BiometricGateway {
@@ -21,7 +31,7 @@ abstract interface class BiometricGateway {
 
 class DeviceScreenshotProtectionGateway implements ScreenshotProtectionGateway {
   DeviceScreenshotProtectionGateway({required NativeSecurityBridge bridge})
-      : _bridge = bridge;
+    : _bridge = bridge;
 
   final NativeSecurityBridge _bridge;
 
@@ -37,7 +47,8 @@ class DeviceScreenshotProtectionGateway implements ScreenshotProtectionGateway {
 }
 
 class DeviceSecureKeyGateway implements SecureKeyGateway {
-  DeviceSecureKeyGateway({required NativeSecurityBridge bridge}) : _bridge = bridge;
+  DeviceSecureKeyGateway({required NativeSecurityBridge bridge})
+    : _bridge = bridge;
 
   final NativeSecurityBridge _bridge;
 
@@ -50,10 +61,36 @@ class DeviceSecureKeyGateway implements SecureKeyGateway {
   Future<String> getDatabasePasswordMaterial() {
     return _bridge.getDatabasePasswordMaterial();
   }
+
+  @override
+  Future<NativeSecurityState> getSecurityState() {
+    return _bridge.getSecurityState();
+  }
+
+  @override
+  Future<NativeUnlockResult> unlockWithSystemAuth() {
+    return _bridge.unlockWithSystemAuth();
+  }
+
+  @override
+  Future<void> configurePin({required String pin}) {
+    return _bridge.configurePin(pin: pin);
+  }
+
+  @override
+  Future<NativeUnlockResult> unlockWithPin({required String pin}) {
+    return _bridge.unlockWithPin(pin: pin);
+  }
+
+  @override
+  Future<void> removePin() {
+    return _bridge.removePin();
+  }
 }
 
 class DeviceBiometricGateway implements BiometricGateway {
-  DeviceBiometricGateway({required NativeSecurityBridge bridge}) : _bridge = bridge;
+  DeviceBiometricGateway({required NativeSecurityBridge bridge})
+    : _bridge = bridge;
 
   final NativeSecurityBridge _bridge;
 

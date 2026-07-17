@@ -1,6 +1,7 @@
 package com.example.note_secret_search.security
 
 import java.security.Key
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -10,10 +11,18 @@ internal class FakeSecurityEnvelopeStore(
     var bytes: ByteArray? = null,
     var failWrites: Boolean = false,
     var failOnWrite: Int? = null,
+    var failReads: Boolean = false,
 ) : SecurityEnvelopeStore {
     var writes = 0
 
-    override fun read(): ByteArray? = bytes?.clone()
+    override fun read(): ByteArray? {
+        if (failReads) {
+            throw NativeSecurityException(
+                NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            )
+        }
+        return bytes?.clone()
+    }
 
     override fun write(value: ByteArray) {
         writes += 1
@@ -146,6 +155,70 @@ internal class FixedRandomSource(
         require(value.size == size)
         return value.clone()
     }
+}
+
+internal class DeterministicPinKdfEngine : PinKdfEngine {
+    override fun derive(
+        password: ByteArray,
+        salt: ByteArray,
+        iterations: Int,
+        memoryKiB: Int,
+        parallelism: Int,
+        outputBytes: Int,
+    ): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(password)
+        digest.update(salt)
+        return digest.digest().copyOf(outputBytes)
+    }
+}
+
+internal class ImmediatePinWorkScheduler : PinWorkScheduler {
+    override fun execute(task: () -> Unit): PinWorkHandle {
+        task()
+        return PinWorkHandle {}
+    }
+
+    override fun close() = Unit
+}
+
+internal class FakePinThrottleStore : PinThrottleStore {
+    var state: PinThrottleState? = null
+    var writes = 0
+    var clears = 0
+
+    override fun read(): PinThrottleState? = state?.copy()
+
+    override fun write(state: PinThrottleState) {
+        writes += 1
+        this.state = state.copy()
+    }
+
+    override fun clear() {
+        clears += 1
+        state = null
+    }
+}
+
+internal class FakePinThrottleClock(
+    var elapsedRealtimeMs: Long = 10_000,
+    var bootCount: Int = 1,
+    var wallClockMs: Long = 1_000_000,
+) : PinThrottleClock {
+    override fun now(): PinThrottleTime {
+        return PinThrottleTime(
+            elapsedRealtimeMs = elapsedRealtimeMs,
+            bootCount = bootCount,
+            wallClockMs = wallClockMs,
+        )
+    }
+}
+
+internal fun testPinAttemptThrottle(
+    store: PinThrottleStore = FakePinThrottleStore(),
+    clock: PinThrottleClock = FakePinThrottleClock(),
+): PinAttemptThrottle {
+    return PersistentPinAttemptThrottle(store, clock)
 }
 
 internal class RecordingNativeResult<T> : NativeResult<T> {

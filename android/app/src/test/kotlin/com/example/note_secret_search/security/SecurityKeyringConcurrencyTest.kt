@@ -165,6 +165,7 @@ class SecurityKeyringConcurrencyTest {
             authenticator = authenticator,
             capabilities = { capabilities },
             random = FixedRandomSource(),
+            pinThrottle = testPinAttemptThrottle(),
         )
 
         manager.provisionWithSystemAuth("Create keyring", result)
@@ -260,6 +261,7 @@ class SecurityKeyringConcurrencyTest {
             authenticator = authenticator,
             capabilities = { capabilities },
             random = FixedRandomSource(),
+            pinThrottle = testPinAttemptThrottle(),
         )
     }
 }

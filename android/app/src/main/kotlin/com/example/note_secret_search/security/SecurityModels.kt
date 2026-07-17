@@ -8,6 +8,8 @@ enum class NativeSecurityErrorCode {
     AUTH_CANCELLED,
     AUTH_FAILED,
     AUTH_LOCKOUT,
+    PIN_INCORRECT,
+    PIN_COOLDOWN,
     KEY_INVALIDATED,
     KEYSTORE_UNAVAILABLE,
     ENVELOPE_CORRUPT,
@@ -32,6 +34,9 @@ class NativeSecurityException(
                 NativeSecurityErrorCode.AUTH_CANCELLED -> "Authentication was cancelled."
                 NativeSecurityErrorCode.AUTH_FAILED -> "Authentication failed."
                 NativeSecurityErrorCode.AUTH_LOCKOUT -> "Authentication is temporarily locked."
+                NativeSecurityErrorCode.PIN_INCORRECT -> "The PIN is incorrect."
+                NativeSecurityErrorCode.PIN_COOLDOWN ->
+                    "PIN authentication is temporarily locked."
                 NativeSecurityErrorCode.KEY_INVALIDATED -> "The protected key was invalidated."
                 NativeSecurityErrorCode.KEYSTORE_UNAVAILABLE ->
                     "The Android Keystore is unavailable."
@@ -70,6 +75,7 @@ enum class KeySecurityLevel(val channelValue: String) {
 data class NativeSecurityState(
     val status: SecurityStatus,
     val keyId: String? = null,
+    val pinConfigured: Boolean = false,
     val deviceCredentialAvailable: Boolean,
     val strongBiometricAvailable: Boolean,
     val securityLevel: KeySecurityLevel,
@@ -78,7 +84,7 @@ data class NativeSecurityState(
         return buildMap {
             put("status", status.channelValue)
             keyId?.let { put("keyId", it) }
-            put("pinConfigured", false)
+            put("pinConfigured", pinConfigured)
             put("deviceCredentialAvailable", deviceCredentialAvailable)
             put("strongBiometricAvailable", strongBiometricAvailable)
             put("securityLevel", securityLevel.channelValue)
@@ -163,7 +169,54 @@ class SecurityEnvelope(
 data class SecurityKeyset(
     val keyId: String,
     val envelopes: List<SecurityEnvelope>,
+    val pinEnvelope: PinEnvelope? = null,
 )
+
+class PinKdfParameters(
+    val memoryKiB: Int,
+    val iterations: Int,
+    val parallelism: Int,
+    val salt: ByteArray,
+) {
+    override fun equals(other: Any?): Boolean {
+        return other is PinKdfParameters &&
+            memoryKiB == other.memoryKiB &&
+            iterations == other.iterations &&
+            parallelism == other.parallelism &&
+            salt.contentEquals(other.salt)
+    }
+
+    override fun hashCode(): Int {
+        var result = memoryKiB
+        result = 31 * result + iterations
+        result = 31 * result + parallelism
+        result = 31 * result + salt.contentHashCode()
+        return result
+    }
+}
+
+class PinEnvelope(
+    val kdf: PinKdfParameters,
+    val nonce: ByteArray,
+    val ciphertext: ByteArray,
+    val tag: ByteArray,
+) {
+    override fun equals(other: Any?): Boolean {
+        return other is PinEnvelope &&
+            kdf == other.kdf &&
+            nonce.contentEquals(other.nonce) &&
+            ciphertext.contentEquals(other.ciphertext) &&
+            tag.contentEquals(other.tag)
+    }
+
+    override fun hashCode(): Int {
+        var result = kdf.hashCode()
+        result = 31 * result + nonce.contentHashCode()
+        result = 31 * result + ciphertext.contentHashCode()
+        result = 31 * result + tag.contentHashCode()
+        return result
+    }
+}
 
 data class SystemAuthCapabilities(
     val deviceCredentialAvailable: Boolean,

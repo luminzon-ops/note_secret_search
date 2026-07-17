@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,12 +24,20 @@ class _FakeCryptoService implements CryptoService {
   const _FakeCryptoService();
 
   @override
-  String decryptNullable(List<int>? ciphertext) {
+  String decryptNullable(
+    List<int>? ciphertext, {
+    required FieldCryptoContext context,
+  }) {
     return ciphertext == null ? '' : String.fromCharCodes(ciphertext);
   }
 
   @override
-  List<int>? encryptNullable(String? plaintext) => plaintext?.codeUnits;
+  Uint8List? encryptNullable(
+    String? plaintext, {
+    required FieldCryptoContext context,
+  }) {
+    return plaintext == null ? null : Uint8List.fromList(plaintext.codeUnits);
+  }
 }
 
 class _FakeSearchRepository implements SearchRepository {

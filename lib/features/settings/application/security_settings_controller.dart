@@ -4,7 +4,8 @@ import 'package:note_secret_search/features/auth_security/application/security_o
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
 
-class SecuritySettingsController extends StateNotifier<AsyncValue<SecuritySettings>> {
+class SecuritySettingsController
+    extends StateNotifier<AsyncValue<SecuritySettings>> {
   static const int maxPinFailures = 5;
   static const Duration pinCoolDown = Duration(minutes: 1);
 
@@ -12,10 +13,10 @@ class SecuritySettingsController extends StateNotifier<AsyncValue<SecuritySettin
     required SecuritySettingsRepository repository,
     required SecurityOrchestrator securityOrchestrator,
     required PinStateController pinStateController,
-  })  : _repository = repository,
-        _securityOrchestrator = securityOrchestrator,
-        _pinStateController = pinStateController,
-        super(const AsyncLoading()) {
+  }) : _repository = repository,
+       _securityOrchestrator = securityOrchestrator,
+       _pinStateController = pinStateController,
+       super(const AsyncLoading()) {
     load();
   }
 
@@ -27,34 +28,33 @@ class SecuritySettingsController extends StateNotifier<AsyncValue<SecuritySettin
     state = const AsyncLoading();
     state = await AsyncValue.guard(() async {
       final settings = await _repository.load();
-      final hasPinMaterial = await _repository.hasPinMaterial();
-      _pinStateController.configureEnabled(settings.pinEnabled);
-      if (hasPinMaterial) {
-        _pinStateController.markPinMaterialReady();
-      }
-      return settings;
+      final nativeState = await _securityOrchestrator.refreshSecurityState();
+      _pinStateController.syncConfigured(nativeState.pinConfigured);
+      return settings.copyWith(pinEnabled: nativeState.pinConfigured);
     });
   }
 
   Future<void> updatePinEnabled(bool enabled) async {
     final current = state.valueOrNull ?? const SecuritySettings.defaults();
+    if (enabled) {
+      final nativeState = await _securityOrchestrator.refreshSecurityState();
+      if (!nativeState.pinConfigured) {
+        throw StateError('A PIN must be configured before it can be enabled.');
+      }
+    } else {
+      await _securityOrchestrator.removePin();
+    }
     final next = current.copyWith(pinEnabled: enabled);
     await _repository.save(next);
-    _securityOrchestrator.enablePinFallback(enabled);
     state = AsyncData(next);
   }
 
   Future<void> setPin(String pin) async {
     final current = state.valueOrNull ?? const SecuritySettings.defaults();
-    await _repository.savePinMaterial(pin);
-    await _repository.save(current.copyWith(pinEnabled: true));
-    _securityOrchestrator.enablePinFallback(true);
-    _pinStateController.markPinMaterialReady();
-    state = AsyncData(current.copyWith(pinEnabled: true));
-  }
-
-  Future<bool> verifyPin(String pin) async {
-    return _repository.verifyPin(pin);
+    final next = current.copyWith(pinEnabled: true);
+    await _securityOrchestrator.configurePin(pin);
+    await _repository.save(next);
+    state = AsyncData(next);
   }
 
   Future<void> updateAutoLockSeconds(int seconds) async {

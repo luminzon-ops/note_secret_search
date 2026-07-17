@@ -31,6 +31,13 @@ class NativeSecurityPlugin(
         channel.setMethodCallHandler(this)
     }
 
+    fun detachFromEngine() {
+        if (this::channel.isInitialized) {
+            channel.setMethodCallHandler(null)
+        }
+        keyManager.close()
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "enableScreenshotProtection" -> {
@@ -83,6 +90,28 @@ class NativeSecurityPlugin(
                 )
             }
 
+            "configurePin" -> {
+                nativeSecurityMethodHandler.configurePin(
+                    call.argument<Any?>("reason"),
+                    call.argument<Any?>("pin"),
+                    result,
+                )
+            }
+
+            "unlockWithPin" -> {
+                nativeSecurityMethodHandler.unlockWithPin(
+                    call.argument<Any?>("pin"),
+                    result,
+                )
+            }
+
+            "removePin" -> {
+                nativeSecurityMethodHandler.removePin(
+                    call.argument<Any?>("reason"),
+                    result,
+                )
+            }
+
             "lock" -> {
                 nativeSecurityMethodHandler.lock(result)
             }
@@ -123,6 +152,43 @@ internal class NativeSecurityMethodHandler(
         }
     }
 
+    fun configurePin(
+        reason: Any?,
+        pin: Any?,
+        result: MethodChannel.Result,
+    ) {
+        val ownedPin = pinBytes(pin, result) ?: return
+        withReason(
+            value = reason,
+            result = result,
+            rejected = { ownedPin.fill(0) },
+        ) {
+            operations.configurePin(it, ownedPin, unitChannelResult(result))
+        }
+    }
+
+    fun unlockWithPin(
+        pin: Any?,
+        result: MethodChannel.Result,
+    ) {
+        val ownedPin = pinBytes(pin, result) ?: return
+        try {
+            operations.unlockWithPin(ownedPin, channelResult(result))
+        } catch (error: Throwable) {
+            ownedPin.fill(0)
+            sendError(result, sanitize(error))
+        }
+    }
+
+    fun removePin(
+        reason: Any?,
+        result: MethodChannel.Result,
+    ) {
+        withReason(reason, result) {
+            operations.removePin(it, unitChannelResult(result))
+        }
+    }
+
     fun lock(result: MethodChannel.Result) {
         handle(result) {
             operations.lock()
@@ -132,10 +198,12 @@ internal class NativeSecurityMethodHandler(
     private fun withReason(
         value: Any?,
         result: MethodChannel.Result,
+        rejected: () -> Unit = {},
         operation: (String) -> Unit,
     ) {
         val reason = value as? String
         if (reason.isNullOrBlank()) {
+            rejected()
             sendError(
                 result,
                 NativeSecurityException(NativeSecurityErrorCode.INVALID_ARGUMENT),
@@ -145,8 +213,23 @@ internal class NativeSecurityMethodHandler(
         try {
             operation(reason)
         } catch (error: Throwable) {
+            rejected()
             sendError(result, sanitize(error))
         }
+    }
+
+    private fun pinBytes(
+        value: Any?,
+        result: MethodChannel.Result,
+    ): ByteArray? {
+        if (value is ByteArray) {
+            return value
+        }
+        sendError(
+            result,
+            NativeSecurityException(NativeSecurityErrorCode.INVALID_ARGUMENT),
+        )
+        return null
     }
 
     private fun channelResult(
@@ -159,6 +242,20 @@ internal class NativeSecurityMethodHandler(
                 } finally {
                     value.zeroize()
                 }
+            }
+
+            override fun error(error: NativeSecurityException) {
+                sendError(result, error)
+            }
+        }
+    }
+
+    private fun unitChannelResult(
+        result: MethodChannel.Result,
+    ): NativeResult<Unit> {
+        return object : NativeResult<Unit> {
+            override fun success(value: Unit) {
+                result.success(null)
             }
 
             override fun error(error: NativeSecurityException) {

@@ -18,11 +18,12 @@ class SemanticSearchService {
     required SearchRepository repository,
     required EmbeddingEngine embeddingEngine,
     required CryptoService cryptoService,
-    SemanticQualityPolicy qualityPolicy = const SemanticQualityPolicy.conservativeMvp(),
-  })  : _repository = repository,
-        _embeddingEngine = embeddingEngine,
-        _cryptoService = cryptoService,
-        _qualityPolicy = qualityPolicy;
+    SemanticQualityPolicy qualityPolicy =
+        const SemanticQualityPolicy.conservativeMvp(),
+  }) : _repository = repository,
+       _embeddingEngine = embeddingEngine,
+       _cryptoService = cryptoService,
+       _qualityPolicy = qualityPolicy;
 
   final SearchRepository _repository;
   final EmbeddingEngine _embeddingEngine;
@@ -46,19 +47,24 @@ class SemanticSearchService {
     );
 
     final candidates = <SemanticSearchResult>[];
-    candidates.addAll(await _matchSecrets(queryVector.values, activeEmbeddingModel.id, secrets));
-    candidates.addAll(await _matchNotes(queryVector.values, activeEmbeddingModel.id, notes));
+    candidates.addAll(
+      await _matchSecrets(queryVector.values, activeEmbeddingModel.id, secrets),
+    );
+    candidates.addAll(
+      await _matchNotes(queryVector.values, activeEmbeddingModel.id, notes),
+    );
     candidates.sort((a, b) {
-      final queryAwareSort = _queryAwareFieldPriority(normalizedQuery, b.hitField).compareTo(
-        _queryAwareFieldPriority(normalizedQuery, a.hitField),
-      );
+      final queryAwareSort = _queryAwareFieldPriority(
+        normalizedQuery,
+        b.hitField,
+      ).compareTo(_queryAwareFieldPriority(normalizedQuery, a.hitField));
       if (queryAwareSort != 0) {
         return queryAwareSort;
       }
 
-      final qualitySort = _semanticFieldQualityTier(b.hitField).compareTo(
-        _semanticFieldQualityTier(a.hitField),
-      );
+      final qualitySort = _semanticFieldQualityTier(
+        b.hitField,
+      ).compareTo(_semanticFieldQualityTier(a.hitField));
       if (qualitySort != 0) {
         return qualitySort;
       }
@@ -74,19 +80,34 @@ class SemanticSearchService {
   ) async {
     final results = <SemanticSearchResult>[];
     for (final item in secrets) {
-      final chunks = await _repository.getChunksBySource(item.id, SearchSourceType.secret, modelId);
+      final chunks = await _repository.getChunksBySource(
+        item.id,
+        SearchSourceType.secret,
+        modelId,
+      );
       if (chunks.isEmpty) {
         continue;
       }
 
-      final aggregatedMatch =
-          _aggregateChunkMatches(queryVector, chunks, _secretChunkSummaries(item, chunks.length));
+      final aggregatedMatch = _aggregateChunkMatches(
+        queryVector,
+        chunks,
+        _secretChunkSummaries(item, chunks.length),
+      );
       if (aggregatedMatch == null || aggregatedMatch.score <= 0) {
         continue;
       }
 
-      final username = _cryptoService.decryptNullable(item.usernameCiphertext);
-      final note = _cryptoService.decryptNullable(item.noteCiphertext);
+      final username = _cryptoService.decryptField(
+        item.usernameCiphertext,
+        field: EncryptedDatabaseField.secretUsername,
+        rowId: item.id,
+      );
+      final note = _cryptoService.decryptField(
+        item.noteCiphertext,
+        field: EncryptedDatabaseField.secretNote,
+        rowId: item.id,
+      );
 
       results.add(
         SemanticSearchResult(
@@ -117,19 +138,34 @@ class SemanticSearchService {
   ) async {
     final results = <SemanticSearchResult>[];
     for (final item in notes) {
-      final chunks = await _repository.getChunksBySource(item.id, SearchSourceType.note, modelId);
+      final chunks = await _repository.getChunksBySource(
+        item.id,
+        SearchSourceType.note,
+        modelId,
+      );
       if (chunks.isEmpty) {
         continue;
       }
 
-      final aggregatedMatch =
-          _aggregateChunkMatches(queryVector, chunks, _noteChunkSummaries(item, chunks.length));
+      final aggregatedMatch = _aggregateChunkMatches(
+        queryVector,
+        chunks,
+        _noteChunkSummaries(item, chunks.length),
+      );
       if (aggregatedMatch == null || aggregatedMatch.score <= 0) {
         continue;
       }
 
-      final summary = _cryptoService.decryptNullable(item.summaryCacheCiphertext);
-      final content = _cryptoService.decryptNullable(item.contentCiphertext);
+      final summary = _cryptoService.decryptField(
+        item.summaryCacheCiphertext,
+        field: EncryptedDatabaseField.noteSummary,
+        rowId: item.id,
+      );
+      final content = _cryptoService.decryptField(
+        item.contentCiphertext,
+        field: EncryptedDatabaseField.noteContent,
+        rowId: item.id,
+      );
 
       results.add(
         SemanticSearchResult(
@@ -180,7 +216,11 @@ class SemanticSearchService {
         continue;
       }
       matches.add(
-        _ChunkMatch(score: weightedScore, summary: descriptor.summary, field: descriptor.field),
+        _ChunkMatch(
+          score: weightedScore,
+          summary: descriptor.summary,
+          field: descriptor.field,
+        ),
       );
     }
 
@@ -190,7 +230,8 @@ class SemanticSearchService {
 
     matches.sort((a, b) => b.score.compareTo(a.score));
     final topMatches = matches.take(2).toList(growable: false);
-    final combinedScore = topMatches.fold<double>(0, (sum, match) => sum + match.score) /
+    final combinedScore =
+        topMatches.fold<double>(0, (sum, match) => sum + match.score) /
         topMatches.length;
     final combinedSummary = topMatches.map((match) => match.summary).join('；');
     return _ChunkMatch(
@@ -200,15 +241,36 @@ class SemanticSearchService {
     );
   }
 
-  List<_ChunkDescriptor> _secretChunkSummaries(SecretItem item, int chunkCount) {
-    final username = _cryptoService.decryptNullable(item.usernameCiphertext);
-    final website = _cryptoService.decryptNullable(item.websiteUrlCiphertext);
-    final note = _cryptoService.decryptNullable(item.noteCiphertext);
+  List<_ChunkDescriptor> _secretChunkSummaries(
+    SecretItem item,
+    int chunkCount,
+  ) {
+    final username = _cryptoService.decryptField(
+      item.usernameCiphertext,
+      field: EncryptedDatabaseField.secretUsername,
+      rowId: item.id,
+    );
+    final website = _cryptoService.decryptField(
+      item.websiteUrlCiphertext,
+      field: EncryptedDatabaseField.secretWebsiteUrl,
+      rowId: item.id,
+    );
+    final note = _cryptoService.decryptField(
+      item.noteCiphertext,
+      field: EncryptedDatabaseField.secretNote,
+      rowId: item.id,
+    );
 
     final candidates = <_ChunkDescriptor>[
-      _ChunkDescriptor(summary: '标题：${item.title}', field: SemanticHitField.title),
+      _ChunkDescriptor(
+        summary: '标题：${item.title}',
+        field: SemanticHitField.title,
+      ),
       if (username.isNotEmpty)
-        _ChunkDescriptor(summary: '账号：$username', field: SemanticHitField.username),
+        _ChunkDescriptor(
+          summary: '账号：$username',
+          field: SemanticHitField.username,
+        ),
       if (website.isNotEmpty)
         _ChunkDescriptor(summary: '网址：$website', field: SemanticHitField.url),
       if (note.isNotEmpty)
@@ -217,15 +279,26 @@ class SemanticSearchService {
           field: SemanticHitField.secretNote,
         ),
       if (item.tags.isNotEmpty)
-        _ChunkDescriptor(summary: '标签：${item.tags.join('、')}', field: SemanticHitField.tags),
+        _ChunkDescriptor(
+          summary: '标签：${item.tags.join('、')}',
+          field: SemanticHitField.tags,
+        ),
     ];
 
     return _expandSummaries(candidates, chunkCount);
   }
 
   List<_ChunkDescriptor> _noteChunkSummaries(NoteItem item, int chunkCount) {
-    final summary = _cryptoService.decryptNullable(item.summaryCacheCiphertext);
-    final content = _cryptoService.decryptNullable(item.contentCiphertext);
+    final summary = _cryptoService.decryptField(
+      item.summaryCacheCiphertext,
+      field: EncryptedDatabaseField.noteSummary,
+      rowId: item.id,
+    );
+    final content = _cryptoService.decryptField(
+      item.contentCiphertext,
+      field: EncryptedDatabaseField.noteContent,
+      rowId: item.id,
+    );
     final paragraphs = content
         .split(RegExp(r'\n{2,}'))
         .map((part) => part.trim())
@@ -233,9 +306,15 @@ class SemanticSearchService {
         .toList(growable: false);
 
     final candidates = <_ChunkDescriptor>[
-      _ChunkDescriptor(summary: '标题：${item.title}', field: SemanticHitField.title),
+      _ChunkDescriptor(
+        summary: '标题：${item.title}',
+        field: SemanticHitField.title,
+      ),
       if (summary.isNotEmpty)
-        _ChunkDescriptor(summary: '摘要：${_truncate(summary)}', field: SemanticHitField.summary),
+        _ChunkDescriptor(
+          summary: '摘要：${_truncate(summary)}',
+          field: SemanticHitField.summary,
+        ),
       ...paragraphs.map(
         (part) => _ChunkDescriptor(
           summary: '正文：${_truncate(part)}',
@@ -243,13 +322,19 @@ class SemanticSearchService {
         ),
       ),
       if (item.tags.isNotEmpty)
-        _ChunkDescriptor(summary: '标签：${item.tags.join('、')}', field: SemanticHitField.tags),
+        _ChunkDescriptor(
+          summary: '标签：${item.tags.join('、')}',
+          field: SemanticHitField.tags,
+        ),
     ];
 
     return _expandSummaries(candidates, chunkCount);
   }
 
-  List<_ChunkDescriptor> _expandSummaries(List<_ChunkDescriptor> candidates, int chunkCount) {
+  List<_ChunkDescriptor> _expandSummaries(
+    List<_ChunkDescriptor> candidates,
+    int chunkCount,
+  ) {
     if (candidates.isEmpty) {
       return List<_ChunkDescriptor>.generate(
         chunkCount,
@@ -280,7 +365,9 @@ class SemanticSearchService {
     if (decoded is! List) {
       return const <double>[];
     }
-    return decoded.map((value) => (value as num).toDouble()).toList(growable: false);
+    return decoded
+        .map((value) => (value as num).toDouble())
+        .toList(growable: false);
   }
 
   double _cosineSimilarity(List<double> left, List<double> right) {
@@ -389,10 +476,7 @@ class _ChunkMatch {
 }
 
 class _ChunkDescriptor {
-  const _ChunkDescriptor({
-    required this.summary,
-    required this.field,
-  });
+  const _ChunkDescriptor({required this.summary, required this.field});
 
   final String summary;
   final SemanticHitField field;

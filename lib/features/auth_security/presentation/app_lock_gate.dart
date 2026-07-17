@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
 class AppLockGate extends ConsumerStatefulWidget {
   const AppLockGate({required this.child, super.key});
@@ -28,18 +28,11 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
     }
     _hydrationStarted = true;
     Future<void>(() async {
-      final repository = await ref.read(
-        securitySettingsRepositoryProvider.future,
-      );
-      final settings = await repository.load();
-      final hasPinMaterial = await repository.hasPinMaterial();
-      ref
-          .read(lockSessionControllerProvider.notifier)
-          .setPinEnabled(settings.pinEnabled);
-      final pinStateController = ref.read(pinStateControllerProvider.notifier);
-      pinStateController.configureEnabled(settings.pinEnabled);
-      if (hasPinMaterial) {
-        pinStateController.markPinMaterialReady();
+      final orchestrator = ref.read(securityOrchestratorProvider);
+      try {
+        await orchestrator.refreshSecurityState();
+      } catch (_) {
+        orchestrator.enablePinFallback(false);
       }
     });
   }
@@ -113,8 +106,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
             .updateRecentTaskProtection(obscured: false);
         if (mounted) {
           final latestSession = ref.read(lockSessionControllerProvider);
-          final latestLifecycleState =
-              WidgetsBinding.instance.lifecycleState;
+          final latestLifecycleState = WidgetsBinding.instance.lifecycleState;
           final revealStillValid =
               !latestSession.isUnlocked &&
               latestSession.lockEpoch == lockEpoch &&
@@ -124,8 +116,7 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
             final appNotForeground =
                 latestLifecycleState != null &&
                 latestLifecycleState != AppLifecycleState.resumed;
-            if (!latestSession.isUnlocked ||
-                appNotForeground) {
+            if (!latestSession.isUnlocked || appNotForeground) {
               await ref
                   .read(screenshotProtectionGatewayProvider)
                   .updateRecentTaskProtection(obscured: true);
@@ -154,6 +145,7 @@ class AppLockScreen extends ConsumerStatefulWidget {
 
 class _AppLockScreenState extends ConsumerState<AppLockScreen> {
   bool _busy = false;
+  String? _authenticationError;
 
   @override
   Widget build(BuildContext context) {
@@ -195,6 +187,16 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                   icon: const Icon(Icons.fingerprint),
                   label: Text(_busy ? '验证中...' : '使用生物识别解锁'),
                 ),
+                if (_authenticationError != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    _authenticationError!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
                 if (session.pinEnabled &&
                     pinState.enabled &&
                     pinState.hasPinMaterial) ...[
@@ -226,13 +228,30 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
   }
 
   Future<void> _unlockWithBiometrics() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _authenticationError = null;
+    });
     try {
       final unlocked = await ref
           .read(securityOrchestratorProvider)
           .unlockWithBiometrics();
       if (unlocked && mounted) {
         widget.onUnlocked();
+      }
+    } on NativeSecurityException catch (error) {
+      if (mounted) {
+        setState(() {
+          _authenticationError = switch (error.code) {
+            'AUTH_CANCELLED' => '身份验证已取消',
+            'AUTH_LOCKOUT' => '系统认证暂时锁定，请稍后重试',
+            'DEVICE_CREDENTIAL_NOT_SET' => '请先在系统设置中启用安全锁屏',
+            'SECURITY_NOT_PROVISIONED' ||
+            'MIGRATION_REQUIRED' ||
+            'RECOVERY_REQUIRED' => '安全存储暂不可用',
+            _ => '身份验证失败，请重试',
+          };
+        });
       }
     } finally {
       if (mounted) {
