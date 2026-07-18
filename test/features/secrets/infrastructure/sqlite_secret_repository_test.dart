@@ -21,6 +21,7 @@ void main() {
 
   setUp(() async {
     database = await openTestAppDatabase();
+    await _insertTestVault(database);
     security = SecurityTestFixture();
     repository = SqliteSecretRepository(
       database: database,
@@ -136,6 +137,19 @@ SecretItem _legacySecret() {
 }
 
 Uint8List _legacyBytes(String value) => Uint8List.fromList(value.codeUnits);
+
+Future<void> _insertTestVault(TestAppDatabase database) {
+  return database.run(
+    (db) => db.insert(DatabaseSchema.vaults, <String, Object?>{
+      'id': 'vault-1',
+      'name': 'Test Vault',
+      'is_default': 0,
+      'encryption_version': 1,
+      'created_at': 1,
+      'updated_at': 1,
+    }),
+  );
+}
 
 class _TestVaultRepository implements VaultRepository {
   @override

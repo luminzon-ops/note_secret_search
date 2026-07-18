@@ -1,6 +1,9 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v5_data_migration.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v5_objects.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v5_rebuild.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
@@ -27,21 +30,38 @@ class DatabaseSchemaException implements Exception {
   String toString() => code;
 }
 
+enum DatabaseMigrationCheckpoint {
+  inventoryValidated,
+  historicalDriftRepaired,
+  dataNormalized,
+  tablesRebuilt,
+  schemaObjectsCreated,
+  postconditionsValidated,
+  ledgerWritten,
+}
+
+typedef DatabaseMigrationCheckpointCallback =
+    Future<void> Function(DatabaseMigrationCheckpoint checkpoint);
+
 class DatabaseSchemaManager implements DatabaseSchemaController {
-  DatabaseSchemaManager({int Function()? nowMilliseconds})
-    : _nowMilliseconds =
-          nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch);
+  DatabaseSchemaManager({
+    int Function()? nowMilliseconds,
+    DatabaseMigrationCheckpointCallback? onMigrationCheckpoint,
+  }) : _nowMilliseconds =
+           nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch),
+       _onMigrationCheckpoint = onMigrationCheckpoint;
 
   static const int latestVersion = 5;
   static const String migrationName = 'database_schema_v5';
   static const String migrationChecksum =
-      '780b631d9d1b8d3dd1f71f5799023f34'
-      'd7ef1734490c3755d75aaca80e73f89c';
+      '72961f4e65faded09a0b1afdfdadee2b'
+      '3fb4cf0bb016a4519692adfdb0adeca8';
   static const String expectedFingerprint =
-      '71b072b8b62710162dbf2ce005142791'
-      'ac781ff5b9e649fedc70ee4d639baf03';
+      '788a6b784f6c1e31db0382fa84c663a5'
+      'dcd00e6a99dfc4913bb0ef551a311c0c';
 
   final int Function() _nowMilliseconds;
+  final DatabaseMigrationCheckpointCallback? _onMigrationCheckpoint;
 
   @override
   int get version => latestVersion;
@@ -63,6 +83,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     await batch.commit(noResult: true);
     await _ensureDefaultVault(database);
     await _writeLedger(database);
+    await _validateRebuildPostconditions(database);
     await _validateTargetStructure(database);
   }
 
@@ -75,28 +96,56 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     if (oldVersion != 4 || newVersion != latestVersion) {
       throw const DatabaseSchemaException('database_schema_unsupported');
     }
+    try {
+      await DatabaseSchemaV5Rebuild.validateV4Inventory(database);
+    } on DatabaseSchemaV5RebuildException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.inventoryValidated);
     final modelColumns = {
       for (final row in await database.rawQuery(
         'PRAGMA table_info(model_registry)',
       ))
         row['name']! as String,
     };
-    if (!modelColumns.containsAll(const <String>{
-      'id',
-      'artifact_paths_json',
-    })) {
-      throw const DatabaseSchemaException('database_schema_invalid');
-    }
     if (!modelColumns.contains('integrity_status')) {
       await database.execute('''
         ALTER TABLE model_registry ADD COLUMN integrity_status
         TEXT NOT NULL DEFAULT 'unknown'
         ''');
     }
+    await _checkpoint(DatabaseMigrationCheckpoint.historicalDriftRepaired);
+    try {
+      await DatabaseSchemaV5DataMigration.normalize(
+        database,
+        nowMilliseconds: _nowMilliseconds,
+      );
+    } on DatabaseSchemaV5DataMigrationException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.dataNormalized);
+    try {
+      await DatabaseSchemaV5Rebuild.rebuildTables(database);
+    } on DatabaseSchemaV5RebuildException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    } on DatabaseException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.tablesRebuilt);
+    try {
+      for (final statement in DatabaseSchemaV5Objects.createStatements) {
+        await database.execute(statement);
+      }
+    } on DatabaseException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.schemaObjectsCreated);
+    await _validateRebuildPostconditions(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.postconditionsValidated);
     await database.execute(DatabaseSchemaV5.schemaMigrationsCreateStatement);
-    await _ensureDefaultVault(database);
     await _writeLedger(database);
     await _validateTargetStructure(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.ledgerWritten);
   }
 
   @override
@@ -116,7 +165,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   Future<String> fingerprint(DatabaseExecutor database) async {
     final inventory = <Object?>[];
     final tables = await database.rawQuery('''
-      SELECT name FROM sqlite_master
+      SELECT name, sql FROM sqlite_master
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
       ORDER BY name
       ''');
@@ -165,6 +214,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
         table,
         canonicalColumns,
         canonicalForeignKeys,
+        _normalizeSql(tableRow['sql']?.toString()),
       ]);
     }
 
@@ -237,9 +287,29 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
 
   Future<void> _validateTargetStructure(DatabaseExecutor database) async {
     await _validateLedger(database);
+    final defaults = await database.rawQuery('''
+      SELECT COUNT(*) AS count
+      FROM vaults
+      WHERE is_default = 1
+      ''');
+    if (defaults.single['count'] != 1) {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
     if (await fingerprint(database) != expectedFingerprint) {
       throw const DatabaseSchemaException('database_schema_invalid');
     }
+  }
+
+  Future<void> _validateRebuildPostconditions(DatabaseExecutor database) async {
+    try {
+      await DatabaseSchemaV5Rebuild.validatePostconditions(database);
+    } on DatabaseSchemaV5RebuildException {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+  }
+
+  Future<void> _checkpoint(DatabaseMigrationCheckpoint checkpoint) async {
+    await _onMigrationCheckpoint?.call(checkpoint);
   }
 }
 

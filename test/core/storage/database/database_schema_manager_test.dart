@@ -44,13 +44,16 @@ void main() {
       <String, Object?>{
         'version': 5,
         'name': DatabaseSchemaManager.migrationName,
-        'checksum': DatabaseSchemaManager.migrationChecksum,
+        'checksum':
+            '72961f4e65faded09a0b1afdfdadee2b'
+            '3fb4cf0bb016a4519692adfdb0adeca8',
         'applied_at': 1_800_000_000_000,
       },
     ]);
     expect(
       await manager.fingerprint(database),
-      DatabaseSchemaManager.expectedFingerprint,
+      '788a6b784f6c1e31db0382fa84c663a5'
+      'dcd00e6a99dfc4913bb0ef551a311c0c',
     );
   });
 
@@ -71,7 +74,9 @@ void main() {
     final model = (await database.query('model_registry')).single;
     expect(model['id'], 'model-1');
     expect(model['integrity_status'], 'unknown');
-    expect(model['artifact_paths_json'], '["/models/legacy.onnx"]');
+    expect(jsonDecode(model['artifact_paths_json']! as String), <Object?>[
+      <String, Object?>{'role': 'model', 'local_path': '/models/legacy.onnx'},
+    ]);
     final secret = (await database.query(
       'secret_items',
       where: 'id = ?',
@@ -166,6 +171,79 @@ void main() {
       ),
     );
     expect(await _columnNames(database, 'vaults'), contains('rogue'));
+  });
+
+  test('v5 fingerprint includes table CHECK definitions', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'note_secret_search_schema_check_fingerprint_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final manager = DatabaseSchemaManager();
+    final database = await _openManagedDatabase(
+      p.join(directory.path, 'check-fingerprint.db'),
+      manager,
+    );
+    addTearDown(database.close);
+    final row = (await database.rawQuery('''
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'vaults'
+      ''')).single;
+    final originalSql = row['sql']! as String;
+    final tamperedSql = originalSql.replaceFirst(
+      RegExp(r'CHECK\s*\(\s*is_default\s+IN\s*\(\s*0\s*,\s*1\s*\)\s*\)'),
+      '',
+    );
+    expect(tamperedSql, isNot(originalSql));
+    await database.execute('PRAGMA writable_schema = ON');
+    await database.rawUpdate(
+      '''
+      UPDATE sqlite_master SET sql = ?
+      WHERE type = 'table' AND name = 'vaults'
+      ''',
+      <Object>[tamperedSql],
+    );
+    await database.execute('PRAGMA writable_schema = OFF');
+
+    await expectLater(
+      manager.validate(database),
+      throwsA(
+        isA<DatabaseSchemaException>().having(
+          (error) => error.code,
+          'code',
+          'database_schema_invalid',
+        ),
+      ),
+    );
+  });
+
+  test('v5 rejects a database with no default Vault', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'note_secret_search_schema_default_vault_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final manager = DatabaseSchemaManager();
+    final database = await _openManagedDatabase(
+      p.join(directory.path, 'default-vault.db'),
+      manager,
+    );
+    addTearDown(database.close);
+    await database.update(
+      'vaults',
+      const <String, Object?>{'is_default': 0},
+      where: 'id = ?',
+      whereArgs: const <Object>['default'],
+    );
+
+    await expectLater(
+      manager.validate(database),
+      throwsA(
+        isA<DatabaseSchemaException>().having(
+          (error) => error.code,
+          'code',
+          'database_schema_invalid',
+        ),
+      ),
+    );
   });
 
   test('direct v3 open is rejected and remains v3 for Phase 2', () async {
