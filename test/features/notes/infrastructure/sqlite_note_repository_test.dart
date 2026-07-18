@@ -11,6 +11,7 @@ import 'package:note_secret_search/features/notes/infrastructure/sqlite_note_rep
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 import '../../../support/security_test_fixture.dart';
+import '../../../support/recording_item_tag_store.dart';
 import '../../../support/sqlite_test_database.dart';
 
 void main() {
@@ -99,6 +100,98 @@ void main() {
     );
 
     await expectLater(repository.getById(item.id), throwsFormatException);
+  });
+
+  test('list batch loads tags with stable Vault ordering', () async {
+    final ciphertext = NoteFormMapper.create(
+      vaultId: 'vault-1',
+      draft: const NoteDraft(
+        title: 'Ciphertext source',
+        content: 'body',
+        summary: '',
+        tags: <String>[],
+        categoryId: null,
+        favorite: false,
+      ),
+      cryptoService: security.crypto,
+    ).contentCiphertext;
+    await database.run((db) async {
+      await db.insert(DatabaseSchema.vaults, <String, Object?>{
+        'id': 'vault-2',
+        'name': 'Other Vault',
+        'is_default': 0,
+        'encryption_version': 1,
+        'created_at': 2,
+        'updated_at': 2,
+      });
+      for (final row in <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'b-id',
+          'vault_id': 'vault-1',
+          'title': 'B',
+          'content_ciphertext': ciphertext,
+          'favorite': 0,
+          'created_at': 1,
+          'updated_at': 2,
+        },
+        <String, Object?>{
+          'id': 'a-id',
+          'vault_id': 'vault-1',
+          'title': 'A',
+          'content_ciphertext': ciphertext,
+          'favorite': 0,
+          'created_at': 1,
+          'updated_at': 2,
+        },
+        <String, Object?>{
+          'id': 'favorite-id',
+          'vault_id': 'vault-1',
+          'title': 'Favorite',
+          'content_ciphertext': ciphertext,
+          'favorite': 1,
+          'created_at': 1,
+          'updated_at': 1,
+        },
+        <String, Object?>{
+          'id': 'other-id',
+          'vault_id': 'vault-2',
+          'title': 'Other',
+          'content_ciphertext': ciphertext,
+          'favorite': 1,
+          'created_at': 1,
+          'updated_at': 9,
+        },
+      ]) {
+        await db.insert(DatabaseSchema.noteItems, row);
+      }
+    });
+    final tagStore = RecordingItemTagStore(
+      tagsByItemId: const <String, List<String>>{
+        'favorite-id': <String>['favorite-tag'],
+        'b-id': <String>['b-tag'],
+      },
+    );
+    final listRepository = SqliteNoteRepository(
+      database: database,
+      tagStore: tagStore,
+    );
+
+    final items = await listRepository.listByVault('vault-1');
+
+    expect(items.map((item) => item.id), <String>[
+      'favorite-id',
+      'a-id',
+      'b-id',
+    ]);
+    expect(items.map((item) => item.tags), <List<String>>[
+      <String>['favorite-tag'],
+      <String>[],
+      <String>['b-tag'],
+    ]);
+    expect(tagStore.loadCallCount, 1);
+    expect(tagStore.lastItemIds, <String>['favorite-id', 'a-id', 'b-id']);
+    expect(tagStore.lastItemType, ItemTagType.note);
+    expect(tagStore.lastVaultId, 'vault-1');
   });
 
   test('tag write failures roll back the item and embeddings', () async {
@@ -190,14 +283,9 @@ void main() {
       await database.run((db) => db.query(DatabaseSchema.itemTags)),
       isEmpty,
     );
+    expect(await database.run((db) => db.query(DatabaseSchema.tags)), isEmpty);
     expect(
-      await database.run((db) => db.query(DatabaseSchema.tags)),
-      isEmpty,
-    );
-    expect(
-      await database.run(
-        (db) => db.query(DatabaseSchema.embeddingChunks),
-      ),
+      await database.run((db) => db.query(DatabaseSchema.embeddingChunks)),
       isEmpty,
     );
   });
@@ -262,6 +350,16 @@ Future<void> _insertEmbedding(
 
 class _FailingItemTagStore implements ItemTagStore {
   const _FailingItemTagStore();
+
+  @override
+  Future<Map<String, List<String>>> loadTagsByItemIds(
+    DatabaseExecutor executor, {
+    required List<String> itemIds,
+    required ItemTagType itemType,
+    required String vaultId,
+  }) async {
+    return const <String, List<String>>{};
+  }
 
   @override
   Future<void> replaceTags(

@@ -12,6 +12,7 @@ import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 import '../../../support/security_test_fixture.dart';
+import '../../../support/recording_item_tag_store.dart';
 import '../../../support/sqlite_test_database.dart';
 
 void main() {
@@ -113,6 +114,82 @@ void main() {
       repository.getById('secret-1'),
       throwsA(isA<DatabaseAccessRevokedException>()),
     );
+  });
+
+  test('list batch loads tags with stable Vault ordering', () async {
+    await database.run((db) async {
+      await db.insert(DatabaseSchema.vaults, <String, Object?>{
+        'id': 'vault-2',
+        'name': 'Other Vault',
+        'is_default': 0,
+        'encryption_version': 1,
+        'created_at': 2,
+        'updated_at': 2,
+      });
+      for (final row in const <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'b-id',
+          'vault_id': 'vault-1',
+          'title': 'B',
+          'favorite': 0,
+          'created_at': 1,
+          'updated_at': 2,
+        },
+        <String, Object?>{
+          'id': 'a-id',
+          'vault_id': 'vault-1',
+          'title': 'A',
+          'favorite': 0,
+          'created_at': 1,
+          'updated_at': 2,
+        },
+        <String, Object?>{
+          'id': 'favorite-id',
+          'vault_id': 'vault-1',
+          'title': 'Favorite',
+          'favorite': 1,
+          'created_at': 1,
+          'updated_at': 1,
+        },
+        <String, Object?>{
+          'id': 'other-id',
+          'vault_id': 'vault-2',
+          'title': 'Other',
+          'favorite': 1,
+          'created_at': 1,
+          'updated_at': 9,
+        },
+      ]) {
+        await db.insert(DatabaseSchema.secretItems, row);
+      }
+    });
+    final tagStore = RecordingItemTagStore(
+      tagsByItemId: const <String, List<String>>{
+        'favorite-id': <String>['favorite-tag'],
+        'b-id': <String>['b-tag'],
+      },
+    );
+    final listRepository = SqliteSecretRepository(
+      database: database,
+      tagStore: tagStore,
+    );
+
+    final items = await listRepository.listByVault('vault-1');
+
+    expect(items.map((item) => item.id), <String>[
+      'favorite-id',
+      'a-id',
+      'b-id',
+    ]);
+    expect(items.map((item) => item.tags), <List<String>>[
+      <String>['favorite-tag'],
+      <String>[],
+      <String>['b-tag'],
+    ]);
+    expect(tagStore.loadCallCount, 1);
+    expect(tagStore.lastItemIds, <String>['favorite-id', 'a-id', 'b-id']);
+    expect(tagStore.lastItemType, ItemTagType.secret);
+    expect(tagStore.lastVaultId, 'vault-1');
   });
 
   test('tag write failures roll back the item and embeddings', () async {
@@ -251,9 +328,7 @@ void main() {
         ],
       );
       expect(
-        await database.run(
-          (db) => db.query(DatabaseSchema.embeddingChunks),
-        ),
+        await database.run((db) => db.query(DatabaseSchema.embeddingChunks)),
         isEmpty,
       );
     },
@@ -295,9 +370,7 @@ void main() {
     );
     expect(rawItem.single['deleted_at'], isNull);
     expect(
-      await database.run(
-        (db) => db.query(DatabaseSchema.embeddingChunks),
-      ),
+      await database.run((db) => db.query(DatabaseSchema.embeddingChunks)),
       hasLength(1),
     );
   });
@@ -370,6 +443,16 @@ class _FailingItemTagStore implements ItemTagStore {
 
   final bool failReplace;
   final bool failUnlink;
+
+  @override
+  Future<Map<String, List<String>>> loadTagsByItemIds(
+    DatabaseExecutor executor, {
+    required List<String> itemIds,
+    required ItemTagType itemType,
+    required String vaultId,
+  }) async {
+    return const <String, List<String>>{};
+  }
 
   @override
   Future<void> replaceTags(

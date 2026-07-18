@@ -5,6 +5,13 @@ import 'package:uuid/uuid.dart';
 enum ItemTagType { secret, note }
 
 abstract interface class ItemTagStore {
+  Future<Map<String, List<String>>> loadTagsByItemIds(
+    DatabaseExecutor executor, {
+    required List<String> itemIds,
+    required ItemTagType itemType,
+    required String vaultId,
+  });
+
   Future<void> replaceTags(
     DatabaseExecutor executor, {
     required String itemId,
@@ -31,6 +38,42 @@ class SqliteItemTagStore implements ItemTagStore {
 
   final String Function() _idFactory;
   final int Function() _nowMilliseconds;
+
+  @override
+  Future<Map<String, List<String>>> loadTagsByItemIds(
+    DatabaseExecutor executor, {
+    required List<String> itemIds,
+    required ItemTagType itemType,
+    required String vaultId,
+  }) async {
+    final tagsByItemId = <String, List<String>>{
+      for (final itemId in itemIds) itemId: <String>[],
+    };
+    if (tagsByItemId.isEmpty) {
+      return tagsByItemId;
+    }
+    final placeholders = List<String>.filled(
+      tagsByItemId.length,
+      '?',
+      growable: false,
+    ).join(', ');
+    final rows = await executor.rawQuery(
+      '''
+      SELECT link.item_id, tag.name
+      FROM ${DatabaseSchema.itemTags} link
+      INNER JOIN ${DatabaseSchema.tags} tag ON tag.id = link.tag_id
+      WHERE link.item_type = ?
+        AND tag.vault_id = ?
+        AND link.item_id IN ($placeholders)
+      ORDER BY link.item_id ASC, tag.name COLLATE NOCASE ASC, tag.id ASC
+      ''',
+      <Object>[itemType.name, vaultId, ...tagsByItemId.keys],
+    );
+    for (final row in rows) {
+      tagsByItemId[row['item_id']! as String]!.add(row['name']! as String);
+    }
+    return tagsByItemId;
+  }
 
   @override
   Future<void> replaceTags(
@@ -99,10 +142,7 @@ class SqliteItemTagStore implements ItemTagStore {
     await _deleteOrphanTags(executor, vaultId);
   }
 
-  Future<void> _deleteOrphanTags(
-    DatabaseExecutor executor,
-    String vaultId,
-  ) {
+  Future<void> _deleteOrphanTags(DatabaseExecutor executor, String vaultId) {
     return executor.rawDelete(
       '''
       DELETE FROM ${DatabaseSchema.tags}

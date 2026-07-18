@@ -5,7 +5,6 @@ import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.d
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteSecretRepository implements SecretRepository {
   SqliteSecretRepository({
@@ -35,7 +34,14 @@ class SqliteSecretRepository implements SecretRepository {
         return null;
       }
 
-      return _mapSecret(rows.first, await _loadTags(db, id));
+      final row = rows.single;
+      final tagsByItemId = await _tagStore.loadTagsByItemIds(
+        db,
+        itemIds: <String>[id],
+        itemType: ItemTagType.secret,
+        vaultId: row['vault_id']! as String,
+      );
+      return _mapSecret(row, tagsByItemId[id] ?? const <String>[]);
     });
   }
 
@@ -46,15 +52,25 @@ class SqliteSecretRepository implements SecretRepository {
         DatabaseSchema.secretItems,
         where: 'vault_id = ? AND deleted_at IS NULL',
         whereArgs: <Object>[vaultId],
-        orderBy: 'favorite DESC, updated_at DESC',
+        orderBy: 'favorite DESC, updated_at DESC, id ASC',
       );
-
-      final items = <SecretItem>[];
-      for (final row in rows) {
-        final id = row['id']! as String;
-        items.add(_mapSecret(row, await _loadTags(db, id)));
-      }
-      return items;
+      final itemIds = rows
+          .map((row) => row['id']! as String)
+          .toList(growable: false);
+      final tagsByItemId = await _tagStore.loadTagsByItemIds(
+        db,
+        itemIds: itemIds,
+        itemType: ItemTagType.secret,
+        vaultId: vaultId,
+      );
+      return rows
+          .map(
+            (row) => _mapSecret(
+              row,
+              tagsByItemId[row['id']! as String] ?? const <String>[],
+            ),
+          )
+          .toList(growable: false);
     });
   }
 
@@ -158,21 +174,6 @@ class SqliteSecretRepository implements SecretRepository {
         whereArgs: <Object>[id, SearchSourceType.secret.name],
       );
     });
-  }
-
-  Future<List<String>> _loadTags(DatabaseExecutor db, String itemId) async {
-    final rows = await db.rawQuery(
-      '''
-      SELECT t.name
-      FROM ${DatabaseSchema.tags} t
-      INNER JOIN ${DatabaseSchema.itemTags} it ON it.tag_id = t.id
-      WHERE it.item_id = ? AND it.item_type = ?
-      ORDER BY t.name COLLATE NOCASE ASC
-      ''',
-      <Object>[itemId, 'secret'],
-    );
-
-    return rows.map((row) => row['name']! as String).toList(growable: false);
   }
 
   SecretItem _mapSecret(Map<String, Object?> row, List<String> tags) {
