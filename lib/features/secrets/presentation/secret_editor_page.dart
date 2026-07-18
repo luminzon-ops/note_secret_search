@@ -9,12 +9,10 @@ import 'package:note_secret_search/features/secrets/application/secret_form_mapp
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 class SecretEditorPage extends ConsumerStatefulWidget {
-  const SecretEditorPage({
-    this.secretId,
-    super.key,
-  });
+  const SecretEditorPage({this.secretId, super.key});
 
   final String? secretId;
 
@@ -53,9 +51,7 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
         : ref.watch(secretDetailProvider(widget.secretId!));
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isEditing ? '编辑密码' : '新增密码'),
-      ),
+      appBar: AppBar(title: Text(widget.isEditing ? '编辑密码' : '新增密码')),
       body: secretAsync.when(
         data: (secret) {
           _hydrate(secret);
@@ -67,7 +63,8 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
                 TextFormField(
                   controller: _titleController,
                   decoration: const InputDecoration(labelText: '标题 *'),
-                  validator: (value) => (value == null || value.trim().isEmpty) ? '请输入标题' : null,
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty) ? '请输入标题' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -126,7 +123,10 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
     if (secret == null) {
       return;
     }
-    final draft = SecretFormMapper.toDraft(secret, ref.read(cryptoServiceProvider));
+    final draft = SecretFormMapper.toDraft(
+      secret,
+      ref.read(cryptoServiceProvider),
+    );
     _titleController.text = draft.title;
     _usernameController.text = draft.username;
     _passwordController.text = draft.password;

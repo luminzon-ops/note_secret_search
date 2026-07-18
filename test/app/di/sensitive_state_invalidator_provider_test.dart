@@ -51,6 +51,7 @@ import 'package:note_secret_search/features/secrets/domain/secret_repository.dar
 import 'package:note_secret_search/features/secrets/presentation/secret_editor_page.dart'
     as secret_editor;
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 import 'package:note_secret_search/features/vault/domain/vault.dart';
 import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';

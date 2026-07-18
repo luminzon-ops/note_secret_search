@@ -36,7 +36,7 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
         DatabaseSchema.chatMessages,
         where: 'session_id = ?',
         whereArgs: <Object>[sessionId],
-        orderBy: 'created_at ASC',
+        orderBy: 'created_at ASC, id ASC',
       );
       return rows.map(_mapMessage).toList(growable: false);
     });
@@ -47,7 +47,7 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
     return _database.run((db) async {
       final rows = await db.query(
         DatabaseSchema.chatSessions,
-        orderBy: 'updated_at DESC',
+        orderBy: 'updated_at DESC, id ASC',
       );
       return rows.map(_mapSession).toList(growable: false);
     });
@@ -76,16 +76,38 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
   @override
   Future<void> saveSession(ChatSession session) {
     return _database.run((db) async {
-      await db.insert(DatabaseSchema.chatSessions, <String, Object?>{
-        'id': session.id,
-        'mode': session.mode.name,
-        'title': session.title,
-        'allow_private_context': session.allowPrivateContext ? 1 : 0,
-        'last_model_id': session.lastModelId,
-        'archived': session.archived ? 1 : 0,
-        'created_at': session.createdAt.millisecondsSinceEpoch,
-        'updated_at': session.updatedAt.millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.rawInsert(
+        '''
+        INSERT INTO ${DatabaseSchema.chatSessions} (
+          id,
+          mode,
+          title,
+          allow_private_context,
+          last_model_id,
+          archived,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          mode = excluded.mode,
+          title = excluded.title,
+          allow_private_context = excluded.allow_private_context,
+          last_model_id = excluded.last_model_id,
+          archived = excluded.archived,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at
+        ''',
+        <Object?>[
+          session.id,
+          session.mode.name,
+          session.title,
+          session.allowPrivateContext ? 1 : 0,
+          session.lastModelId,
+          session.archived ? 1 : 0,
+          session.createdAt.millisecondsSinceEpoch,
+          session.updatedAt.millisecondsSinceEpoch,
+        ],
+      );
     });
   }
 

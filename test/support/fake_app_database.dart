@@ -38,6 +38,13 @@ class FakeAppDatabase implements AppDatabase {
   }
 
   @override
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  ) {
+    throw UnimplementedError('This fake does not expose a SQLite connection.');
+  }
+
+  @override
   Future<void> close() async {
     _emit(
       const DatabaseLifecycleState(status: DatabaseLifecycleStatus.closing),

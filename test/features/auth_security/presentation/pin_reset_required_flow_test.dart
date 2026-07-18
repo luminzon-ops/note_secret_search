@@ -19,6 +19,7 @@ import 'package:note_secret_search/features/settings/application/security_settin
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
 import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 import '../../../support/fake_app_database.dart';
 

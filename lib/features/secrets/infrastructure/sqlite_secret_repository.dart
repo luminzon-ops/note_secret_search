@@ -4,24 +4,13 @@ import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
-import 'package:note_secret_search/features/vault/domain/vault.dart';
-import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteSecretRepository implements SecretRepository {
-  SqliteSecretRepository({
-    required AppDatabase database,
-    required VaultRepository vaultRepository,
-  }) : _database = database,
-       _vaultRepository = vaultRepository;
+  SqliteSecretRepository({required AppDatabase database})
+    : _database = database;
 
   final AppDatabase _database;
-  final VaultRepository _vaultRepository;
-
-  @override
-  Future<Vault?> getDefaultVault() {
-    return _vaultRepository.getDefaultVault();
-  }
 
   @override
   Future<SecretItem?> getById(String id) {

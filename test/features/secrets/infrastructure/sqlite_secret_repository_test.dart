@@ -8,8 +8,6 @@ import 'package:note_secret_search/features/secrets/application/secret_form_mapp
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
-import 'package:note_secret_search/features/vault/domain/vault.dart';
-import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
 
 import '../../../support/security_test_fixture.dart';
 import '../../../support/sqlite_test_database.dart';
@@ -23,10 +21,7 @@ void main() {
     database = await openTestAppDatabase();
     await _insertTestVault(database);
     security = SecurityTestFixture();
-    repository = SqliteSecretRepository(
-      database: database,
-      vaultRepository: _TestVaultRepository(),
-    );
+    repository = SqliteSecretRepository(database: database);
   });
 
   tearDown(() async {
@@ -149,12 +144,4 @@ Future<void> _insertTestVault(TestAppDatabase database) {
       'updated_at': 1,
     }),
   );
-}
-
-class _TestVaultRepository implements VaultRepository {
-  @override
-  Future<Vault?> getDefaultVault() async => null;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

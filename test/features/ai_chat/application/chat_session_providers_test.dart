@@ -345,6 +345,16 @@ class _TestAppDatabase implements AppDatabase {
   }
 
   @override
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  ) async {
+    if (_state.status != DatabaseLifecycleStatus.open) {
+      throw const DatabaseAccessRevokedException();
+    }
+    return _database.transaction(operation);
+  }
+
+  @override
   Future<void> close() async {
     _state = const DatabaseLifecycleState(
       status: DatabaseLifecycleStatus.closing,
@@ -372,6 +382,25 @@ class _InMemoryDatabase implements Database {
     }
     rows.add(Map<String, Object?>.from(values));
     return 1;
+  }
+
+  @override
+  Future<int> rawInsert(String sql, [List<Object?>? arguments]) {
+    if (sql.contains('INSERT INTO chat_sessions') &&
+        arguments != null &&
+        arguments.length == 8) {
+      return insert('chat_sessions', <String, Object?>{
+        'id': arguments[0],
+        'mode': arguments[1],
+        'title': arguments[2],
+        'allow_private_context': arguments[3],
+        'last_model_id': arguments[4],
+        'archived': arguments[5],
+        'created_at': arguments[6],
+        'updated_at': arguments[7],
+      });
+    }
+    throw UnsupportedError('Unsupported raw insert in chat database fake.');
   }
 
   @override
@@ -428,16 +457,24 @@ class _InMemoryDatabase implements Database {
     }
 
     switch (orderBy) {
-      case 'updated_at DESC':
-        sorted.sort(
-          (left, right) =>
-              (right['updated_at'] as int).compareTo(left['updated_at'] as int),
-        );
-      case 'created_at ASC':
-        sorted.sort(
-          (left, right) =>
-              (left['created_at'] as int).compareTo(right['created_at'] as int),
-        );
+      case 'updated_at DESC, id ASC':
+        sorted.sort((left, right) {
+          final byUpdatedAt = (right['updated_at'] as int).compareTo(
+            left['updated_at'] as int,
+          );
+          return byUpdatedAt != 0
+              ? byUpdatedAt
+              : (left['id']! as String).compareTo(right['id']! as String);
+        });
+      case 'created_at ASC, id ASC':
+        sorted.sort((left, right) {
+          final byCreatedAt = (left['created_at'] as int).compareTo(
+            right['created_at'] as int,
+          );
+          return byCreatedAt != 0
+              ? byCreatedAt
+              : (left['id']! as String).compareTo(right['id']! as String);
+        });
     }
 
     return sorted;

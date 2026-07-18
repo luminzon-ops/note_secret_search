@@ -23,6 +23,7 @@ import 'package:note_secret_search/features/settings/infrastructure/security_set
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 import '../../../support/fake_app_database.dart';
 

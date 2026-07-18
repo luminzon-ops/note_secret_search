@@ -683,6 +683,13 @@ class _RecordingAppDatabase implements AppDatabase {
   }
 
   @override
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
   Future<void> close() async {
     _state = const DatabaseLifecycleState(
       status: DatabaseLifecycleStatus.closing,

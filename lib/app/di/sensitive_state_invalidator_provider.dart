@@ -10,8 +10,11 @@ import 'package:note_secret_search/features/notes/application/note_providers.dar
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
-final sensitiveStateInvalidatorProvider = Provider<SensitiveStateInvalidator>((ref) {
+final sensitiveStateInvalidatorProvider = Provider<SensitiveStateInvalidator>((
+  ref,
+) {
   return SensitiveStateInvalidator(ref: ref);
 });
 

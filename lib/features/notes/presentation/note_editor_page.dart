@@ -9,13 +9,10 @@ import 'package:note_secret_search/features/notes/domain/note_draft.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
-import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 class NoteEditorPage extends ConsumerStatefulWidget {
-  const NoteEditorPage({
-    this.noteId,
-    super.key,
-  });
+  const NoteEditorPage({this.noteId, super.key});
 
   final String? noteId;
 
@@ -62,7 +59,8 @@ class _NoteEditorPageState extends ConsumerState<NoteEditorPage> {
                 TextFormField(
                   controller: _titleController,
                   decoration: const InputDecoration(labelText: '标题 *'),
-                  validator: (value) => (value == null || value.trim().isEmpty) ? '请输入标题' : null,
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty) ? '请输入标题' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -87,7 +85,8 @@ class _NoteEditorPageState extends ConsumerState<NoteEditorPage> {
                   controller: _contentController,
                   decoration: const InputDecoration(labelText: '正文 *'),
                   maxLines: 12,
-                  validator: (value) => (value == null || value.trim().isEmpty) ? '请输入正文' : null,
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty) ? '请输入正文' : null,
                 ),
                 const SizedBox(height: 24),
                 FilledButton.icon(

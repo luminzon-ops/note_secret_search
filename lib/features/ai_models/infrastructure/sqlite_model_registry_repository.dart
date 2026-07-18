@@ -5,7 +5,6 @@ import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteModelRegistryRepository implements ModelRegistryRepository {
   SqliteModelRegistryRepository({required AppDatabase database})
@@ -47,7 +46,7 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
     return _database.run((db) async {
       final rows = await db.query(
         DatabaseSchema.modelRegistry,
-        orderBy: 'installed_at DESC',
+        orderBy: 'installed_at DESC, id ASC',
       );
       return rows.map(_mapEntry).toList(growable: false);
     });
@@ -56,25 +55,59 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
   @override
   Future<void> save(ModelRegistryEntry entry) {
     return _database.run((db) async {
-      await db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-        'id': entry.id,
-        'type': entry.type,
-        'provider': entry.provider,
-        'name': entry.name,
-        'version': entry.version,
-        'size_bytes': entry.sizeBytes,
-        'quantization': entry.quantization,
-        'min_ram_mb': entry.minRamMb,
-        'recommended_tier': entry.recommendedTier,
-        'local_path': entry.localPath,
-        'artifact_paths_json': encodeModelArtifactPathsForSqlite(
-          entry.artifacts,
-        ),
-        'checksum': entry.checksum,
-        'enabled': entry.enabled ? 1 : 0,
-        'installed_at': entry.installedAt?.millisecondsSinceEpoch,
-        'integrity_status': entry.integrityStatus.name,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.rawInsert(
+        '''
+        INSERT INTO ${DatabaseSchema.modelRegistry} (
+          id,
+          type,
+          provider,
+          name,
+          version,
+          size_bytes,
+          quantization,
+          min_ram_mb,
+          recommended_tier,
+          local_path,
+          artifact_paths_json,
+          checksum,
+          integrity_status,
+          enabled,
+          installed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          type = excluded.type,
+          provider = excluded.provider,
+          name = excluded.name,
+          version = excluded.version,
+          size_bytes = excluded.size_bytes,
+          quantization = excluded.quantization,
+          min_ram_mb = excluded.min_ram_mb,
+          recommended_tier = excluded.recommended_tier,
+          local_path = excluded.local_path,
+          artifact_paths_json = excluded.artifact_paths_json,
+          checksum = excluded.checksum,
+          integrity_status = excluded.integrity_status,
+          enabled = excluded.enabled,
+          installed_at = excluded.installed_at
+        ''',
+        <Object?>[
+          entry.id,
+          entry.type,
+          entry.provider,
+          entry.name,
+          entry.version,
+          entry.sizeBytes,
+          entry.quantization,
+          entry.minRamMb,
+          entry.recommendedTier,
+          entry.localPath,
+          encodeModelArtifactPathsForSqlite(entry.artifacts),
+          entry.checksum,
+          entry.integrityStatus.name,
+          entry.enabled ? 1 : 0,
+          entry.installedAt?.millisecondsSinceEpoch,
+        ],
+      );
     });
   }
 

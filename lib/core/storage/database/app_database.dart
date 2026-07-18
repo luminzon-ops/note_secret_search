@@ -47,5 +47,9 @@ abstract interface class AppDatabase {
 
   Future<T> run<T>(Future<T> Function(Database database) operation);
 
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  );
+
   Future<void> close();
 }

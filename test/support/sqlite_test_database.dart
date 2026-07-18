@@ -51,6 +51,16 @@ class TestAppDatabase implements AppDatabase {
   }
 
   @override
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  ) async {
+    if (_state.status != DatabaseLifecycleStatus.open) {
+      throw const DatabaseAccessRevokedException();
+    }
+    return _database.transaction(operation);
+  }
+
+  @override
   Future<void> close() async {
     if (_state.status == DatabaseLifecycleStatus.locked) {
       return;

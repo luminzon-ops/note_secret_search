@@ -147,6 +147,26 @@ class SqlCipherAppDatabase implements AppDatabase {
 
   @override
   Future<T> run<T>(Future<T> Function(Database database) operation) async {
+    return _withLease((database, _) => operation(database));
+  }
+
+  @override
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  ) {
+    return _withLease((database, generation) {
+      return database.transaction<T>((transaction) async {
+        _throwIfAccessRevoked(database, generation);
+        final result = await operation(transaction);
+        _throwIfAccessRevoked(database, generation);
+        return result;
+      });
+    });
+  }
+
+  Future<T> _withLease<T>(
+    Future<T> Function(Database database, int generation) operation,
+  ) async {
     final database = _database;
     if (_state.status != DatabaseLifecycleStatus.open || database == null) {
       throw const DatabaseAccessRevokedException();
@@ -154,7 +174,7 @@ class SqlCipherAppDatabase implements AppDatabase {
     final generation = _generation;
     _activeLeases += 1;
     try {
-      final result = await operation(database);
+      final result = await operation(database, generation);
       _throwIfAccessRevoked(database, generation);
       return result;
     } catch (_) {

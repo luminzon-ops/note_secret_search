@@ -3,7 +3,7 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/notes/infrastructure/sqlite_note_repository.dart';
-import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final noteRepositoryProvider = Provider<NoteRepository>((ref) {
   return SqliteNoteRepository(database: ref.watch(appDatabaseProvider));

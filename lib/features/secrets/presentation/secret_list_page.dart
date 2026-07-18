@@ -5,6 +5,7 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/auth_security/presentation/security_status_card.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 class SecretListPage extends ConsumerWidget {
   const SecretListPage({super.key});

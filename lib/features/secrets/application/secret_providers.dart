@@ -3,27 +3,10 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
-import 'package:note_secret_search/features/vault/domain/vault.dart';
-import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
-import 'package:note_secret_search/features/vault/infrastructure/sqlite_vault_repository.dart';
-
-final vaultRepositoryProvider = Provider<VaultRepository>((ref) {
-  return SqliteVaultRepository(database: ref.watch(appDatabaseProvider));
-});
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final secretRepositoryProvider = Provider<SecretRepository>((ref) {
-  return SqliteSecretRepository(
-    database: ref.watch(appDatabaseProvider),
-    vaultRepository: ref.watch(vaultRepositoryProvider),
-  );
-});
-
-final defaultVaultProvider = FutureProvider<Vault?>((ref) {
-  return guardSensitiveFuture<Vault?>(
-    ref,
-    lockedValue: null,
-    load: () => ref.watch(vaultRepositoryProvider).getDefaultVault(),
-  );
+  return SqliteSecretRepository(database: ref.watch(appDatabaseProvider));
 });
 
 final secretListProvider = FutureProvider<List<SecretItem>>((ref) {
@@ -41,8 +24,10 @@ final secretListProvider = FutureProvider<List<SecretItem>>((ref) {
   );
 });
 
-final secretDetailProvider =
-    FutureProvider.family<SecretItem?, String>((ref, id) {
+final secretDetailProvider = FutureProvider.family<SecretItem?, String>((
+  ref,
+  id,
+) {
   return guardSensitiveFuture<SecretItem?>(
     ref,
     lockedValue: null,
