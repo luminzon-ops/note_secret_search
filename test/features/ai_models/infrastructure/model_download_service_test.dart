@@ -71,6 +71,26 @@ void main() {
     expect(mmprojTarget.localPath.replaceAll('\\', '/'), contains('mmproj-model-f16.gguf'));
   });
 
+  test('inspectDownloadTarget does not create a missing model directory', () async {
+    final tempDir = await Directory.systemTemp.createTemp('model-download-service');
+    addTearDown(() => tempDir.delete(recursive: true));
+    final service = ModelDownloadService(
+      dio: Dio(),
+      logger: const AppLogger(),
+      applicationSupportDirectoryProvider: () async => tempDir,
+    );
+    final modelDirectory = Directory('${tempDir.path}/models/missing-model');
+
+    final target = await service.inspectDownloadTarget(
+      modelId: 'missing-model',
+      sourceUrl: 'https://example.com/model.gguf',
+    );
+
+    expect(target.exists, isFalse);
+    expect(target.existingBytes, 0);
+    expect(await modelDirectory.exists(), isFalse);
+  });
+
   test('download appends bytes when the source supports HTTP Range resume', () async {
     final tempDir = await Directory.systemTemp.createTemp('model-download-service');
     addTearDown(() => tempDir.delete(recursive: true));

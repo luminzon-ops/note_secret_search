@@ -11,6 +11,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
@@ -58,6 +59,7 @@ class _MemoryDownloadRepository implements ModelDownloadRepository {
   Future<void> saveTask(ModelDownloadTask task) async {
     tasksById[task.id] = task;
   }
+
 }
 
 class _MemoryRegistryRepository implements ModelRegistryRepository {
@@ -77,6 +79,60 @@ class _MemoryRegistryRepository implements ModelRegistryRepository {
   @override
   Future<void> save(ModelRegistryEntry entry) async {
     entries[entry.id] = entry;
+  }
+}
+
+ProviderContainer _modelProviderContainer({
+  required List<Override> overrides,
+}) {
+  return ProviderContainer(
+    overrides: <Override>[
+      modelLifecycleStoreProvider.overrideWith((ref) {
+        return _RepositoryBackedTestLifecycleStore(
+          downloadRepository: ref.watch(modelDownloadRepositoryProvider),
+          registryRepository: ref.watch(modelRegistryRepositoryProvider),
+        );
+      }),
+      ...overrides,
+    ],
+  );
+}
+
+class _RepositoryBackedTestLifecycleStore implements ModelLifecycleStore {
+  const _RepositoryBackedTestLifecycleStore({
+    required ModelDownloadRepository downloadRepository,
+    required ModelRegistryRepository registryRepository,
+  }) : _downloadRepository = downloadRepository,
+       _registryRepository = registryRepository;
+
+  final ModelDownloadRepository _downloadRepository;
+  final ModelRegistryRepository _registryRepository;
+
+  @override
+  Future<void> commitInstallation({
+    required ModelRegistryEntry registryEntry,
+    required List<ModelDownloadTask> completedTasks,
+  }) async {
+    await _registryRepository.save(registryEntry);
+    for (final task in completedTasks) {
+      await _downloadRepository.saveTask(task);
+    }
+  }
+
+  @override
+  Future<ModelRegistryEntry?> getDeletionManifest(String modelId) {
+    return _registryRepository.getById(modelId);
+  }
+
+  @override
+  Future<void> purgeModelData(String modelId) async {
+    final downloadRepository = _downloadRepository;
+    if (downloadRepository is _MemoryDownloadRepository) {
+      downloadRepository.tasksById.removeWhere(
+        (_, task) => task.modelId == modelId,
+      );
+    }
+    await _registryRepository.deleteById(modelId);
   }
 }
 
@@ -477,7 +533,7 @@ void main() {
       ),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -595,7 +651,7 @@ void main() {
       ],
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -645,7 +701,7 @@ void main() {
     );
     downloadService.progressGate = Completer<void>();
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -720,7 +776,7 @@ void main() {
       localPath: '/partials/embed-1-source-a.partial',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -808,7 +864,7 @@ void main() {
       localPath: '/partials/embed-1-source-a.partial',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
@@ -852,7 +908,7 @@ void main() {
     downloadService.existingPaths.add('/models/embed-1.onnx');
     downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -927,7 +983,7 @@ void main() {
         catalogMultimodalPath,
       });
 
-      final container = ProviderContainer(
+      final container = _modelProviderContainer(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -996,6 +1052,7 @@ void main() {
   );
 
   test('modelRegistryEntriesProvider adopts a complete local llm file from catalog when registry entry is missing', () async {
+    final downloadRepository = _MemoryDownloadRepository();
     final registryRepository = _MemoryRegistryRepository();
     final downloadService = _FakeDownloadService();
     final catalogRepository = _MemoryCatalogRepository(
@@ -1029,9 +1086,10 @@ void main() {
       localPath: '/models/qwen-local.gguf',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
@@ -1050,9 +1108,20 @@ void main() {
     expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
     expect(adopted.enabled, isTrue);
     expect(registryRepository.entries['qwen-local']?.localPath, '/models/qwen-local.gguf');
+    final adoptedTask = downloadRepository.tasksByModelAndSource(
+      'qwen-local',
+      'source-1',
+    );
+    expect(adoptedTask?.id, 'adopted:qwen-local:source-1');
+    expect(adoptedTask?.status, ModelDownloadStatus.completed);
+
+    container.invalidate(modelRegistryEntriesProvider);
+    await container.read(modelRegistryEntriesProvider.future);
+    expect(downloadRepository.tasksById, hasLength(1));
   });
 
   test('modelRegistryEntriesProvider adopts a checksum-valid local llm file even when catalog size is stale', () async {
+    final downloadRepository = _MemoryDownloadRepository();
     final registryRepository = _MemoryRegistryRepository();
     final downloadService = _FakeDownloadService();
     final catalogRepository = _MemoryCatalogRepository(
@@ -1086,9 +1155,10 @@ void main() {
       localPath: '/models/qwen-local.gguf',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
         modelDownloadServiceProvider.overrideWithValue(downloadService),
         modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
@@ -1106,6 +1176,10 @@ void main() {
     expect(adopted.filePresent, isTrue);
     expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
     expect(adopted.enabled, isTrue);
+    expect(
+      downloadRepository.tasksByModelAndSource('qwen-local', 'source-1')?.status,
+      ModelDownloadStatus.completed,
+    );
   });
 
   test('startDownload re-downloads a disabled installed model instead of short-circuiting on file presence', () async {
@@ -1139,7 +1213,7 @@ void main() {
     );
     downloadService.existingPaths.add('/models/embed-1.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1205,7 +1279,7 @@ void main() {
     downloadService.existingPaths.add('/models/embed-1.onnx');
     downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1248,7 +1322,7 @@ void main() {
     downloadService.existingPaths.add('/models/phi.gguf');
     downloadService.checksumMismatchPaths.add('/models/phi.gguf');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1281,7 +1355,7 @@ void main() {
       ),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1346,7 +1420,7 @@ void main() {
       ),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1398,7 +1472,7 @@ void main() {
       error: StateError('Checksum mismatch for embed-2'),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1467,7 +1541,7 @@ void main() {
       status: ModelDownloadStatus.paused,
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1539,7 +1613,7 @@ void main() {
       status: ModelDownloadStatus.downloading,
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1578,7 +1652,7 @@ void main() {
       localPath: '/models/qwen.gguf',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1655,7 +1729,7 @@ void main() {
       ),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1744,7 +1818,7 @@ void main() {
       localPath: '/partials/embed-1.partial',
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1836,7 +1910,7 @@ void main() {
       ),
     );
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1923,7 +1997,7 @@ void main() {
     downloadService.existingPaths.add('/models/embed-1.onnx');
     downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -1966,7 +2040,7 @@ void main() {
     downloadService.existingPaths.add('/models/embed-1.onnx');
     // No checksumMismatchPaths entry → checksum passes
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -2008,7 +2082,7 @@ void main() {
     );
     downloadService.existingPaths.add('/models/qwen.gguf');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -2060,7 +2134,7 @@ void main() {
     );
     downloadService.existingPaths.add('/models/qwen.gguf');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
@@ -2136,7 +2210,7 @@ void main() {
     );
     downloadService.existingPaths.add('/models/embed-1.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
@@ -2185,7 +2259,7 @@ void main() {
     );
     downloadService.existingPaths.add('/models/unknown.onnx');
 
-    final container = ProviderContainer(
+    final container = _modelProviderContainer(
       overrides: [
         modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
         modelRegistryRepositoryProvider.overrideWithValue(registryRepository),

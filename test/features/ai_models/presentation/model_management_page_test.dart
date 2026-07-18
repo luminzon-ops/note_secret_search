@@ -10,9 +10,12 @@ import 'package:note_secret_search/features/ai_models/application/model_catalog_
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
@@ -53,12 +56,42 @@ class _FakeModelRegistryRepository implements ModelRegistryRepository {
   Future<void> save(ModelRegistryEntry entry) async {}
 }
 
+class _FakeModelLifecycleStore implements ModelLifecycleStore {
+  const _FakeModelLifecycleStore();
+
+  @override
+  Future<void> commitInstallation({
+    required ModelRegistryEntry registryEntry,
+    required List<ModelDownloadTask> completedTasks,
+  }) async {}
+
+  @override
+  Future<ModelRegistryEntry?> getDeletionManifest(String modelId) async =>
+      null;
+
+  @override
+  Future<void> purgeModelData(String modelId) async {}
+}
+
+class _FakeModelArtifactStore implements ModelArtifactStore {
+  const _FakeModelArtifactStore();
+
+  @override
+  Future<void> deleteModelArtifacts({
+    required String modelId,
+    required String? primaryPath,
+    required List<ModelArtifactPath> artifacts,
+  }) async {}
+}
+
 class _FakeModelDownloadController extends ModelDownloadController {
   _FakeModelDownloadController({required super.ref})
       : super(
           repository: const _FakeModelDownloadRepository(),
           registryRepository: const _FakeModelRegistryRepository(),
           downloadService: ModelDownloadService(dio: Dio(), logger: const AppLogger()),
+          lifecycleStore: const _FakeModelLifecycleStore(),
+          artifactStore: const _FakeModelArtifactStore(),
           logger: const AppLogger(),
         );
 }
@@ -70,6 +103,7 @@ class _RecordingModelDownloadController extends _FakeModelDownloadController {
   ModelSourceEntry? startedSource;
   String? revalidatedModelId;
   String? repairedModelId;
+  String? deletedModelId;
 
   @override
   Future<void> startDownload({
@@ -88,6 +122,11 @@ class _RecordingModelDownloadController extends _FakeModelDownloadController {
   @override
   Future<void> repairInstalledModel(String modelId) async {
     repairedModelId = modelId;
+  }
+
+  @override
+  Future<void> deleteInstalledModel(String modelId) async {
+    deletedModelId = modelId;
   }
 }
 
@@ -3177,5 +3216,72 @@ void main() {
     expect(find.textContaining('连接中'), findsOneWidget);
     // The compact progress copy shows downloaded / total bytes.
     expect(find.textContaining('已下载 0 MB / 10 MB'), findsOneWidget);
+  });
+
+  testWidgets('stale registry keeps model cleanup retry available', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    late _RecordingModelDownloadController controller;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          modelCatalogEntriesProvider.overrideWith(
+            (ref) async => const <ModelCatalogEntry>[
+              _bgeEmbeddingCatalogEntry,
+            ],
+          ),
+          modelDownloadTasksProvider.overrideWith(
+            (ref) async => const <ModelDownloadTask>[],
+          ),
+          modelRegistryEntriesProvider.overrideWith(
+            (ref) async => const <ModelRegistryEntry>[
+              ModelRegistryEntry(
+                id: 'bge-small-zh',
+                type: 'embedding',
+                provider: 'builtin_catalog',
+                name: 'BGE Small Chinese',
+                version: null,
+                sizeBytes: 10,
+                quantization: null,
+                minRamMb: 512,
+                recommendedTier: 'mvp',
+                localPath: '/data/models/bge-small-zh/model.onnx',
+                checksum: 'sha256:model',
+                enabled: false,
+                installedAt: null,
+                filePresent: false,
+              ),
+            ],
+          ),
+          activeModelSelectionProvider.overrideWith(
+            (ref) async =>
+                const ActiveModelSelection(activeEmbeddingModelId: null),
+          ),
+          embeddingRuntimeStatesProvider.overrideWith(
+            (ref) async => const <String, EmbeddingEngineState>{},
+          ),
+          modelDownloadControllerProvider.overrideWith((ref) {
+            controller = _RecordingModelDownloadController(ref: ref);
+            return controller;
+          }),
+        ],
+        child: const MaterialApp(home: ModelManagementPage()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    final deleteButton = find.widgetWithText(
+      OutlinedButton,
+      '删除本地模型',
+    );
+    await scrollUntilFound(tester, deleteButton);
+
+    expect(tester.widget<OutlinedButton>(deleteButton).onPressed, isNotNull);
+    await tester.tap(deleteButton);
+    await tester.pump();
+    expect(controller.deletedModelId, 'bge-small-zh');
   });
 }

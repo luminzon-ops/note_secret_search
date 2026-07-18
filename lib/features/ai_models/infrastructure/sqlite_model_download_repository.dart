@@ -2,7 +2,6 @@ import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
-import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteModelDownloadRepository implements ModelDownloadRepository {
   SqliteModelDownloadRepository({required AppDatabase database})
@@ -66,19 +65,47 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
   @override
   Future<void> saveTask(ModelDownloadTask task) {
     return _database.run((db) async {
-      await db.insert(DatabaseSchema.downloadTasks, <String, Object?>{
-        'id': task.id,
-        'model_id': task.modelId,
-        'source_id': task.sourceId,
-        'status': task.status.name,
-        'total_bytes': task.totalBytes,
-        'downloaded_bytes': task.downloadedBytes,
-        'average_speed': task.averageSpeed,
-        'error_message': task.errorMessage,
-        'resumable': task.resumable ? 1 : 0,
-        'created_at': task.createdAt.millisecondsSinceEpoch,
-        'updated_at': task.updatedAt.millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      await db.rawInsert(
+        '''
+        INSERT INTO ${DatabaseSchema.downloadTasks} (
+          id,
+          model_id,
+          source_id,
+          status,
+          total_bytes,
+          downloaded_bytes,
+          average_speed,
+          error_message,
+          resumable,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          model_id = excluded.model_id,
+          source_id = excluded.source_id,
+          status = excluded.status,
+          total_bytes = excluded.total_bytes,
+          downloaded_bytes = excluded.downloaded_bytes,
+          average_speed = excluded.average_speed,
+          error_message = excluded.error_message,
+          resumable = excluded.resumable,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at
+        ''',
+        <Object?>[
+          task.id,
+          task.modelId,
+          task.sourceId,
+          task.status.name,
+          task.totalBytes,
+          task.downloadedBytes,
+          task.averageSpeed,
+          task.errorMessage,
+          task.resumable ? 1 : 0,
+          task.createdAt.millisecondsSinceEpoch,
+          task.updatedAt.millisecondsSinceEpoch,
+        ],
+      );
     });
   }
 

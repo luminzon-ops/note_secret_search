@@ -73,11 +73,17 @@ class ModelDownloadService {
     int resumeFromBytes = 0,
     required FutureOr<void> Function(ModelDownloadProgress progress) onProgress,
   }) async {
-    final target = await inspectDownloadTarget(
+    final targetFile = await _resolveTargetFile(
       modelId: modelId,
       sourceUrl: sourceUrl,
+      createParent: true,
     );
-    final targetFile = File(target.localPath);
+    final targetExists = await targetFile.exists();
+    final target = ModelDownloadTarget(
+      localPath: targetFile.path,
+      exists: targetExists,
+      existingBytes: targetExists ? await targetFile.length() : 0,
+    );
     final cancelToken = CancelToken();
     _cancelTokens[taskId] = cancelToken;
     final startedAt = DateTime.now();
@@ -170,7 +176,11 @@ class ModelDownloadService {
     required String modelId,
     required String sourceUrl,
   }) async {
-    final targetFile = await _resolveTargetFile(modelId, sourceUrl);
+    final targetFile = await _resolveTargetFile(
+      modelId: modelId,
+      sourceUrl: sourceUrl,
+      createParent: false,
+    );
     final exists = await targetFile.exists();
     final existingBytes = exists ? await targetFile.length() : 0;
     return ModelDownloadTarget(
@@ -286,10 +296,14 @@ class ModelDownloadService {
     }
   }
 
-  Future<File> _resolveTargetFile(String modelId, String sourceUrl) async {
+  Future<File> _resolveTargetFile({
+    required String modelId,
+    required String sourceUrl,
+    required bool createParent,
+  }) async {
     final appDir = await _applicationSupportDirectoryProvider();
     final modelDir = Directory(p.join(appDir.path, 'models', modelId));
-    if (!await modelDir.exists()) {
+    if (createParent && !await modelDir.exists()) {
       await modelDir.create(recursive: true);
     }
 

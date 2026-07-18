@@ -8,6 +8,7 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
     lockedValue: const <ModelRegistryEntry>[],
     load: () async {
       final repository = ref.watch(modelRegistryRepositoryProvider);
+      final lifecycleStore = ref.watch(modelLifecycleStoreProvider);
       final downloadService = ref.watch(modelDownloadServiceProvider);
       final catalogEntries = await ref.watch(
         modelCatalogEntriesProvider.future,
@@ -45,6 +46,7 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
               filePath: target.localPath,
               expectedChecksum: source.checksum,
             );
+            final now = DateTime.now();
             final adopted = ModelRegistryEntry(
               id: catalogEntry.id,
               type: catalogEntry.type,
@@ -58,11 +60,28 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
               localPath: target.localPath,
               checksum: verifiedChecksum,
               enabled: true,
-              installedAt: DateTime.now(),
+              installedAt: now,
               filePresent: true,
               integrityStatus: ModelIntegrityStatus.valid,
             );
-            await repository.save(adopted);
+            await lifecycleStore.commitInstallation(
+              registryEntry: adopted,
+              completedTasks: <ModelDownloadTask>[
+                ModelDownloadTask(
+                  id: _adoptedDownloadTaskId(catalogEntry.id, source.id),
+                  modelId: catalogEntry.id,
+                  sourceId: source.id,
+                  status: ModelDownloadStatus.completed,
+                  totalBytes: target.existingBytes,
+                  downloadedBytes: target.existingBytes,
+                  averageSpeed: null,
+                  errorMessage: null,
+                  resumable: true,
+                  createdAt: now,
+                  updatedAt: now,
+                ),
+              ],
+            );
             entriesById[adopted.id] = adopted;
             break;
           } catch (_) {
@@ -119,6 +138,10 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
     },
   );
 });
+
+String _adoptedDownloadTaskId(String modelId, String sourceId) {
+  return 'adopted:$modelId:$sourceId';
+}
 
 final embeddingRuntimeStatesProvider =
     FutureProvider<Map<String, EmbeddingEngineState>>((ref) {
