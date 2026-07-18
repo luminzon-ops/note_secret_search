@@ -19,21 +19,21 @@
 
 ## Tasks
 
-- [ ] Pin `com.lambdapioneer.argon2kt:argon2kt:1.6.0` and `pointycastle: 4.0.0`.
-- [ ] Add JVM tests for exact Argon2id parameters, wrong PIN, envelope tampering, PIN replacement/removal, threshold behavior, process restart, reboot, and clock rollback.
-- [ ] Verify the native tests fail before implementation.
-- [ ] Implement native PIN KEK derivation on a controlled worker and clear mutable PIN, KEK, and DEK buffers in `finally`.
-- [ ] Implement persistent five-failure/60-second throttling using elapsed time, boot count, and wall time.
-- [ ] Extend the native channel with `unlockWithPin`, `configurePin`, and `removePin`.
-- [ ] Add Dart tests defining the `NSSF` binary layout, contextual AAD, tamper rejection, null/empty semantics, and zeroization.
-- [ ] Verify the Dart tests fail before implementation.
-- [ ] Implement `DatabaseSessionKeys` with idempotent `clear()` and separate database/field key ownership.
-- [ ] Implement field AES-256-GCM with 12-byte random nonces, 16-byte tags, strict parsing, and no whitespace trimming.
-- [ ] Change the crypto interface to require table, row ID, and column context.
-- [ ] Convert secret, note, provider, sync-account, and app-setting field paths; add migration-only legacy UTF-8 decoding.
-- [ ] Remove plaintext PIN save/verify/has methods from SharedPreferences and make native state authoritative.
-- [ ] Run focused native, crypto, secret, note, provider, search, and widget tests.
-- [ ] Commit with `feat: add pin envelopes and authenticated field encryption`.
+- [x] Pin `com.lambdapioneer.argon2kt:argon2kt:1.6.0` and `pointycastle: 4.0.0`.
+- [x] Add JVM tests for exact Argon2id parameters, wrong PIN, envelope tampering, PIN replacement/removal, threshold behavior, process restart, reboot, and clock rollback.
+- [x] Verify the native tests fail before implementation.
+- [x] Implement native PIN KEK derivation on a controlled worker and clear mutable PIN, KEK, and DEK buffers in `finally`.
+- [x] Implement persistent five-failure/60-second throttling using elapsed time, boot count, and wall time.
+- [x] Extend the native channel with `unlockWithPin`, `configurePin`, and `removePin`.
+- [x] Add Dart tests defining the `NSSF` binary layout, contextual AAD, tamper rejection, null/empty semantics, and zeroization.
+- [x] Verify the Dart tests fail before implementation.
+- [x] Implement `DatabaseSessionKeys` with idempotent `clear()` and separate database/field key ownership.
+- [x] Implement field AES-256-GCM with 12-byte random nonces, 16-byte tags, strict parsing, and no whitespace trimming.
+- [x] Change the crypto interface to require table, row ID, and column context.
+- [x] Convert secret, note, provider, sync-account, and app-setting field paths; add migration-only legacy UTF-8 decoding.
+- [x] Remove plaintext PIN save/verify/has methods from SharedPreferences and make native state authoritative.
+- [x] Run focused native, crypto, secret, note, provider, search, and widget tests.
+- [x] Commit with `feat: add pin envelopes and authenticated field encryption`.
 
 ## Gate
 

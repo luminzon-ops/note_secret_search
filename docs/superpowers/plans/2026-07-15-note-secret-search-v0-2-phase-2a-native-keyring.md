@@ -19,19 +19,19 @@
 
 ## Tasks
 
-- [ ] Add JVM tests defining keyset parsing, AES-GCM envelope AAD, HKDF vectors, StrongBox fallback, alias loss, corruption, and atomic write failure.
-- [ ] Run `.\gradlew.bat :app:testDebugUnitTest --tests "*SecurityKey*" --no-daemon` and confirm the new tests fail because the modules do not exist.
-- [ ] Implement typed key IDs, envelope metadata, security levels, and sanitized native error codes.
-- [ ] Implement `AtomicFileSecurityEnvelopeStore` in `noBackupFilesDir/security/keyset-v2.json`; validate every field and reject unknown algorithms or malformed lengths.
-- [ ] Implement Android Keystore AES-256-GCM key generation with StrongBox request on API 28+ and a narrowly scoped fallback.
-- [ ] Implement API-30+ combined authentication-per-use unwrap and API-24-29 device-credential plus optional biometric envelopes.
-- [ ] Implement master-DEK generation and HKDF labels `note-secret-search/sqlcipher/v1` and `note-secret-search/field/v1`.
-- [ ] Add `getSecurityState`, `provisionWithSystemAuth`, `unlockWithSystemAuth`, and `lock` MethodChannel handlers.
-- [ ] Make repeated biometric mismatch callbacks non-terminal; map cancellation, lockout, missing credential, invalidation, and storage failures to stable codes.
-- [ ] Add Dart types `NativeSecurityState`, `NativeUnlockResult`, `KeySecurityLevel`, and `NativeSecurityException`; reject malformed channel payloads.
-- [ ] Run focused JVM and Dart bridge tests.
-- [ ] Run existing Phase-1 native security and sensitive-log policy tests.
-- [ ] Commit with `feat: add authenticated native security keyring`.
+- [x] Add JVM tests defining keyset parsing, AES-GCM envelope AAD, HKDF vectors, StrongBox fallback, alias loss, corruption, and atomic write failure.
+- [x] Run `.\gradlew.bat :app:testDebugUnitTest --tests "*SecurityKey*" --no-daemon` and confirm the new tests fail because the modules do not exist.
+- [x] Implement typed key IDs, envelope metadata, security levels, and sanitized native error codes.
+- [x] Implement `AtomicFileSecurityEnvelopeStore` in `noBackupFilesDir/security/keyset-v2.json`; validate every field and reject unknown algorithms or malformed lengths.
+- [x] Implement Android Keystore AES-256-GCM key generation with StrongBox request on API 28+ and a narrowly scoped fallback.
+- [x] Implement API-30+ combined authentication-per-use unwrap and API-24-29 device-credential plus optional biometric envelopes.
+- [x] Implement master-DEK generation and HKDF labels `note-secret-search/sqlcipher/v1` and `note-secret-search/field/v1`.
+- [x] Add `getSecurityState`, `provisionWithSystemAuth`, `unlockWithSystemAuth`, and `lock` MethodChannel handlers.
+- [x] Make repeated biometric mismatch callbacks non-terminal; map cancellation, lockout, missing credential, invalidation, and storage failures to stable codes.
+- [x] Add Dart types `NativeSecurityState`, `NativeUnlockResult`, `KeySecurityLevel`, and `NativeSecurityException`; reject malformed channel payloads.
+- [x] Run focused JVM and Dart bridge tests.
+- [x] Run existing Phase-1 native security and sensitive-log policy tests.
+- [x] Commit with `feat: add authenticated native security keyring`.
 
 ## Gate
 
