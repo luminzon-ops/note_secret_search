@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_manager.dart';
 import 'package:note_secret_search/core/storage/database/sqlcipher_database.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -24,8 +25,10 @@ void main() {
               required path,
               required password,
               required version,
+              required onConfigure,
               required onCreate,
               required onUpgrade,
+              required onDowngrade,
             }) async {
               openerCalled = true;
               throw StateError('must not open');
@@ -59,8 +62,10 @@ void main() {
             required path,
             required password,
             required version,
+            required onConfigure,
             required onCreate,
             required onUpgrade,
+            required onDowngrade,
           }) async {
             expect(database.state.status, DatabaseLifecycleStatus.opening);
             openedPassword = password;
@@ -68,8 +73,10 @@ void main() {
               inMemoryDatabasePath,
               options: OpenDatabaseOptions(
                 version: version,
+                onConfigure: onConfigure,
                 onCreate: onCreate,
                 onUpgrade: onUpgrade,
+                onDowngrade: onDowngrade,
               ),
             );
           },
@@ -114,8 +121,10 @@ void main() {
             required path,
             required password,
             required version,
+            required onConfigure,
             required onCreate,
             required onUpgrade,
+            required onDowngrade,
           }) async {
             throw StateError('SENTINEL_DATABASE_PATH');
           },
@@ -148,15 +157,19 @@ void main() {
             required path,
             required password,
             required version,
+            required onConfigure,
             required onCreate,
             required onUpgrade,
+            required onDowngrade,
           }) {
             return databaseFactoryFfi.openDatabase(
               inMemoryDatabasePath,
               options: OpenDatabaseOptions(
                 version: version,
+                onConfigure: onConfigure,
                 onCreate: onCreate,
                 onUpgrade: onUpgrade,
+                onDowngrade: onDowngrade,
               ),
             );
           },
@@ -202,8 +215,10 @@ void main() {
             required path,
             required password,
             required version,
+            required onConfigure,
             required onCreate,
             required onUpgrade,
+            required onDowngrade,
           }) async {
             openerStarted.complete();
             await releaseOpener.future;
@@ -211,8 +226,10 @@ void main() {
               inMemoryDatabasePath,
               options: OpenDatabaseOptions(
                 version: version,
+                onConfigure: onConfigure,
                 onCreate: onCreate,
                 onUpgrade: onUpgrade,
+                onDowngrade: onDowngrade,
               ),
             );
           },
@@ -260,15 +277,19 @@ void main() {
               required path,
               required password,
               required version,
+              required onConfigure,
               required onCreate,
               required onUpgrade,
+              required onDowngrade,
             }) {
               return databaseFactoryFfi.openDatabase(
                 inMemoryDatabasePath,
                 options: OpenDatabaseOptions(
                   version: version,
+                  onConfigure: onConfigure,
                   onCreate: onCreate,
                   onUpgrade: onUpgrade,
+                  onDowngrade: onDowngrade,
                 ),
               );
             },
@@ -306,11 +327,14 @@ void main() {
             required path,
             required password,
             required version,
+            required onConfigure,
             required onCreate,
             required onUpgrade,
+            required onDowngrade,
           }) async {
             return connection;
           },
+      schemaManager: const _NoopSchemaController(),
     );
     addTearDown(keys.clear);
     await database.open(keys);
@@ -337,6 +361,51 @@ void main() {
     expect(connection.closeCalls, 2);
     expect(database.state.status, DatabaseLifecycleStatus.locked);
   });
+
+  for (final code in const <String>[
+    'database_schema_invalid',
+    'database_schema_unsupported',
+  ]) {
+    test('publishes $code without exposing schema internals', () async {
+      final keys = _sessionKeys();
+      final connection = _CloseControlledDatabase(failuresBeforeSuccess: 0);
+      final database = SqlCipherAppDatabase(
+        logger: const AppLogger(),
+        databasePathProvider: () async => 'unused',
+        schemaManager: _ThrowingSchemaController(code),
+        openConnection:
+            ({
+              required path,
+              required password,
+              required version,
+              required onConfigure,
+              required onCreate,
+              required onUpgrade,
+              required onDowngrade,
+            }) async {
+              return connection;
+            },
+      );
+      addTearDown(keys.clear);
+
+      await expectLater(
+        database.open(keys),
+        throwsA(
+          isA<DatabaseLifecycleException>()
+              .having((error) => error.code, 'code', code)
+              .having(
+                (error) => error.toString(),
+                'sanitized message',
+                isNot(contains('SENTINEL_SCHEMA_DETAIL')),
+              ),
+        ),
+      );
+
+      expect(database.state.status, DatabaseLifecycleStatus.error);
+      expect(database.state.errorCode, code);
+      expect(connection.closeCalls, 1);
+    });
+  }
 }
 
 const _databaseKeyHex =
@@ -384,4 +453,45 @@ class _CloseControlledDatabase implements Database {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _NoopSchemaController implements DatabaseSchemaController {
+  const _NoopSchemaController();
+
+  @override
+  int get version => DatabaseSchemaManager.latestVersion;
+
+  @override
+  Future<void> configure(Database database) async {}
+
+  @override
+  Future<void> create(Database database, int version) async {}
+
+  @override
+  Future<void> upgrade(
+    Database database,
+    int oldVersion,
+    int newVersion,
+  ) async {}
+
+  @override
+  Future<void> downgrade(
+    Database database,
+    int oldVersion,
+    int newVersion,
+  ) async {}
+
+  @override
+  Future<void> validate(Database database) async {}
+}
+
+class _ThrowingSchemaController extends _NoopSchemaController {
+  const _ThrowingSchemaController(this.code);
+
+  final String code;
+
+  @override
+  Future<void> validate(Database database) {
+    throw DatabaseSchemaException(code);
+  }
 }

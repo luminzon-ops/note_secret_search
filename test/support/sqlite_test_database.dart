@@ -1,14 +1,23 @@
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
-import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_manager.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 Future<TestAppDatabase> openTestAppDatabase() async {
   sqfliteFfiInit();
-  final database = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
-  for (final statement in DatabaseSchema.createStatements) {
-    await database.execute(statement);
-  }
+  final manager = DatabaseSchemaManager();
+  final database = await databaseFactoryFfi.openDatabase(
+    inMemoryDatabasePath,
+    options: OpenDatabaseOptions(
+      version: manager.version,
+      onConfigure: manager.configure,
+      onCreate: manager.create,
+      onUpgrade: manager.upgrade,
+      onDowngrade: manager.downgrade,
+      singleInstance: false,
+    ),
+  );
+  await manager.validate(database);
   return TestAppDatabase(database);
 }
 

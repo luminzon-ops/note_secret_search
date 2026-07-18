@@ -84,7 +84,7 @@ class LegacyDatabaseMigrator implements LegacyDatabaseMigrationRunner {
        _now = now ?? DateTime.now,
        _legacyDecoder = legacyDecoder;
 
-  static const targetSchemaVersion = 4;
+  static const targetSchemaVersion = FrozenDatabaseSchemaV4.version;
 
   final MigrationDatabaseFactory _databaseFactory;
   final CryptoService _cryptoService;

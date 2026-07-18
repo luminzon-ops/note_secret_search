@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
-import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_manager.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
@@ -13,8 +13,10 @@ typedef SqlCipherDatabaseOpener =
       required String path,
       required String password,
       required int version,
+      required OnDatabaseConfigureFn onConfigure,
       required OnDatabaseCreateFn onCreate,
       required OnDatabaseVersionChangeFn onUpgrade,
+      required OnDatabaseVersionChangeFn onDowngrade,
     });
 
 class SqlCipherAppDatabase implements AppDatabase {
@@ -22,15 +24,18 @@ class SqlCipherAppDatabase implements AppDatabase {
     required AppLogger logger,
     DatabasePathProvider? databasePathProvider,
     SqlCipherDatabaseOpener? openConnection,
+    DatabaseSchemaController? schemaManager,
     Duration closeTimeout = const Duration(seconds: 5),
   }) : _logger = logger,
        _databasePathProvider = databasePathProvider ?? getDatabasesPath,
        _openConnection = openConnection ?? _openSqlCipherDatabase,
+       _schemaManager = schemaManager ?? DatabaseSchemaManager(),
        _closeTimeout = closeTimeout;
 
   final AppLogger _logger;
   final DatabasePathProvider _databasePathProvider;
   final SqlCipherDatabaseOpener _openConnection;
+  final DatabaseSchemaController _schemaManager;
   final Duration _closeTimeout;
   final StreamController<DatabaseLifecycleState> _states =
       StreamController<DatabaseLifecycleState>.broadcast(sync: true);
@@ -43,7 +48,6 @@ class SqlCipherAppDatabase implements AppDatabase {
   int _generation = 0;
 
   static const _databaseName = 'note_secret_search.db';
-  static const _databaseVersion = 4;
 
   @override
   DatabaseLifecycleState get state => _state;
@@ -84,11 +88,13 @@ class SqlCipherAppDatabase implements AppDatabase {
       connection = await _openConnection(
         path: path,
         password: password,
-        version: _databaseVersion,
-        onCreate: _createSchema,
-        onUpgrade: _upgradeSchema,
+        version: _schemaManager.version,
+        onConfigure: _schemaManager.configure,
+        onCreate: _schemaManager.create,
+        onUpgrade: _schemaManager.upgrade,
+        onDowngrade: _schemaManager.downgrade,
       );
-      await _ensureDefaultVault(connection);
+      await _schemaManager.validate(connection);
       if (!_canPublishOpen(generation)) {
         await _closeUnpublished(connection);
         connection = null;
@@ -102,6 +108,22 @@ class SqlCipherAppDatabase implements AppDatabase {
         await _closeUnpublished(connection);
       }
       rethrow;
+    } on DatabaseSchemaException catch (error, stackTrace) {
+      if (connection != null) {
+        await _closeUnpublished(connection);
+      }
+      if (!_canPublishOpen(generation)) {
+        throw const DatabaseAccessRevokedException();
+      }
+      _database = null;
+      _emit(
+        DatabaseLifecycleState(
+          status: DatabaseLifecycleStatus.error,
+          errorCode: error.code,
+        ),
+      );
+      _logger.error('sqlcipher_schema_validation_failed', error, stackTrace);
+      throw DatabaseLifecycleException(error.code);
     } catch (error, stackTrace) {
       if (connection != null) {
         await _closeUnpublished(connection);
@@ -165,46 +187,6 @@ class SqlCipherAppDatabase implements AppDatabase {
   void _emit(DatabaseLifecycleState next) {
     _state = next;
     _states.add(next);
-  }
-
-  Future<void> _createSchema(Database database, int version) async {
-    final batch = database.batch();
-    for (final statement in DatabaseMigrations.initial()) {
-      batch.execute(statement);
-    }
-    await batch.commit(noResult: true);
-  }
-
-  Future<void> _upgradeSchema(
-    Database database,
-    int oldVersion,
-    int newVersion,
-  ) async {
-    for (var version = oldVersion + 1; version <= newVersion; version++) {
-      final statements = DatabaseMigrations.forVersion(version);
-      if (statements.isEmpty) {
-        continue;
-      }
-
-      final batch = database.batch();
-      for (final statement in statements) {
-        batch.execute(statement);
-      }
-      await batch.commit(noResult: true);
-    }
-  }
-
-  Future<void> _ensureDefaultVault(Database database) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await database.insert(DatabaseSchema.vaults, <String, Object?>{
-      'id': 'default',
-      'name': '默认保险库',
-      'description': '首版默认保险库',
-      'is_default': 1,
-      'encryption_version': 1,
-      'created_at': now,
-      'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   void _throwIfAccessRevoked(Database database, int generation) {
@@ -294,14 +276,18 @@ Future<Database> _openSqlCipherDatabase({
   required String path,
   required String password,
   required int version,
+  required OnDatabaseConfigureFn onConfigure,
   required OnDatabaseCreateFn onCreate,
   required OnDatabaseVersionChangeFn onUpgrade,
+  required OnDatabaseVersionChangeFn onDowngrade,
 }) {
   return openDatabase(
     path,
     password: password,
     version: version,
+    onConfigure: onConfigure,
     onCreate: onCreate,
     onUpgrade: onUpgrade,
+    onDowngrade: onDowngrade,
   );
 }

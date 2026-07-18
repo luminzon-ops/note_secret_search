@@ -1,5 +1,4 @@
 import 'package:note_secret_search/core/security/database_session_keys.dart';
-import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 enum DatabaseLifecycleStatus { locked, opening, open, closing, error }
@@ -49,19 +48,4 @@ abstract interface class AppDatabase {
   Future<T> run<T>(Future<T> Function(Database database) operation);
 
   Future<void> close();
-}
-
-abstract final class DatabaseMigrations {
-  static List<String> initial() => DatabaseSchema.createStatements;
-
-  static List<String> forVersion(int version) {
-    return switch (version) {
-      2 => DatabaseSchema.chatPersistenceStatements,
-      3 => const <String>[
-        'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
-      ],
-      4 => const <String>[DatabaseSchema.securityMetadataCreateStatement],
-      _ => const <String>[],
-    };
-  }
 }

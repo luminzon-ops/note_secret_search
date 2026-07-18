@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/storage/migration/frozen_database_schema_v4.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -92,6 +94,45 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  test('phase2MigratedV4 is produced by the real copier contract', () async {
+    final fixture = await createLegacyDatabaseFixture(
+      LegacyFixtureVersion.phase2MigratedV4,
+    );
+    addTearDown(fixture.dispose);
+    final database = await databaseFactoryFfi.openDatabase(fixture.sourcePath);
+    addTearDown(database.close);
+
+    expect(await database.query('embedding_chunks'), isEmpty);
+    expect(await database.query('download_tasks'), isEmpty);
+    expect(await database.query('model_catalog_entries'), isEmpty);
+    expect(await database.query('security_metadata'), hasLength(1));
+    final secret = (await database.query(
+      'secret_items',
+      where: 'id = ?',
+      whereArgs: const <Object>['secret-1'],
+    )).single;
+    expect(secret['username_ciphertext'], isNot(utf8.encode('alice')));
+  });
+
+  test('freshV4 uses canonical current domain values', () async {
+    final fixture = await createLegacyDatabaseFixture(
+      LegacyFixtureVersion.freshV4,
+    );
+    addTearDown(fixture.dispose);
+    final database = await databaseFactoryFfi.openDatabase(fixture.sourcePath);
+    addTearDown(database.close);
+
+    final model = (await database.query('model_registry')).single;
+    expect(jsonDecode(model['artifact_paths_json']! as String), <Object?>[
+      <String, Object?>{'role': 'model', 'local_path': '/models/legacy.onnx'},
+    ]);
+    expect(
+      (await database.query('download_tasks')).single['status'],
+      'downloading',
+    );
+    expect((await database.query('chat_sessions')).single['mode'], 'freeChat');
   });
 }
 

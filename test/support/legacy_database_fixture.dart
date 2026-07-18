@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:note_secret_search/core/security/database_session_keys.dart';
+import 'package:note_secret_search/core/security/field_crypto.dart';
+import 'package:note_secret_search/core/storage/migration/legacy_database_migrator.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -41,13 +44,10 @@ Future<LegacyDatabaseFixture> createLegacyDatabaseFixture(
   );
   final sourcePath = p.join(directory.path, 'note_secret_search.db');
   final pendingPath = p.join(directory.path, 'pending.db');
-  final database = await databaseFactoryFfi.openDatabase(sourcePath);
-  try {
-    await createHistoricalDatabaseSchema(database, version);
-    await _insertLegacyRows(database, version);
-    await database.execute('PRAGMA user_version = ${version.schemaVersion}');
-  } finally {
-    await database.close();
+  if (version == LegacyFixtureVersion.phase2MigratedV4) {
+    await _createPhase2MigratedDatabase(directory, sourcePath);
+  } else {
+    await _createHistoricalDatabaseFile(sourcePath, version);
   }
 
   return LegacyDatabaseFixture(
@@ -55,27 +55,74 @@ Future<LegacyDatabaseFixture> createLegacyDatabaseFixture(
     sourcePath: sourcePath,
     pendingPath: pendingPath,
     version: version,
-    expectedPlaintext: const <String, String?>{
-      'secret-1.username_ciphertext': 'alice',
-      'secret-1.password_ciphertext': 'correct horse battery staple',
-      'secret-1.website_url_ciphertext': 'https://example.test/login',
-      'secret-1.note_ciphertext': 'primary secret note',
-      'secret-deleted.username_ciphertext': null,
-      'secret-deleted.password_ciphertext': 'deleted password',
-      'secret-deleted.website_url_ciphertext': '',
-      'secret-deleted.note_ciphertext': null,
-      'note-1.content_ciphertext': '完整的旧版笔记正文',
-      'note-1.summary_ciphertext': '旧版摘要',
-      'note-deleted.content_ciphertext': 'soft deleted note',
-      'note-deleted.summary_ciphertext': null,
-      'provider-1.encrypted_config':
-          '{"endpoint":"https://api.example.test","apiKey":"provider-secret"}',
-      'sync-1.encrypted_config':
-          '{"server":"https://sync.example.test","token":"sync-secret"}',
-      'search.scope.value_ciphertext': 'secret,note',
-    },
+    expectedPlaintext: _expectedPlaintext,
   );
 }
+
+Future<void> _createHistoricalDatabaseFile(
+  String path,
+  LegacyFixtureVersion version,
+) async {
+  final database = await databaseFactoryFfi.openDatabase(path);
+  try {
+    await createHistoricalDatabaseSchema(database, version);
+    await _insertLegacyRows(database, version);
+    await database.execute('PRAGMA user_version = ${version.schemaVersion}');
+  } finally {
+    await database.close();
+  }
+}
+
+Future<void> _createPhase2MigratedDatabase(
+  Directory directory,
+  String targetPath,
+) async {
+  final legacyPath = p.join(directory.path, 'phase2_source_v3.db');
+  await _createHistoricalDatabaseFile(legacyPath, LegacyFixtureVersion.freshV3);
+  final keys = DatabaseSessionKeys(
+    databaseKey: Uint8List.fromList(List<int>.generate(32, (index) => index)),
+    fieldKey: Uint8List.fromList(
+      List<int>.generate(32, (index) => 0x80 + index),
+    ),
+  );
+  final keyStore = DatabaseSessionKeyStore()..replace(keys);
+  try {
+    final migrator = LegacyDatabaseMigrator(
+      databaseFactory: const _FixtureMigrationDatabaseFactory(),
+      cryptoService: AesGcmFieldCrypto(sessionKeyStore: keyStore),
+      now: () => DateTime.fromMillisecondsSinceEpoch(1_700_000_000_013),
+    );
+    await migrator.migrate(
+      sourcePath: legacyPath,
+      pendingPath: targetPath,
+      legacyPassword: 'legacy-password',
+      databasePassword: 'database-password',
+      keyId: '123e4567-e89b-42d3-a456-426614174000',
+    );
+  } finally {
+    keyStore.clear();
+  }
+}
+
+const _expectedPlaintext = <String, String?>{
+  'secret-1.username_ciphertext': 'alice',
+  'secret-1.password_ciphertext': 'correct horse battery staple',
+  'secret-1.website_url_ciphertext': 'https://example.test/login',
+  'secret-1.note_ciphertext': 'primary secret note',
+  'secret-deleted.username_ciphertext': null,
+  'secret-deleted.password_ciphertext': 'deleted password',
+  'secret-deleted.website_url_ciphertext': '',
+  'secret-deleted.note_ciphertext': null,
+  'note-1.content_ciphertext': '完整的旧版笔记正文',
+  'note-1.summary_ciphertext': '旧版摘要',
+  'note-deleted.content_ciphertext': 'soft deleted note',
+  'note-deleted.summary_ciphertext': null,
+  'provider-1.encrypted_config':
+      '{"endpoint":"https://api.example.test","apiKey":"provider-secret"}',
+  'sync-1.encrypted_config':
+      '{"server":"https://sync.example.test","token":"sync-secret"}',
+  'search.scope.value_ciphertext': 'secret,note',
+};
 
 Future<void> _insertLegacyRows(
   Database database,
@@ -203,7 +250,7 @@ Future<void> _insertLegacyRows(
     'id': 'download-1',
     'model_id': 'model-1',
     'source_id': 'source-1',
-    'status': 'running',
+    'status': version.schemaVersion == 4 ? 'downloading' : 'running',
     'total_bytes': 10,
     'downloaded_bytes': 5,
     'average_speed': 2.5,
@@ -241,7 +288,7 @@ Future<void> _insertLegacyRows(
   if (version != LegacyFixtureVersion.v1) {
     await database.insert('chat_sessions', <String, Object?>{
       'id': 'chat-1',
-      'mode': 'free',
+      'mode': 'freeChat',
       'title': 'Legacy chat',
       'allow_private_context': 0,
       'last_model_id': 'model-1',
@@ -260,15 +307,6 @@ Future<void> _insertLegacyRows(
       'manual_context_item_ids_json': '[]',
       'related_source_ids_json': '[]',
       'created_at': createdAt,
-    });
-  }
-  if (version == LegacyFixtureVersion.phase2MigratedV4) {
-    await database.insert('security_metadata', <String, Object?>{
-      'key_id': '123e4567-e89b-42d3-a456-426614174000',
-      'source_schema_version': 3,
-      'field_envelope_version': 1,
-      'migration_state': 'validated',
-      'migrated_at': createdAt + 13,
     });
   }
 }
@@ -295,19 +333,59 @@ Future<void> _insertModelRegistry(
   };
   if (version.schemaVersion >= 3) {
     row['artifact_paths_json'] = version == LegacyFixtureVersion.freshV4
-        ? '[{"role":"model","path":"/models/legacy.onnx"}]'
+        ? '[{"role":"model","local_path":"/models/legacy.onnx"}]'
         : '["/models/legacy.onnx"]';
   }
   if (version == LegacyFixtureVersion.freshV3 ||
-      version == LegacyFixtureVersion.freshV4 ||
-      version == LegacyFixtureVersion.phase2MigratedV4) {
-    row['integrity_status'] = version == LegacyFixtureVersion.phase2MigratedV4
-        ? 'unknown'
-        : 'verified';
+      version == LegacyFixtureVersion.freshV4) {
+    row['integrity_status'] = 'verified';
   }
   await database.insert('model_registry', row);
 }
 
 Uint8List _legacyBytes(String value) {
   return Uint8List.fromList(utf8.encode(value));
+}
+
+class _FixtureMigrationDatabaseFactory implements MigrationDatabaseFactory {
+  const _FixtureMigrationDatabaseFactory();
+
+  @override
+  Future<Database> openLegacyForCheckpoint({
+    required String path,
+    required String password,
+  }) {
+    return databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(readOnly: false, singleInstance: false),
+    );
+  }
+
+  @override
+  Future<Database> openLegacy({
+    required String path,
+    required String password,
+  }) {
+    return databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+  }
+
+  @override
+  Future<Database> openPending({
+    required String path,
+    required String password,
+    required int version,
+    required OnDatabaseCreateFn onCreate,
+  }) {
+    return databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: version,
+        onCreate: onCreate,
+        singleInstance: false,
+      ),
+    );
+  }
 }
