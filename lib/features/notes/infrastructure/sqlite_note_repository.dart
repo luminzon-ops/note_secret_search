@@ -1,15 +1,25 @@
 import 'package:note_secret_search/core/security/field_envelope.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteNoteRepository implements NoteRepository {
-  SqliteNoteRepository({required AppDatabase database}) : _database = database;
+  SqliteNoteRepository({
+    required AppDatabase database,
+    ItemTagStore? tagStore,
+    int Function()? nowMilliseconds,
+  }) : _database = database,
+       _tagStore = tagStore ?? SqliteItemTagStore(),
+       _nowMilliseconds =
+           nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   final AppDatabase _database;
+  final ItemTagStore _tagStore;
+  final int Function() _nowMilliseconds;
 
   @override
   Future<NoteItem?> getById(String id) {
@@ -51,41 +61,89 @@ class SqliteNoteRepository implements NoteRepository {
   @override
   Future<void> save(NoteItem item) async {
     _validateCiphertexts(item);
-    await _database.run((db) async {
-      await db.transaction((txn) async {
-        await txn.insert(DatabaseSchema.noteItems, <String, Object?>{
-          'id': item.id,
-          'vault_id': item.vaultId,
-          'title': item.title,
-          'content_ciphertext': item.contentCiphertext,
-          'summary_ciphertext': item.summaryCacheCiphertext,
-          'category_id': item.categoryId,
-          'favorite': item.favorite ? 1 : 0,
-          'created_at': item.createdAt.millisecondsSinceEpoch,
-          'updated_at': item.updatedAt.millisecondsSinceEpoch,
-          'deleted_at': item.deletedAt?.millisecondsSinceEpoch,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-
-        await _replaceTags(txn, item.id, item.vaultId, item.tags);
-        await txn.delete(
-          DatabaseSchema.embeddingChunks,
-          where: 'source_id = ? AND source_type = ?',
-          whereArgs: <Object>[item.id, SearchSourceType.note.name],
-        );
-      });
+    await _database.transaction((executor) async {
+      await executor.rawInsert(
+        '''
+        INSERT INTO ${DatabaseSchema.noteItems} (
+          id,
+          vault_id,
+          title,
+          content_ciphertext,
+          summary_ciphertext,
+          category_id,
+          favorite,
+          created_at,
+          updated_at,
+          deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          vault_id = excluded.vault_id,
+          title = excluded.title,
+          content_ciphertext = excluded.content_ciphertext,
+          summary_ciphertext = excluded.summary_ciphertext,
+          category_id = excluded.category_id,
+          favorite = excluded.favorite,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          deleted_at = excluded.deleted_at
+        ''',
+        <Object?>[
+          item.id,
+          item.vaultId,
+          item.title,
+          item.contentCiphertext,
+          item.summaryCacheCiphertext,
+          item.categoryId,
+          item.favorite ? 1 : 0,
+          item.createdAt.millisecondsSinceEpoch,
+          item.updatedAt.millisecondsSinceEpoch,
+          item.deletedAt?.millisecondsSinceEpoch,
+        ],
+      );
+      await _tagStore.replaceTags(
+        executor,
+        itemId: item.id,
+        itemType: ItemTagType.note,
+        vaultId: item.vaultId,
+        tags: item.tags,
+      );
+      await executor.delete(
+        DatabaseSchema.embeddingChunks,
+        where: 'source_id = ? AND source_type = ?',
+        whereArgs: <Object>[item.id, SearchSourceType.note.name],
+      );
     });
   }
 
   @override
   Future<void> softDelete(String id) {
-    return _database.run((db) async {
-      await db.update(
+    return _database.transaction((executor) async {
+      final rows = await executor.query(
         DatabaseSchema.noteItems,
-        <String, Object?>{'deleted_at': DateTime.now().millisecondsSinceEpoch},
+        columns: const <String>['vault_id', 'deleted_at'],
         where: 'id = ?',
         whereArgs: <Object>[id],
+        limit: 1,
       );
-      await db.delete(
+      if (rows.isEmpty) {
+        return;
+      }
+      final vaultId = rows.single['vault_id']! as String;
+      if (rows.single['deleted_at'] == null) {
+        await executor.update(
+          DatabaseSchema.noteItems,
+          <String, Object?>{'deleted_at': _nowMilliseconds()},
+          where: 'id = ?',
+          whereArgs: <Object>[id],
+        );
+      }
+      await _tagStore.unlinkItem(
+        executor,
+        itemId: id,
+        itemType: ItemTagType.note,
+        vaultId: vaultId,
+      );
+      await executor.delete(
         DatabaseSchema.embeddingChunks,
         where: 'source_id = ? AND source_type = ?',
         whereArgs: <Object>[id, SearchSourceType.note.name],
@@ -106,35 +164,6 @@ class SqliteNoteRepository implements NoteRepository {
     );
 
     return rows.map((row) => row['name']! as String).toList(growable: false);
-  }
-
-  Future<void> _replaceTags(
-    DatabaseExecutor db,
-    String itemId,
-    String vaultId,
-    List<String> tags,
-  ) async {
-    await db.delete(
-      DatabaseSchema.itemTags,
-      where: 'item_id = ? AND item_type = ?',
-      whereArgs: <Object>[itemId, 'note'],
-    );
-
-    for (final tagName
-        in tags.map((tag) => tag.trim()).where((tag) => tag.isNotEmpty)) {
-      final tagId = '$vaultId:$tagName';
-      await db.insert(DatabaseSchema.tags, <String, Object?>{
-        'id': tagId,
-        'vault_id': vaultId,
-        'name': tagName,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      await db.insert(DatabaseSchema.itemTags, <String, Object?>{
-        'item_id': itemId,
-        'item_type': 'note',
-        'tag_id': tagId,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
-    }
   }
 
   NoteItem _mapNote(Map<String, Object?> row, List<String> tags) {

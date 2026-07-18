@@ -4,10 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/field_envelope.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.dart';
 import 'package:note_secret_search/features/secrets/application/secret_form_mapper.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
+import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 import '../../../support/security_test_fixture.dart';
 import '../../../support/sqlite_test_database.dart';
@@ -112,6 +114,193 @@ void main() {
       throwsA(isA<DatabaseAccessRevokedException>()),
     );
   });
+
+  test('tag write failures roll back the item and embeddings', () async {
+    final original = SecretFormMapper.create(
+      vaultId: 'vault-1',
+      draft: const SecretDraft(
+        title: 'Original',
+        username: 'alice',
+        password: 'secret',
+        websiteUrl: '',
+        note: '',
+        tags: <String>['old'],
+        categoryId: null,
+        favorite: false,
+      ),
+      cryptoService: security.crypto,
+    );
+    await repository.save(original);
+    await _insertEmbedding(database, original.id, 'secret');
+    final failingRepository = SqliteSecretRepository(
+      database: database,
+      tagStore: const _FailingItemTagStore(failReplace: true),
+    );
+    final updated = SecretFormMapper.update(
+      previous: original,
+      draft: const SecretDraft(
+        title: 'Updated',
+        username: 'bob',
+        password: 'changed',
+        websiteUrl: '',
+        note: '',
+        tags: <String>['new'],
+        categoryId: null,
+        favorite: true,
+      ),
+      cryptoService: security.crypto,
+    );
+
+    await expectLater(failingRepository.save(updated), throwsStateError);
+
+    final restored = await repository.getById(original.id);
+    expect(restored?.title, original.title);
+    expect(restored?.tags, original.tags);
+    final embeddings = await database.run(
+      (db) => db.query(
+        DatabaseSchema.embeddingChunks,
+        where: 'source_id = ? AND source_type = ?',
+        whereArgs: <Object>[original.id, 'secret'],
+      ),
+    );
+    expect(embeddings, hasLength(1));
+  });
+
+  test(
+    'soft delete unlinks tags, preserves shared tags, and clears embeddings',
+    () async {
+      final lifecycleRepository = SqliteSecretRepository(
+        database: database,
+        nowMilliseconds: () => 1234,
+      );
+      final item = SecretFormMapper.create(
+        vaultId: 'vault-1',
+        draft: const SecretDraft(
+          title: 'Delete me',
+          username: 'alice',
+          password: 'secret',
+          websiteUrl: '',
+          note: '',
+          tags: <String>['shared', 'secret-only'],
+          categoryId: null,
+          favorite: false,
+        ),
+        cryptoService: security.crypto,
+      );
+      await lifecycleRepository.save(item);
+      final sharedTag = await database.run((db) async {
+        final row = (await db.query(
+          DatabaseSchema.tags,
+          columns: const <String>['id'],
+          where: 'vault_id = ? AND name = ? COLLATE NOCASE',
+          whereArgs: const <Object>['vault-1', 'shared'],
+        )).single;
+        return row['id']! as String;
+      });
+      await database.run((db) async {
+        await db.insert(DatabaseSchema.noteItems, <String, Object?>{
+          'id': 'note-shared',
+          'vault_id': 'vault-1',
+          'title': 'Shared owner',
+          'content_ciphertext': item.passwordCiphertext,
+          'favorite': 0,
+          'created_at': 1,
+          'updated_at': 1,
+        });
+        await db.insert(DatabaseSchema.itemTags, <String, Object?>{
+          'item_id': 'note-shared',
+          'item_type': 'note',
+          'tag_id': sharedTag,
+        });
+      });
+      await _insertEmbedding(database, item.id, 'secret');
+
+      await lifecycleRepository.softDelete(item.id);
+      await lifecycleRepository.softDelete(item.id);
+
+      final rawItem = await database.run(
+        (db) => db.query(
+          DatabaseSchema.secretItems,
+          columns: const <String>['deleted_at'],
+          where: 'id = ?',
+          whereArgs: <Object>[item.id],
+        ),
+      );
+      expect(rawItem.single['deleted_at'], 1234);
+      expect(await lifecycleRepository.getById(item.id), isNull);
+      expect(
+        await database.run(
+          (db) => db.query(
+            DatabaseSchema.itemTags,
+            where: 'item_id = ? AND item_type = ?',
+            whereArgs: <Object>[item.id, 'secret'],
+          ),
+        ),
+        isEmpty,
+      );
+      expect(
+        await database.run(
+          (db) => db.query(
+            DatabaseSchema.tags,
+            columns: const <String>['name'],
+            orderBy: 'name COLLATE NOCASE ASC',
+          ),
+        ),
+        const <Map<String, Object?>>[
+          <String, Object?>{'name': 'shared'},
+        ],
+      );
+      expect(
+        await database.run(
+          (db) => db.query(DatabaseSchema.embeddingChunks),
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test('soft delete failures roll back the tombstone and cleanup', () async {
+    final item = SecretFormMapper.create(
+      vaultId: 'vault-1',
+      draft: const SecretDraft(
+        title: 'Keep me',
+        username: 'alice',
+        password: 'secret',
+        websiteUrl: '',
+        note: '',
+        tags: <String>['old'],
+        categoryId: null,
+        favorite: false,
+      ),
+      cryptoService: security.crypto,
+    );
+    await repository.save(item);
+    await _insertEmbedding(database, item.id, 'secret');
+    final failingRepository = SqliteSecretRepository(
+      database: database,
+      tagStore: const _FailingItemTagStore(failUnlink: true),
+      nowMilliseconds: () => 1234,
+    );
+
+    await expectLater(failingRepository.softDelete(item.id), throwsStateError);
+
+    expect((await repository.getById(item.id))?.tags, item.tags);
+    final rawItem = await database.run(
+      (db) => db.query(
+        DatabaseSchema.secretItems,
+        columns: const <String>['deleted_at'],
+        where: 'id = ?',
+        whereArgs: <Object>[item.id],
+      ),
+    );
+    expect(rawItem.single['deleted_at'], isNull);
+    expect(
+      await database.run(
+        (db) => db.query(DatabaseSchema.embeddingChunks),
+      ),
+      hasLength(1),
+    );
+  });
 }
 
 SecretItem _legacySecret() {
@@ -144,4 +333,68 @@ Future<void> _insertTestVault(TestAppDatabase database) {
       'updated_at': 1,
     }),
   );
+}
+
+Future<void> _insertEmbedding(
+  TestAppDatabase database,
+  String sourceId,
+  String sourceType,
+) {
+  return database.run((db) async {
+    await db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
+      'id': 'model-1',
+      'type': 'embedding',
+      'provider': 'local',
+      'name': 'Test model',
+      'integrity_status': 'valid',
+      'enabled': 0,
+    });
+    await db.insert(DatabaseSchema.embeddingChunks, <String, Object?>{
+      'id': 'embedding-1',
+      'source_id': sourceId,
+      'source_type': sourceType,
+      'chunk_index': 0,
+      'plaintext_hash': 'hash',
+      'model_id': 'model-1',
+      'created_at': 1,
+      'updated_at': 1,
+    });
+  });
+}
+
+class _FailingItemTagStore implements ItemTagStore {
+  const _FailingItemTagStore({
+    this.failReplace = false,
+    this.failUnlink = false,
+  });
+
+  final bool failReplace;
+  final bool failUnlink;
+
+  @override
+  Future<void> replaceTags(
+    DatabaseExecutor executor, {
+    required String itemId,
+    required ItemTagType itemType,
+    required String vaultId,
+    required List<String> tags,
+  }) {
+    if (failReplace) {
+      throw StateError('injected_tag_failure');
+    }
+    return Future<void>.value();
+  }
+
+  @override
+  Future<void> unlinkItem(
+    DatabaseExecutor executor, {
+    required String itemId,
+    required ItemTagType itemType,
+    required String vaultId,
+  }) {
+    if (failUnlink) {
+      throw StateError('injected_tag_failure');
+    }
+    return Future<void>.value();
+  }
 }
