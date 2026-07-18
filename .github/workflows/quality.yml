@@ -39,6 +39,12 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
+      - name: Phase 3 migration gate
+        run: >
+          flutter test
+          test/core/storage/database
+          test/core/storage/migration
+
       - name: Dart tests
         run: flutter test
 
