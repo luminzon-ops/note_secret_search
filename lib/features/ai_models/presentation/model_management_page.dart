@@ -39,9 +39,6 @@ class ModelManagementPage extends ConsumerWidget {
           const SizedBox(height: 16),
           registryAsync.when(
             data: (entries) {
-              final supportedEntries = entries
-                  .where((entry) => entry.type != 'multimodal_llm')
-                  .toList(growable: false);
               final runtimeStates =
                   runtimeStatesAsync.valueOrNull ??
                   const <String, EmbeddingEngineState>{};
@@ -51,21 +48,21 @@ class ModelManagementPage extends ConsumerWidget {
               final activeLlmModelId = activeLlmAsync.valueOrNull?.id;
               return selectionAsync.when(
                 data: (selection) => _InstalledModelsCard(
-                  entries: supportedEntries,
+                  entries: entries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: selection.activeEmbeddingModelId,
                   activeLlmModelId: activeLlmModelId,
                 ),
                 loading: () => _InstalledModelsCard(
-                  entries: supportedEntries,
+                  entries: entries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: null,
                   activeLlmModelId: activeLlmModelId,
                 ),
                 error: (error, stackTrace) => _InstalledModelsCard(
-                  entries: supportedEntries,
+                  entries: entries,
                   runtimeStates: runtimeStates,
                   llmRuntimeStates: llmRuntimeStates,
                   activeEmbeddingModelId: null,
@@ -204,12 +201,16 @@ class _InstalledModelsCard extends ConsumerWidget {
                 builder: (context) {
                   final runtimeState = runtimeStates[entry.id];
                   final llmRuntimeState = llmRuntimeStates[entry.id];
-                  final isRuntimeReady = switch (entry.type) {
-                    'embedding' => runtimeState?.ready == true,
-                    'llm' => llmRuntimeState?.ready == true,
-                    _ => entry.isInstalled,
-                  };
-                  final isBroken = !isRuntimeReady || !entry.filePresent;
+                  final cleanupOnly = entry.type == 'multimodal_llm';
+                  final isRuntimeReady = !cleanupOnly &&
+                      switch (entry.type) {
+                        'embedding' => runtimeState?.ready == true,
+                        'llm' => llmRuntimeState?.ready == true,
+                        _ => entry.isInstalled,
+                      };
+                  final isBroken =
+                      !cleanupOnly &&
+                      (!isRuntimeReady || !entry.filePresent);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -256,7 +257,9 @@ class _InstalledModelsCard extends ConsumerWidget {
                           ],
                         ),
                         trailing: Text(
-                          activeEmbeddingModelId == entry.id
+                          cleanupOnly
+                              ? '待清理'
+                              : activeEmbeddingModelId == entry.id
                               ? '当前语义模型'
                               : activeLlmModelId == entry.id
                               ? '当前本地LLM'
@@ -270,22 +273,37 @@ class _InstalledModelsCard extends ConsumerWidget {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          OutlinedButton.icon(
-                            onPressed: () =>
-                                controller.revalidateInstalledModel(entry.id),
-                            icon: const Icon(
-                              Icons.check_circle_outline,
-                              size: 18,
-                            ),
-                            label: const Text('校验'),
-                          ),
-                          if (isBroken)
+                          if (cleanupOnly)
                             OutlinedButton.icon(
                               onPressed: () =>
-                                  controller.repairInstalledModel(entry.id),
-                              icon: const Icon(Icons.build_outlined, size: 18),
-                              label: const Text('修复'),
+                                  controller.deleteInstalledModel(entry.id),
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                              ),
+                              label: const Text('删除本地模型'),
+                            )
+                          else ...[
+                            OutlinedButton.icon(
+                              onPressed: () =>
+                                  controller.revalidateInstalledModel(entry.id),
+                              icon: const Icon(
+                                Icons.check_circle_outline,
+                                size: 18,
+                              ),
+                              label: const Text('校验'),
                             ),
+                            if (isBroken)
+                              OutlinedButton.icon(
+                                onPressed: () =>
+                                    controller.repairInstalledModel(entry.id),
+                                icon: const Icon(
+                                  Icons.build_outlined,
+                                  size: 18,
+                                ),
+                                label: const Text('修复'),
+                              ),
+                          ],
                         ],
                       ),
                     ],

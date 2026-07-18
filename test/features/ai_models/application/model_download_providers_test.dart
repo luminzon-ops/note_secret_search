@@ -926,7 +926,7 @@ void main() {
   });
 
   test(
-    'modelRegistryEntriesProvider filters legacy multimodal registry and catalog entries before file probes',
+    'modelRegistryEntriesProvider keeps legacy multimodal cleanup entries but skips catalog adoption',
     () async {
       final registryRepository = _MemoryRegistryRepository();
       final downloadService = _FakeDownloadService();
@@ -1038,14 +1038,19 @@ void main() {
           ),
         },
         <String, bool>{
-          'returned multimodal': false,
+          'returned multimodal': true,
           'called fileExists': false,
           'called registry checksum': false,
           'inspected catalog': false,
           'called catalog checksum': false,
         },
       );
-      expect(entries.map((entry) => entry.id), <String>['embed-1']);
+      final legacy = entries.singleWhere(
+        (entry) => entry.id == 'legacy-multimodal',
+      );
+      expect(legacy.enabled, isTrue);
+      expect(legacy.integrityStatus, ModelIntegrityStatus.unknown);
+      expect(entries.map((entry) => entry.id), contains('embed-1'));
       expect(downloadService.fileExistsPaths, contains(embeddingPath));
       expect(downloadService.verifiedPaths, contains(embeddingPath));
     },

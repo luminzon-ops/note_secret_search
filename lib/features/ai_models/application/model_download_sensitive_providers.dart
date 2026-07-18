@@ -10,15 +10,14 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
       final repository = ref.watch(modelRegistryRepositoryProvider);
       final lifecycleStore = ref.watch(modelLifecycleStoreProvider);
       final downloadService = ref.watch(modelDownloadServiceProvider);
+      final downloadRepository = ref.watch(modelDownloadRepositoryProvider);
       final catalogEntries = await ref.watch(
         modelCatalogEntriesProvider.future,
       );
       final supportedCatalogEntries = catalogEntries
           .where((entry) => entry.type != 'multimodal_llm')
           .toList(growable: false);
-      final existingEntries = (await repository.listInstalledModels())
-          .where((entry) => entry.type != 'multimodal_llm')
-          .toList(growable: false);
+      final existingEntries = await repository.listInstalledModels();
       final entriesById = <String, ModelRegistryEntry>{
         for (final entry in existingEntries) entry.id: entry,
       };
@@ -28,17 +27,32 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
           continue;
         }
 
+        ModelDownloadTask? latestTask;
+        var latestTaskLoaded = false;
         for (final source in catalogEntry.sources) {
           if (source.checksum.trim().isEmpty) {
             continue;
           }
-
           final target = await downloadService.inspectDownloadTarget(
             modelId: catalogEntry.id,
             sourceUrl: source.url,
           );
           if (!target.exists || target.existingBytes <= 0) {
             continue;
+          }
+          if (!latestTaskLoaded) {
+            latestTask = await downloadRepository.findLatestTaskByModel(
+              catalogEntry.id,
+            );
+            latestTaskLoaded = true;
+          }
+          if (latestTask != null) {
+            if (latestTask.status != ModelDownloadStatus.completed) {
+              break;
+            }
+            if (latestTask.sourceId != source.id) {
+              continue;
+            }
           }
 
           try {
@@ -94,6 +108,10 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
       final resolved = <ModelRegistryEntry>[];
 
       for (final entry in entries) {
+        if (entry.type == 'multimodal_llm') {
+          resolved.add(entry);
+          continue;
+        }
         final present = await downloadService.fileExists(entry.localPath);
         var normalized = entry.copyWith(
           filePresent: present,

@@ -355,9 +355,10 @@ void main() {
     expect(find.text('Hidden Multimodal Catalog Entry'), findsNothing);
   });
 
-  testWidgets('ModelManagementPage independently filters multimodal registry entries', (
+  testWidgets('ModelManagementPage exposes legacy multimodal cleanup', (
     tester,
   ) async {
+    late _RecordingModelDownloadController controller;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -412,7 +413,10 @@ void main() {
             },
           ),
           llmRuntimeStatesProvider.overrideWith((ref) async => const <String, LlmRuntimeState>{}),
-          modelDownloadControllerProvider.overrideWith((ref) => _FakeModelDownloadController(ref: ref)),
+          modelDownloadControllerProvider.overrideWith((ref) {
+            controller = _RecordingModelDownloadController(ref: ref);
+            return controller;
+          }),
         ],
         child: const MaterialApp(home: ModelManagementPage()),
       ),
@@ -421,7 +425,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Visible Installed Embedding'), findsOneWidget);
-    expect(find.text('Hidden Installed Multimodal'), findsNothing);
+    expect(find.text('Hidden Installed Multimodal'), findsOneWidget);
+    expect(find.text('待清理'), findsOneWidget);
+    expect(find.text('校验'), findsOneWidget);
+    expect(find.text('修复'), findsNothing);
+    expect(find.text('删除本地模型'), findsOneWidget);
+
+    await scrollUntilFound(tester, find.text('删除本地模型'));
+    await tester.tap(find.text('删除本地模型'));
+    await tester.pump();
+    expect(controller.deletedModelId, 'multimodal-1');
   });
 
   testWidgets('ModelManagementPage shows 已安装模型 for an installed but inactive model', (

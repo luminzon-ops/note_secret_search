@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
@@ -41,6 +43,39 @@ void main() {
     });
     final container = ProviderContainer(
       overrides: <Override>[
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        modelCatalogEntriesProvider.overrideWith(
+          (ref) async => const <ModelCatalogEntry>[
+            ModelCatalogEntry(
+              id: 'model-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'Model',
+              description: 'Test model',
+              sizeBytes: 10,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: 'Source',
+                  url: 'https://example.com/model.onnx',
+                  checksum: 'sha256:model',
+                ),
+                ModelSourceEntry(
+                  id: 'source-2',
+                  label: 'Fallback source',
+                  url: 'https://mirror.example.com/model.onnx',
+                  checksum: 'sha256:model',
+                ),
+              ],
+            ),
+          ],
+        ),
+        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+        modelLifecycleStoreProvider.overrideWithValue(lifecycleStore),
+        modelDownloadServiceProvider.overrideWithValue(downloadService),
         embeddingRuntimeBridgeProvider.overrideWithValue(
           const _ThrowingEmbeddingRuntimeBridge(),
         ),
@@ -79,6 +114,11 @@ void main() {
 
     expect(lifecycleStore.commitCalls, 0);
     expect(downloadRepository.latest?.status, ModelDownloadStatus.failed);
+    expect(registryRepository.entry, isNull);
+
+    final refreshed = await container.read(modelRegistryEntriesProvider.future);
+    expect(refreshed, isEmpty);
+    expect(lifecycleStore.commitCalls, 0);
     expect(registryRepository.entry, isNull);
   });
 }
@@ -177,6 +217,8 @@ class _RecordingLifecycleStore implements ModelLifecycleStore {
 class _SuccessfulDownloadService extends ModelDownloadService {
   _SuccessfulDownloadService() : super(dio: Dio(), logger: const AppLogger());
 
+  bool downloaded = false;
+
   @override
   Future<ModelDownloadResult> download({
     required String taskId,
@@ -186,6 +228,7 @@ class _SuccessfulDownloadService extends ModelDownloadService {
     int resumeFromBytes = 0,
     required FutureOr<void> Function(ModelDownloadProgress progress) onProgress,
   }) async {
+    downloaded = true;
     await onProgress(
       const ModelDownloadProgress(
         receivedBytes: 10,
@@ -201,18 +244,28 @@ class _SuccessfulDownloadService extends ModelDownloadService {
   }
 
   @override
-  Future<bool> fileExists(String? path) async => false;
+  Future<bool> fileExists(String? path) async {
+    return downloaded && path == '/support/models/model-1/model.onnx';
+  }
 
   @override
   Future<ModelDownloadTarget> inspectDownloadTarget({
     required String modelId,
     required String sourceUrl,
   }) async {
-    return const ModelDownloadTarget(
+    return ModelDownloadTarget(
       localPath: '/support/models/model-1/model.onnx',
-      exists: false,
-      existingBytes: 0,
+      exists: downloaded,
+      existingBytes: downloaded ? 10 : 0,
     );
+  }
+
+  @override
+  Future<String> verifyChecksum({
+    required String filePath,
+    required String expectedChecksum,
+  }) async {
+    return 'sha256:model';
   }
 }
 
