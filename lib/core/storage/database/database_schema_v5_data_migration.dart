@@ -178,10 +178,16 @@ abstract final class DatabaseSchemaV5DataMigration {
     for (final entry in decoded.cast<Map<String, dynamic>>()) {
       final role = entry['role'];
       final localPath = entry['local_path'];
+      final sourceId = entry['source_id'];
+      final checksum = entry['checksum'];
+      final sizeBytes = entry['size_bytes'];
       if (role is! String ||
           role.trim().isEmpty ||
           localPath is! String ||
-          localPath.trim().isEmpty) {
+          localPath.trim().isEmpty ||
+          (sourceId != null && sourceId is! String) ||
+          (checksum != null && checksum is! String) ||
+          (sizeBytes != null && sizeBytes is! num)) {
         throw const DatabaseSchemaV5DataMigrationException();
       }
     }

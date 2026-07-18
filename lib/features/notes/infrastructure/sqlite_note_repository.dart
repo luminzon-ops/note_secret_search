@@ -5,6 +5,7 @@ import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.d
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 class SqliteNoteRepository implements NoteRepository {
   SqliteNoteRepository({
@@ -78,6 +79,7 @@ class SqliteNoteRepository implements NoteRepository {
   Future<void> save(NoteItem item) async {
     _validateCiphertexts(item);
     await _database.transaction((executor) async {
+      await _unlinkTagsBeforeVaultTransfer(executor, item);
       await executor.rawInsert(
         '''
         INSERT INTO ${DatabaseSchema.noteItems} (
@@ -129,6 +131,28 @@ class SqliteNoteRepository implements NoteRepository {
         whereArgs: <Object>[item.id, SearchSourceType.note.name],
       );
     });
+  }
+
+  Future<void> _unlinkTagsBeforeVaultTransfer(
+    DatabaseExecutor executor,
+    NoteItem item,
+  ) async {
+    final existing = await executor.query(
+      DatabaseSchema.noteItems,
+      columns: const <String>['vault_id'],
+      where: 'id = ?',
+      whereArgs: <Object>[item.id],
+      limit: 1,
+    );
+    if (existing.isEmpty || existing.single['vault_id'] == item.vaultId) {
+      return;
+    }
+    await _tagStore.unlinkItem(
+      executor,
+      itemId: item.id,
+      itemType: ItemTagType.note,
+      vaultId: existing.single['vault_id']! as String,
+    );
   }
 
   @override

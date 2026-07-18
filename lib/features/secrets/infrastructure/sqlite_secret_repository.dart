@@ -5,6 +5,7 @@ import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.d
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
+import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 class SqliteSecretRepository implements SecretRepository {
   SqliteSecretRepository({
@@ -78,6 +79,7 @@ class SqliteSecretRepository implements SecretRepository {
   Future<void> save(SecretItem item) async {
     _validateCiphertexts(item);
     await _database.transaction((executor) async {
+      await _unlinkTagsBeforeVaultTransfer(executor, item);
       await executor.rawInsert(
         '''
         INSERT INTO ${DatabaseSchema.secretItems} (
@@ -138,6 +140,28 @@ class SqliteSecretRepository implements SecretRepository {
         whereArgs: <Object>[item.id, SearchSourceType.secret.name],
       );
     });
+  }
+
+  Future<void> _unlinkTagsBeforeVaultTransfer(
+    DatabaseExecutor executor,
+    SecretItem item,
+  ) async {
+    final existing = await executor.query(
+      DatabaseSchema.secretItems,
+      columns: const <String>['vault_id'],
+      where: 'id = ?',
+      whereArgs: <Object>[item.id],
+      limit: 1,
+    );
+    if (existing.isEmpty || existing.single['vault_id'] == item.vaultId) {
+      return;
+    }
+    await _tagStore.unlinkItem(
+      executor,
+      itemId: item.id,
+      itemType: ItemTagType.secret,
+      vaultId: existing.single['vault_id']! as String,
+    );
   }
 
   @override

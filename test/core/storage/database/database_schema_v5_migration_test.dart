@@ -83,6 +83,21 @@ void main() {
       },
     ),
     _InvalidV4Case(
+      name: 'artifact JSON with an invalid optional field type',
+      mutate: (database) {
+        return database.update(
+          'model_registry',
+          <String, Object?>{
+            'artifact_paths_json':
+                '[{"role":"model","local_path":"/models/legacy.onnx",'
+                '"size_bytes":"1024"}]',
+          },
+          where: 'id = ?',
+          whereArgs: const <Object>['model-1'],
+        );
+      },
+    ),
+    _InvalidV4Case(
       name: 'Secret without a Vault',
       mutate: (database) {
         return database.update(

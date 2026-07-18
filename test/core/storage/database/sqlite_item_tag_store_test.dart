@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.dart';
+import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 import '../../../support/sqlite_test_database.dart';
 
@@ -169,4 +170,57 @@ void main() {
       'other-secret': <String>[],
     });
   });
+
+  test('batch tag loading stays below legacy SQLite bind limits', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    final store = SqliteItemTagStore();
+    final itemIds = List<String>.generate(
+      1001,
+      (index) => 'secret-$index',
+      growable: false,
+    );
+    late _BindLimitedExecutor limited;
+
+    final tags = await database.run((executor) {
+      limited = _BindLimitedExecutor(executor, maxBindVariables: 999);
+      return store.loadTagsByItemIds(
+        limited,
+        itemIds: itemIds,
+        itemType: ItemTagType.secret,
+        vaultId: 'default',
+      );
+    });
+
+    expect(limited.rawQueryCount, 1);
+    expect(tags, hasLength(itemIds.length));
+    expect(tags.values, everyElement(isEmpty));
+  });
+}
+
+class _BindLimitedExecutor implements DatabaseExecutor {
+  _BindLimitedExecutor(this._delegate, {required this.maxBindVariables});
+
+  final DatabaseExecutor _delegate;
+  final int maxBindVariables;
+  int rawQueryCount = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) {
+    rawQueryCount += 1;
+    if ((arguments?.length ?? 0) > maxBindVariables) {
+      throw StateError('sqlite_bind_limit_exceeded');
+    }
+    return _delegate.rawQuery(sql, arguments);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    throw UnsupportedError(
+      'Unexpected database call: ${invocation.memberName}',
+    );
+  }
 }

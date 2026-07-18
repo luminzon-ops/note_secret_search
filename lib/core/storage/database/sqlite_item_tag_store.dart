@@ -52,25 +52,26 @@ class SqliteItemTagStore implements ItemTagStore {
     if (tagsByItemId.isEmpty) {
       return tagsByItemId;
     }
-    final placeholders = List<String>.filled(
-      tagsByItemId.length,
-      '?',
-      growable: false,
-    ).join(', ');
+    final itemTable = switch (itemType) {
+      ItemTagType.secret => DatabaseSchema.secretItems,
+      ItemTagType.note => DatabaseSchema.noteItems,
+    };
     final rows = await executor.rawQuery(
       '''
       SELECT link.item_id, tag.name
       FROM ${DatabaseSchema.itemTags} link
       INNER JOIN ${DatabaseSchema.tags} tag ON tag.id = link.tag_id
+      INNER JOIN $itemTable item ON item.id = link.item_id
       WHERE link.item_type = ?
         AND tag.vault_id = ?
-        AND link.item_id IN ($placeholders)
+        AND item.vault_id = ?
+        AND item.deleted_at IS NULL
       ORDER BY link.item_id ASC, tag.name COLLATE NOCASE ASC, tag.id ASC
       ''',
-      <Object>[itemType.name, vaultId, ...tagsByItemId.keys],
+      <Object>[itemType.name, vaultId, vaultId],
     );
     for (final row in rows) {
-      tagsByItemId[row['item_id']! as String]!.add(row['name']! as String);
+      tagsByItemId[row['item_id']! as String]?.add(row['name']! as String);
     }
     return tagsByItemId;
   }
