@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/field_crypto.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/migration/frozen_database_schema_v4.dart';
 import 'package:note_secret_search/core/storage/migration/legacy_migration_schema.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
@@ -223,7 +224,7 @@ class LegacyDatabaseMigrator implements LegacyDatabaseMigrationRunner {
 
   Future<void> _createTargetSchema(Database database, int version) async {
     final batch = database.batch();
-    for (final statement in DatabaseSchema.createStatements) {
+    for (final statement in FrozenDatabaseSchemaV4.createStatements) {
       batch.execute(statement);
     }
     await batch.commit(noResult: true);

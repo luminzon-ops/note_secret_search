@@ -2,11 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-enum LegacyFixtureVersion { v1, v2, upgradedV3, freshV3 }
+import 'historical_database_schema.dart';
+
+export 'historical_database_schema.dart'
+    show LegacyFixtureVersion, legacyMigrationSourceVersions;
 
 class LegacyDatabaseFixture {
   LegacyDatabaseFixture({
@@ -41,15 +43,9 @@ Future<LegacyDatabaseFixture> createLegacyDatabaseFixture(
   final pendingPath = p.join(directory.path, 'pending.db');
   final database = await databaseFactoryFfi.openDatabase(sourcePath);
   try {
-    await _createLegacySchema(database, version);
+    await createHistoricalDatabaseSchema(database, version);
     await _insertLegacyRows(database, version);
-    await database.execute(
-      'PRAGMA user_version = ${switch (version) {
-        LegacyFixtureVersion.v1 => 1,
-        LegacyFixtureVersion.v2 => 2,
-        LegacyFixtureVersion.upgradedV3 || LegacyFixtureVersion.freshV3 => 3,
-      }}',
-    );
+    await database.execute('PRAGMA user_version = ${version.schemaVersion}');
   } finally {
     await database.close();
   }
@@ -79,56 +75,6 @@ Future<LegacyDatabaseFixture> createLegacyDatabaseFixture(
       'search.scope.value_ciphertext': 'secret,note',
     },
   );
-}
-
-Future<void> _createLegacySchema(
-  Database database,
-  LegacyFixtureVersion version,
-) async {
-  for (final statement in DatabaseSchema.createStatements) {
-    if (statement.contains('CREATE TABLE IF NOT EXISTS model_registry')) {
-      await database.execute(_legacyModelRegistryStatement(version));
-      continue;
-    }
-    if (_isChatStatement(statement) && version == LegacyFixtureVersion.v1) {
-      continue;
-    }
-    if (statement.contains('CREATE TABLE IF NOT EXISTS security_metadata')) {
-      continue;
-    }
-    await database.execute(statement);
-  }
-}
-
-String _legacyModelRegistryStatement(LegacyFixtureVersion version) {
-  final includeIntegrity = version == LegacyFixtureVersion.freshV3;
-  final includeArtifactPaths =
-      version == LegacyFixtureVersion.upgradedV3 ||
-      version == LegacyFixtureVersion.freshV3;
-  return '''
-    CREATE TABLE model_registry (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      name TEXT NOT NULL,
-      version TEXT,
-      size_bytes INTEGER,
-      quantization TEXT,
-      min_ram_mb INTEGER,
-      recommended_tier TEXT,
-      local_path TEXT,
-      ${includeArtifactPaths ? 'artifact_paths_json TEXT,' : ''}
-      checksum TEXT,
-      ${includeIntegrity ? "integrity_status TEXT NOT NULL DEFAULT 'unknown'," : ''}
-      enabled INTEGER NOT NULL DEFAULT 0,
-      installed_at INTEGER
-    )
-  ''';
-}
-
-bool _isChatStatement(String statement) {
-  return statement.contains('CREATE TABLE IF NOT EXISTS chat_sessions') ||
-      statement.contains('CREATE TABLE IF NOT EXISTS chat_messages');
 }
 
 Future<void> _insertLegacyRows(
@@ -316,6 +262,15 @@ Future<void> _insertLegacyRows(
       'created_at': createdAt,
     });
   }
+  if (version == LegacyFixtureVersion.phase2MigratedV4) {
+    await database.insert('security_metadata', <String, Object?>{
+      'key_id': '123e4567-e89b-42d3-a456-426614174000',
+      'source_schema_version': 3,
+      'field_envelope_version': 1,
+      'migration_state': 'validated',
+      'migrated_at': createdAt + 13,
+    });
+  }
 }
 
 Future<void> _insertModelRegistry(
@@ -338,12 +293,17 @@ Future<void> _insertModelRegistry(
     'enabled': 1,
     'installed_at': createdAt,
   };
-  if (version == LegacyFixtureVersion.upgradedV3 ||
-      version == LegacyFixtureVersion.freshV3) {
-    row['artifact_paths_json'] = '["/models/legacy.onnx"]';
+  if (version.schemaVersion >= 3) {
+    row['artifact_paths_json'] = version == LegacyFixtureVersion.freshV4
+        ? '[{"role":"model","path":"/models/legacy.onnx"}]'
+        : '["/models/legacy.onnx"]';
   }
-  if (version == LegacyFixtureVersion.freshV3) {
-    row['integrity_status'] = 'verified';
+  if (version == LegacyFixtureVersion.freshV3 ||
+      version == LegacyFixtureVersion.freshV4 ||
+      version == LegacyFixtureVersion.phase2MigratedV4) {
+    row['integrity_status'] = version == LegacyFixtureVersion.phase2MigratedV4
+        ? 'unknown'
+        : 'verified';
   }
   await database.insert('model_registry', row);
 }

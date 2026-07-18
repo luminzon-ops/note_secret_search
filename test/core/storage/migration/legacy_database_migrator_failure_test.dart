@@ -123,7 +123,7 @@ void main() {
     },
   );
 
-  for (final version in LegacyFixtureVersion.values) {
+  for (final version in legacyMigrationSourceVersions) {
     test(
       '${version.name} missing password column aborts before touching pending',
       () async {
