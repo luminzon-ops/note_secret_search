@@ -25,6 +25,9 @@ internal open class SecurityKeyringTestFixture {
     protected fun manager(
         apiLevel: Int,
         authCapabilities: SystemAuthCapabilities = capabilities,
+        migrationFileCoordinator: MigrationFileCoordinator? = null,
+        migrationCompletionVerifier: MigrationCompletionVerifier =
+            MigrationCompletionVerifier { _, _ -> false },
     ): NativeKeyringManager {
         return NativeKeyringManager(
             apiLevel = apiLevel,
@@ -40,6 +43,8 @@ internal open class SecurityKeyringTestFixture {
                 store = pinThrottleStore,
                 clock = pinThrottleClock,
             ),
+            migrationFileCoordinator = migrationFileCoordinator,
+            migrationCompletionVerifier = migrationCompletionVerifier,
         )
     }
 

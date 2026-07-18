@@ -34,6 +34,10 @@ void main() {
             },
       );
 
+      final checkpoint = await factory.openLegacyForCheckpoint(
+        path: 'active.db',
+        password: 'legacy-password',
+      );
       final legacy = await factory.openLegacy(
         path: 'legacy.db',
         password: 'legacy-password',
@@ -44,20 +48,24 @@ void main() {
         version: 4,
         onCreate: (database, version) async {},
       );
+      addTearDown(checkpoint.close);
       addTearDown(legacy.close);
       addTearDown(pending.close);
 
-      expect(calls, hasLength(2));
-      expect(calls[0].path, 'legacy.db');
+      expect(calls, hasLength(3));
+      expect(calls[0].path, 'active.db');
       expect(calls[0].password, 'legacy-password');
-      expect(calls[0].readOnly, isTrue);
+      expect(calls[0].readOnly, isFalse);
       expect(calls[0].version, isNull);
       expect(calls[0].onCreate, isNull);
-      expect(calls[1].path, 'pending.db');
-      expect(calls[1].password, 'new-password');
-      expect(calls[1].readOnly, isFalse);
-      expect(calls[1].version, 4);
-      expect(calls[1].onCreate, isNotNull);
+      expect(calls[1].path, 'legacy.db');
+      expect(calls[1].password, 'legacy-password');
+      expect(calls[1].readOnly, isTrue);
+      expect(calls[2].path, 'pending.db');
+      expect(calls[2].password, 'new-password');
+      expect(calls[2].readOnly, isFalse);
+      expect(calls[2].version, 4);
+      expect(calls[2].onCreate, isNotNull);
     },
   );
 }

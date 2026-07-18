@@ -14,6 +14,8 @@ enum class NativeSecurityErrorCode {
     KEYSTORE_UNAVAILABLE,
     ENVELOPE_CORRUPT,
     MIGRATION_REQUIRED,
+    MIGRATION_STORAGE_INSUFFICIENT,
+    MIGRATION_FAILED,
     RECOVERY_REQUIRED,
     SECURE_STORAGE_UNAVAILABLE,
     INTERNAL_ERROR,
@@ -42,6 +44,9 @@ class NativeSecurityException(
                     "The Android Keystore is unavailable."
                 NativeSecurityErrorCode.ENVELOPE_CORRUPT -> "The security envelope is corrupt."
                 NativeSecurityErrorCode.MIGRATION_REQUIRED -> "Security migration is required."
+                NativeSecurityErrorCode.MIGRATION_STORAGE_INSUFFICIENT ->
+                    "Insufficient storage for security migration."
+                NativeSecurityErrorCode.MIGRATION_FAILED -> "Security migration failed."
                 NativeSecurityErrorCode.RECOVERY_REQUIRED -> "Security recovery is required."
                 NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE ->
                     "Secure storage is unavailable."
@@ -79,6 +84,8 @@ data class NativeSecurityState(
     val deviceCredentialAvailable: Boolean,
     val strongBiometricAvailable: Boolean,
     val securityLevel: KeySecurityLevel,
+    val systemRebindRequired: Boolean = false,
+    val pinResetRequired: Boolean = false,
 ) {
     fun toChannelMap(): Map<String, Any> {
         return buildMap {
@@ -88,6 +95,8 @@ data class NativeSecurityState(
             put("deviceCredentialAvailable", deviceCredentialAvailable)
             put("strongBiometricAvailable", strongBiometricAvailable)
             put("securityLevel", securityLevel.channelValue)
+            put("systemRebindRequired", systemRebindRequired)
+            put("pinResetRequired", pinResetRequired)
         }
     }
 }
@@ -97,19 +106,24 @@ data class NativeUnlockMaterial(
     val databaseKey: ByteArray,
     val fieldKey: ByteArray,
     val unlockMethod: String = "system",
+    val legacyDatabasePassword: ByteArray? = null,
 ) {
     fun toChannelMap(): Map<String, Any> {
-        return mapOf(
-            "keyId" to keyId,
-            "databaseKey" to databaseKey,
-            "fieldKey" to fieldKey,
-            "unlockMethod" to unlockMethod,
-        )
+        return buildMap {
+            put("keyId", keyId)
+            put("databaseKey", databaseKey)
+            put("fieldKey", fieldKey)
+            put("unlockMethod", unlockMethod)
+            legacyDatabasePassword?.let {
+                put("legacyDatabasePassword", it)
+            }
+        }
     }
 
     fun zeroize() {
         databaseKey.fill(0)
         fieldKey.fill(0)
+        legacyDatabasePassword?.fill(0)
     }
 }
 
@@ -170,6 +184,7 @@ data class SecurityKeyset(
     val keyId: String,
     val envelopes: List<SecurityEnvelope>,
     val pinEnvelope: PinEnvelope? = null,
+    val pinResetRequired: Boolean = false,
 )
 
 class PinKdfParameters(

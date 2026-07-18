@@ -20,6 +20,14 @@ class SqlCipherMigrationDatabaseFactory implements MigrationDatabaseFactory {
   final SqlCipherMigrationDatabaseOpener _openDatabase;
 
   @override
+  Future<Database> openLegacyForCheckpoint({
+    required String path,
+    required String password,
+  }) {
+    return _openDatabase(path: path, password: password, readOnly: false);
+  }
+
+  @override
   Future<Database> openLegacy({
     required String path,
     required String password,

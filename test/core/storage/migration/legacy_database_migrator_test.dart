@@ -168,7 +168,7 @@ void main() {
     );
   }
 
-  test('rejects invalid legacy UTF-8 and removes the pending file', () async {
+  test('rejects invalid legacy UTF-8 for native pending cleanup', () async {
     final fixture = await createLegacyDatabaseFixture(LegacyFixtureVersion.v1);
     addTearDown(fixture.dispose);
     final source = await databaseFactoryFfi.openDatabase(fixture.sourcePath);
@@ -195,13 +195,40 @@ void main() {
       throwsFormatException,
     );
 
-    expect(File(fixture.pendingPath).existsSync(), isFalse);
+    expect(File(fixture.pendingPath).existsSync(), isTrue);
   });
 
-  test('rejects a pending database that changes migrated plaintext', () async {
+  test(
+    'rejects changed migrated plaintext for native pending cleanup',
+    () async {
+      final fixture = await createLegacyDatabaseFixture(
+        LegacyFixtureVersion.v1,
+      );
+      addTearDown(fixture.dispose);
+      final harness = _MigrationHarness(corruptNoteContent: true);
+      addTearDown(harness.dispose);
+
+      await expectLater(
+        harness.migrator.migrate(
+          sourcePath: fixture.sourcePath,
+          pendingPath: fixture.pendingPath,
+          legacyPassword: 'legacy-password',
+          databasePassword: 'new-database-password',
+          keyId: '123e4567-e89b-42d3-a456-426614174000',
+        ),
+        throwsStateError,
+      );
+
+      expect(File(fixture.pendingPath).existsSync(), isTrue);
+    },
+  );
+
+  test('rejects changed non-secret data for native pending cleanup', () async {
     final fixture = await createLegacyDatabaseFixture(LegacyFixtureVersion.v1);
     addTearDown(fixture.dispose);
-    final harness = _MigrationHarness(corruptNoteContent: true);
+    final harness = _MigrationHarness(
+      databaseFactory: const _NonSecretCorruptingMigrationDatabaseFactory(),
+    );
     addTearDown(harness.dispose);
 
     await expectLater(
@@ -215,7 +242,7 @@ void main() {
       throwsStateError,
     );
 
-    expect(File(fixture.pendingPath).existsSync(), isFalse);
+    expect(File(fixture.pendingPath).existsSync(), isTrue);
   });
 
   test(
@@ -348,6 +375,17 @@ class _FfiMigrationDatabaseFactory implements MigrationDatabaseFactory {
   const _FfiMigrationDatabaseFactory();
 
   @override
+  Future<Database> openLegacyForCheckpoint({
+    required String path,
+    required String password,
+  }) {
+    return databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(readOnly: false, singleInstance: false),
+    );
+  }
+
+  @override
   Future<Database> openLegacy({
     required String path,
     required String password,
@@ -377,15 +415,18 @@ class _FfiMigrationDatabaseFactory implements MigrationDatabaseFactory {
 }
 
 class _MigrationHarness {
-  _MigrationHarness({bool corruptNoteContent = false})
-    : keys = DatabaseSessionKeys(
-        databaseKey: Uint8List.fromList(List<int>.generate(32, (i) => i)),
-        fieldKey: Uint8List.fromList(List<int>.generate(32, (i) => 0x80 + i)),
-      ) {
+  _MigrationHarness({
+    bool corruptNoteContent = false,
+    MigrationDatabaseFactory databaseFactory =
+        const _FfiMigrationDatabaseFactory(),
+  }) : keys = DatabaseSessionKeys(
+         databaseKey: Uint8List.fromList(List<int>.generate(32, (i) => i)),
+         fieldKey: Uint8List.fromList(List<int>.generate(32, (i) => 0x80 + i)),
+       ) {
     keyStore.replace(keys);
     crypto = AesGcmFieldCrypto(sessionKeyStore: keyStore);
     migrator = LegacyDatabaseMigrator(
-      databaseFactory: const _FfiMigrationDatabaseFactory(),
+      databaseFactory: databaseFactory,
       cryptoService: corruptNoteContent
           ? _CorruptingCryptoService(crypto)
           : crypto,
@@ -400,6 +441,55 @@ class _MigrationHarness {
 
   void dispose() {
     keyStore.clear();
+  }
+}
+
+class _NonSecretCorruptingMigrationDatabaseFactory
+    implements MigrationDatabaseFactory {
+  const _NonSecretCorruptingMigrationDatabaseFactory();
+
+  static const _delegate = _FfiMigrationDatabaseFactory();
+
+  @override
+  Future<Database> openLegacyForCheckpoint({
+    required String path,
+    required String password,
+  }) {
+    return _delegate.openLegacyForCheckpoint(path: path, password: password);
+  }
+
+  @override
+  Future<Database> openLegacy({
+    required String path,
+    required String password,
+  }) {
+    return _delegate.openLegacy(path: path, password: password);
+  }
+
+  @override
+  Future<Database> openPending({
+    required String path,
+    required String password,
+    required int version,
+    required OnDatabaseCreateFn onCreate,
+  }) async {
+    final database = await _delegate.openPending(
+      path: path,
+      password: password,
+      version: version,
+      onCreate: onCreate,
+    );
+    await database.execute('''
+      CREATE TRIGGER corrupt_secret_title
+      AFTER INSERT ON secret_items
+      WHEN NEW.id = 'secret-1'
+      BEGIN
+        UPDATE secret_items
+        SET title = 'changed after copy'
+        WHERE id = NEW.id;
+      END
+    ''');
+    return database;
   }
 }
 

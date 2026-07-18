@@ -49,6 +49,10 @@ class WrappingKeyInvalidatedException(
     cause: Throwable? = null,
 ) : RuntimeException(cause)
 
+class WrappingKeyAuthenticationRequiredException(
+    cause: Throwable? = null,
+) : RuntimeException(cause)
+
 class AndroidWrappingKeyRepository(
     private val apiLevel: Int,
     private val backend: WrappingKeyBackend,

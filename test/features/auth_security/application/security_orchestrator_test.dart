@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/core/storage/migration/legacy_security_migration_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
@@ -31,12 +32,79 @@ void main() {
       await orchestrator.initialize();
 
       expect(secureKeyGateway.securityStateCalls, 1);
-      expect(secureKeyGateway.ensureRootKeyCalls, 0);
+      expect(secureKeyGateway.provisionCalls, 0);
       expect(database.state.status, DatabaseLifecycleStatus.locked);
       expect(sessionController.isUnlocked, isFalse);
       expect(sessionController.state.pinEnabled, isTrue);
     },
   );
+
+  test(
+    'initialize leaves legacy migration pending without authenticating',
+    () async {
+      final sessionController = LockSessionController();
+      final migration = _RecordingLegacySecurityMigration();
+      final secureKeyGateway = _RecordingSecureKeyGateway(
+        securityState: const NativeSecurityState(
+          status: NativeSecurityStatus.legacyMigrationRequired,
+          keyId: null,
+          pinConfigured: false,
+          deviceCredentialAvailable: true,
+          strongBiometricAvailable: true,
+          securityLevel: KeySecurityLevel.unknown,
+        ),
+      );
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+        secureKeyGateway: secureKeyGateway,
+        legacySecurityMigration: migration,
+      );
+
+      await orchestrator.initialize();
+
+      expect(migration.calls, 0);
+      expect(secureKeyGateway.securityStateCalls, 1);
+      expect(sessionController.state.pinEnabled, isFalse);
+      expect(sessionController.isUnlocked, isFalse);
+    },
+  );
+
+  test('explicit legacy migration refreshes state and stays locked', () async {
+    final sessionController = LockSessionController();
+    final migration = _RecordingLegacySecurityMigration();
+    final secureKeyGateway = _RecordingSecureKeyGateway(
+      securityStates: <NativeSecurityState>[
+        const NativeSecurityState(
+          status: NativeSecurityStatus.legacyMigrationRequired,
+          keyId: null,
+          pinConfigured: false,
+          deviceCredentialAvailable: true,
+          strongBiometricAvailable: true,
+          securityLevel: KeySecurityLevel.unknown,
+        ),
+        _nativeSecurityState(pinConfigured: true),
+      ],
+    );
+    final database = _RecordingAppDatabase();
+    final orchestrator = _buildOrchestrator(
+      sessionController: sessionController,
+      screenshotGateway: _RecordingScreenshotProtectionGateway(),
+      secureKeyGateway: secureKeyGateway,
+      database: database,
+      legacySecurityMigration: migration,
+    );
+
+    await orchestrator.initialize();
+    final refreshed = await orchestrator.migrateLegacySecurity();
+
+    expect(refreshed.status, NativeSecurityStatus.locked);
+    expect(migration.calls, 1);
+    expect(secureKeyGateway.securityStateCalls, 2);
+    expect(sessionController.state.pinEnabled, isTrue);
+    expect(sessionController.isUnlocked, isFalse);
+    expect(database.state.status, DatabaseLifecycleStatus.locked);
+  });
 
   test(
     'biometric unlock removes the shield before marking session unlocked',
@@ -93,6 +161,61 @@ void main() {
       everyElement(6),
     );
     expect(unlockMaterial.isCleared, isTrue);
+  });
+
+  test(
+    'pin recovery rebinds system authentication before opening data',
+    () async {
+      final sessionController = LockSessionController();
+      final secureKeyGateway = _RecordingSecureKeyGateway(
+        securityState: _nativeSecurityState(
+          pinConfigured: true,
+          systemRebindRequired: true,
+        ),
+      );
+      final orchestrator = _buildOrchestrator(
+        sessionController: sessionController,
+        secureKeyGateway: secureKeyGateway,
+        screenshotGateway: _RecordingScreenshotProtectionGateway(),
+      );
+
+      final unlocked = await orchestrator.unlockWithPin(
+        pin: '2468',
+        expectedLockEpoch: 0,
+      );
+
+      expect(unlocked, isTrue);
+      expect(secureKeyGateway.rebindCalls, 1);
+      expect(secureKeyGateway.lastPin, '2468');
+    },
+  );
+
+  test('cancelled system rebind does not revoke a valid pin unlock', () async {
+    final sessionController = LockSessionController();
+    final secureKeyGateway = _RecordingSecureKeyGateway(
+      securityState: _nativeSecurityState(
+        pinConfigured: true,
+        systemRebindRequired: true,
+      ),
+      rebindError: const NativeSecurityException(
+        code: 'AUTH_CANCELLED',
+        message: null,
+        details: null,
+      ),
+    );
+    final orchestrator = _buildOrchestrator(
+      sessionController: sessionController,
+      secureKeyGateway: secureKeyGateway,
+      screenshotGateway: _RecordingScreenshotProtectionGateway(),
+    );
+
+    final unlocked = await orchestrator.unlockWithPin(
+      pin: '2468',
+      expectedLockEpoch: 0,
+    );
+
+    expect(unlocked, isTrue);
+    expect(secureKeyGateway.rebindCalls, 1);
   });
 
   test(
@@ -516,6 +639,7 @@ SecurityOrchestrator _buildOrchestrator({
   SecureKeyGateway? secureKeyGateway,
   DatabaseSessionKeyStore? sessionKeyStore,
   AppDatabase? database,
+  LegacySecurityMigrationRunner? legacySecurityMigration,
 }) {
   return SecurityOrchestrator(
     biometricGateway: biometricGateway ?? _SuccessfulBiometricGateway(),
@@ -527,6 +651,7 @@ SecurityOrchestrator _buildOrchestrator({
     appIsForeground: () => true,
     sessionKeyStore: sessionKeyStore ?? DatabaseSessionKeyStore(),
     database: database ?? _RecordingAppDatabase(),
+    legacySecurityMigration: legacySecurityMigration,
   );
 }
 
@@ -613,7 +738,9 @@ class _RecordingSecureKeyGateway implements SecureKeyGateway {
     this.systemUnlockResult,
     this.systemUnlockFuture,
     this.securityState,
+    this.securityStates,
     this.provisionResult,
+    this.rebindError,
   });
 
   final NativeUnlockResult? unlockResult;
@@ -621,25 +748,23 @@ class _RecordingSecureKeyGateway implements SecureKeyGateway {
   final NativeUnlockResult? systemUnlockResult;
   final Future<NativeUnlockResult>? systemUnlockFuture;
   final NativeSecurityState? securityState;
+  final List<NativeSecurityState>? securityStates;
   final NativeUnlockResult? provisionResult;
+  final NativeSecurityException? rebindError;
   String? lastPin;
   int systemUnlockCalls = 0;
   int securityStateCalls = 0;
-  int ensureRootKeyCalls = 0;
   int provisionCalls = 0;
   int pinUnlockCalls = 0;
-
-  @override
-  Future<void> ensureRootKey() async {
-    ensureRootKeyCalls += 1;
-  }
-
-  @override
-  Future<String> getDatabasePasswordMaterial() async => 'material';
+  int rebindCalls = 0;
 
   @override
   Future<NativeSecurityState> getSecurityState() async {
     securityStateCalls += 1;
+    final states = securityStates;
+    if (states != null && states.isNotEmpty) {
+      return states.removeAt(0);
+    }
     return securityState ?? _nativeSecurityState(pinConfigured: false);
   }
 
@@ -688,7 +813,27 @@ class _RecordingSecureKeyGateway implements SecureKeyGateway {
   }
 
   @override
+  Future<void> rebindSystemAuthWithPin({required String pin}) async {
+    rebindCalls += 1;
+    lastPin = pin;
+    final error = rebindError;
+    if (error != null) {
+      throw error;
+    }
+  }
+
+  @override
   Future<void> removePin() async {}
+}
+
+class _RecordingLegacySecurityMigration
+    implements LegacySecurityMigrationRunner {
+  int calls = 0;
+
+  @override
+  Future<void> startOrResume() async {
+    calls += 1;
+  }
 }
 
 NativeUnlockResult _pinUnlockMaterial() {
@@ -700,7 +845,10 @@ NativeUnlockResult _pinUnlockMaterial() {
   );
 }
 
-NativeSecurityState _nativeSecurityState({required bool pinConfigured}) {
+NativeSecurityState _nativeSecurityState({
+  required bool pinConfigured,
+  bool systemRebindRequired = false,
+}) {
   return NativeSecurityState(
     status: NativeSecurityStatus.locked,
     keyId: '123e4567-e89b-42d3-a456-426614174000',
@@ -708,6 +856,7 @@ NativeSecurityState _nativeSecurityState({required bool pinConfigured}) {
     deviceCredentialAvailable: true,
     strongBiometricAvailable: true,
     securityLevel: KeySecurityLevel.tee,
+    systemRebindRequired: systemRebindRequired,
   );
 }
 

@@ -6,6 +6,7 @@ import android.security.keystore.KeyInfo
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
+import android.security.keystore.UserNotAuthenticatedException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -168,6 +169,8 @@ private class AndroidWrappingKeyHandle(
             }
         } catch (error: KeyPermanentlyInvalidatedException) {
             throw WrappingKeyInvalidatedException(error)
+        } catch (error: UserNotAuthenticatedException) {
+            throw WrappingKeyAuthenticationRequiredException(error)
         } catch (error: Exception) {
             throw KeystoreOperationFailure(error)
         }

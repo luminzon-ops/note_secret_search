@@ -2,6 +2,7 @@ import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/core/storage/migration/legacy_security_migration_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
@@ -17,6 +18,7 @@ class SecurityOrchestrator {
     required AppDatabase database,
     required AppLogger logger,
     required bool Function() appIsForeground,
+    LegacySecurityMigrationRunner? legacySecurityMigration,
   }) : _screenshotProtectionGateway = screenshotProtectionGateway,
        _secureKeyGateway = secureKeyGateway,
        _sessionController = sessionController,
@@ -24,7 +26,8 @@ class SecurityOrchestrator {
        _sessionKeyStore = sessionKeyStore,
        _database = database,
        _logger = logger,
-       _appIsForeground = appIsForeground;
+       _appIsForeground = appIsForeground,
+       _legacySecurityMigration = legacySecurityMigration;
 
   final ScreenshotProtectionGateway _screenshotProtectionGateway;
   final SecureKeyGateway _secureKeyGateway;
@@ -34,6 +37,7 @@ class SecurityOrchestrator {
   final AppDatabase _database;
   final AppLogger _logger;
   final bool Function() _appIsForeground;
+  final LegacySecurityMigrationRunner? _legacySecurityMigration;
   int _operationEpoch = 0;
   bool _unlockInProgress = false;
 
@@ -44,6 +48,24 @@ class SecurityOrchestrator {
     _syncPinConfigured(securityState.pinConfigured);
     _logger.info('security_initialized');
     _sessionController.lock();
+  }
+
+  Future<NativeSecurityState> migrateLegacySecurity() async {
+    if (_sessionController.isUnlocked ||
+        _database.state.status != DatabaseLifecycleStatus.locked) {
+      throw StateError('legacy_security_migration_requires_locked_database');
+    }
+    final migration = _legacySecurityMigration;
+    if (migration == null) {
+      throw StateError('legacy_security_migration_unavailable');
+    }
+    _sessionKeyStore.clear();
+    try {
+      await migration.startOrResume();
+      return await refreshSecurityState();
+    } finally {
+      _sessionKeyStore.clear();
+    }
   }
 
   Future<bool> unlockWithBiometrics() {
@@ -90,9 +112,22 @@ class SecurityOrchestrator {
   }) {
     return _runUnlockOperation(() async {
       final expectedOperationEpoch = _operationEpoch;
+      NativeSecurityState? securityState;
       NativeUnlockResult? material;
       try {
+        try {
+          securityState = await _secureKeyGateway.getSecurityState();
+        } catch (_) {
+          securityState = null;
+        }
         material = await _secureKeyGateway.unlockWithPin(pin: pin);
+        if (securityState?.systemRebindRequired == true) {
+          try {
+            await _secureKeyGateway.rebindSystemAuthWithPin(pin: pin);
+          } catch (_) {
+            // The valid PIN unlock remains usable and rebind can be retried.
+          }
+        }
         return await _completeUnlock(
           UnlockMethod.pin,
           expectedLockEpoch: expectedLockEpoch,

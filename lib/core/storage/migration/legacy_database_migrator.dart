@@ -1,15 +1,21 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/field_crypto.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/migration/legacy_migration_schema.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 typedef _FieldIdentity = ({String table, String rowId, String column});
+typedef _RowIdentity = ({String table, String primaryKey});
 
 abstract interface class MigrationDatabaseFactory {
+  Future<Database> openLegacyForCheckpoint({
+    required String path,
+    required String password,
+  });
+
   Future<Database> openLegacy({required String path, required String password});
 
   Future<Database> openPending({
@@ -17,6 +23,21 @@ abstract interface class MigrationDatabaseFactory {
     required String password,
     required int version,
     required OnDatabaseCreateFn onCreate,
+  });
+}
+
+abstract interface class LegacyDatabaseMigrationRunner {
+  Future<void> prepareSourceForBackup({
+    required String sourcePath,
+    required String legacyPassword,
+  });
+
+  Future<LegacyDatabaseMigrationResult> migrate({
+    required String sourcePath,
+    required String pendingPath,
+    required String legacyPassword,
+    required String databasePassword,
+    required String keyId,
   });
 }
 
@@ -34,7 +55,12 @@ class LegacyDatabaseMigrationResult {
   final Map<String, int> preservedRowCounts;
 }
 
-enum LegacyDatabaseMigrationFailure { unsupportedSourceVersion }
+enum LegacyDatabaseMigrationFailure {
+  sourceUnavailable,
+  pendingUnavailable,
+  unsupportedSourceVersion,
+  sourceSchemaMismatch,
+}
 
 class LegacyDatabaseMigrationException implements Exception {
   const LegacyDatabaseMigrationException(this.failure);
@@ -45,7 +71,7 @@ class LegacyDatabaseMigrationException implements Exception {
   String toString() => 'LegacyDatabaseMigrationException(${failure.name})';
 }
 
-class LegacyDatabaseMigrator {
+class LegacyDatabaseMigrator implements LegacyDatabaseMigrationRunner {
   LegacyDatabaseMigrator({
     required MigrationDatabaseFactory databaseFactory,
     required CryptoService cryptoService,
@@ -59,26 +85,33 @@ class LegacyDatabaseMigrator {
 
   static const targetSchemaVersion = 4;
 
-  static const _preservedTables = <String>[
-    DatabaseSchema.vaults,
-    DatabaseSchema.categories,
-    DatabaseSchema.tags,
-    DatabaseSchema.secretItems,
-    DatabaseSchema.noteItems,
-    DatabaseSchema.itemTags,
-    DatabaseSchema.modelRegistry,
-    DatabaseSchema.providerConfigs,
-    DatabaseSchema.syncAccounts,
-    DatabaseSchema.appSettings,
-    DatabaseSchema.chatSessions,
-    DatabaseSchema.chatMessages,
-  ];
-
   final MigrationDatabaseFactory _databaseFactory;
   final CryptoService _cryptoService;
   final DateTime Function() _now;
   final MigrationLegacyUtf8Decoder _legacyDecoder;
 
+  @override
+  Future<void> prepareSourceForBackup({
+    required String sourcePath,
+    required String legacyPassword,
+  }) async {
+    Database? source;
+    try {
+      source = await _databaseFactory.openLegacyForCheckpoint(
+        path: sourcePath,
+        password: legacyPassword,
+      );
+      await _checkpoint(source);
+    } catch (_) {
+      throw const LegacyDatabaseMigrationException(
+        LegacyDatabaseMigrationFailure.sourceUnavailable,
+      );
+    } finally {
+      await source?.close();
+    }
+  }
+
+  @override
   Future<LegacyDatabaseMigrationResult> migrate({
     required String sourcePath,
     required String pendingPath,
@@ -93,13 +126,18 @@ class LegacyDatabaseMigrator {
       throw ArgumentError.value(keyId, 'keyId');
     }
 
-    final source = await _databaseFactory.openLegacy(
-      path: sourcePath,
-      password: legacyPassword,
-    );
+    late final Database source;
+    try {
+      source = await _databaseFactory.openLegacy(
+        path: sourcePath,
+        password: legacyPassword,
+      );
+    } catch (_) {
+      throw const LegacyDatabaseMigrationException(
+        LegacyDatabaseMigrationFailure.sourceUnavailable,
+      );
+    }
     Database? pending;
-    var completed = false;
-    var ownsPendingFileSet = false;
     try {
       final sourceVersion = await _readUserVersion(source);
       if (sourceVersion < 1 || sourceVersion >= targetSchemaVersion) {
@@ -107,26 +145,42 @@ class LegacyDatabaseMigrator {
           LegacyDatabaseMigrationFailure.unsupportedSourceVersion,
         );
       }
-      final sourceTables = await _readTableNames(source);
-      ownsPendingFileSet = true;
-      await _deletePendingFileSet(pendingPath);
-      pending = await _databaseFactory.openPending(
-        path: pendingPath,
-        password: databasePassword,
-        version: targetSchemaVersion,
-        onCreate: _createTargetSchema,
-      );
+      final sourceTables = await LegacyMigrationSchema.readTableNames(source);
+      if (!await LegacyMigrationSchema.hasRequiredSchema(
+        source,
+        sourceVersion,
+        sourceTables,
+      )) {
+        throw const LegacyDatabaseMigrationException(
+          LegacyDatabaseMigrationFailure.sourceSchemaMismatch,
+        );
+      }
+      try {
+        pending = await _databaseFactory.openPending(
+          path: pendingPath,
+          password: databasePassword,
+          version: targetSchemaVersion,
+          onCreate: _createTargetSchema,
+        );
+      } catch (_) {
+        throw const LegacyDatabaseMigrationException(
+          LegacyDatabaseMigrationFailure.pendingUnavailable,
+        );
+      }
 
       final preservedCounts = <String, int>{};
       final expectedFieldDigests = <_FieldIdentity, Digest?>{};
+      final expectedRowDigests = <_RowIdentity, Digest>{};
       await pending.transaction((transaction) async {
-        for (final table in _preservedTables) {
+        for (final table in LegacyMigrationSchema.preservedTables) {
           final rows = sourceTables.contains(table)
               ? await source.query(table)
               : const <Map<String, Object?>>[];
           preservedCounts[table] = rows.length;
           for (final row in rows) {
             final transformed = _transformRow(table, row, expectedFieldDigests);
+            expectedRowDigests[_rowIdentity(table, transformed)] =
+                _nonSecretDigest(table, transformed);
             await transaction.insert(table, transformed);
           }
         }
@@ -139,12 +193,17 @@ class LegacyDatabaseMigrator {
         });
       });
 
-      await _validatePreservedCounts(pending, preservedCounts);
+      await _validatePreservedRows(
+        pending,
+        preservedCounts,
+        expectedRowDigests,
+      );
       await _validateEncryptedFields(pending, expectedFieldDigests);
       final quickCheck = await _readQuickCheck(pending);
       if (quickCheck != 'ok') {
         throw StateError('Pending database integrity validation failed.');
       }
+      await _checkpoint(pending);
 
       final result = LegacyDatabaseMigrationResult(
         sourceSchemaVersion: sourceVersion,
@@ -152,32 +211,12 @@ class LegacyDatabaseMigrator {
         quickCheck: quickCheck,
         preservedRowCounts: Map.unmodifiable(preservedCounts),
       );
-      completed = true;
       return result;
     } finally {
       try {
         await pending?.close();
       } finally {
-        try {
-          await source.close();
-        } finally {
-          if (ownsPendingFileSet && !completed) {
-            await _deletePendingFileSet(pendingPath);
-          }
-        }
-      }
-    }
-  }
-
-  Future<void> _deletePendingFileSet(String pendingPath) async {
-    for (final path in <String>[
-      pendingPath,
-      '$pendingPath-wal',
-      '$pendingPath-shm',
-    ]) {
-      final file = File(path);
-      if (file.existsSync()) {
-        await file.delete();
+        await source.close();
       }
     }
   }
@@ -280,18 +319,72 @@ class LegacyDatabaseMigrator {
     }
   }
 
-  Future<void> _validatePreservedCounts(
+  Future<void> _validatePreservedRows(
     Database database,
-    Map<String, int> expected,
+    Map<String, int> expectedCounts,
+    Map<_RowIdentity, Digest> expectedDigests,
   ) async {
-    for (final entry in expected.entries) {
-      final rows = await database.rawQuery(
-        'SELECT COUNT(*) AS row_count FROM ${entry.key}',
-      );
-      if (rows.single['row_count'] != entry.value) {
+    final actualDigests = <_RowIdentity, Digest>{};
+    for (final entry in expectedCounts.entries) {
+      final rows = await database.query(entry.key);
+      if (rows.length != entry.value) {
         throw StateError('Pending database row-count validation failed.');
       }
+      for (final row in rows) {
+        final identity = _rowIdentity(entry.key, row);
+        final previous = actualDigests[identity];
+        if (previous != null) {
+          throw StateError('Pending database primary-key validation failed.');
+        }
+        actualDigests[identity] = _nonSecretDigest(entry.key, row);
+      }
     }
+    if (actualDigests.length != expectedDigests.length) {
+      throw StateError('Pending database row inventory is incomplete.');
+    }
+    for (final entry in expectedDigests.entries) {
+      if (actualDigests[entry.key] != entry.value) {
+        throw StateError('Pending database non-secret validation failed.');
+      }
+    }
+  }
+
+  _RowIdentity _rowIdentity(String table, Map<String, Object?> row) {
+    final primaryKeyColumns = LegacyMigrationSchema.primaryKeyColumns[table];
+    if (primaryKeyColumns == null) {
+      throw StateError('Missing migration primary-key definition.');
+    }
+    final primaryKey = jsonEncode(
+      primaryKeyColumns
+          .map((column) => <Object?>[column, _canonicalSqlValue(row[column])])
+          .toList(growable: false),
+    );
+    return (table: table, primaryKey: primaryKey);
+  }
+
+  Digest _nonSecretDigest(String table, Map<String, Object?> row) {
+    final encryptedColumns =
+        LegacyMigrationSchema.encryptedColumns[table] ?? const <String>{};
+    final columns =
+        row.keys.where((column) => !encryptedColumns.contains(column)).toList()
+          ..sort();
+    final canonical = jsonEncode(
+      columns
+          .map((column) => <Object?>[column, _canonicalSqlValue(row[column])])
+          .toList(growable: false),
+    );
+    return sha256.convert(utf8.encode(canonical));
+  }
+
+  Object _canonicalSqlValue(Object? value) {
+    return switch (value) {
+      null => const <Object?>['null'],
+      int value => <Object?>['integer', value.toString()],
+      double value => <Object?>['real', value.toString()],
+      String value => <Object?>['text', value],
+      List<int> value => <Object?>['blob', base64Encode(value)],
+      _ => throw StateError('Unsupported SQLite value in migration inventory.'),
+    };
   }
 
   Future<void> _validateEncryptedFields(
@@ -354,16 +447,20 @@ class LegacyDatabaseMigrator {
     return row.values.single as int;
   }
 
-  Future<Set<String>> _readTableNames(Database database) async {
-    final rows = await database.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type = 'table'",
-    );
-    return rows.map((row) => row['name']! as String).toSet();
-  }
-
   Future<String> _readQuickCheck(Database database) async {
     final row = (await database.rawQuery('PRAGMA quick_check')).single;
     return row.values.single.toString();
+  }
+
+  Future<void> _checkpoint(Database database) async {
+    final rows = await database.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    if (rows.length != 1) {
+      throw StateError('Database checkpoint did not return a status.');
+    }
+    final busy = rows.single['busy'] ?? rows.single.values.firstOrNull;
+    if (busy != 0) {
+      throw StateError('Database checkpoint is busy.');
+    }
   }
 
   void _requireJsonObject(String value) {

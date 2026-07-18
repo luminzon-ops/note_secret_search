@@ -15,6 +15,41 @@ enum NativeSecurityStatus {
 
 enum KeySecurityLevel { strongBox, tee, software, unknown }
 
+enum NativeLegacyMigrationStage {
+  detected,
+  keyringReady,
+  backupReady,
+  pendingCreated,
+  rowsCopied,
+  validated,
+  oldMoved,
+  newActivated,
+  postSwapValidated,
+  cleanupComplete,
+}
+
+class NativeLegacyMigrationState {
+  const NativeLegacyMigrationState({
+    required this.stage,
+    required this.keyId,
+    required this.sourcePath,
+    required this.pendingPath,
+    required this.activePath,
+    required this.sourceDigest,
+    required this.pendingDigest,
+    required this.activeDigest,
+  });
+
+  final NativeLegacyMigrationStage stage;
+  final String? keyId;
+  final String sourcePath;
+  final String pendingPath;
+  final String activePath;
+  final String? sourceDigest;
+  final String? pendingDigest;
+  final String? activeDigest;
+}
+
 class NativeSecurityState {
   const NativeSecurityState({
     required this.status,
@@ -23,6 +58,8 @@ class NativeSecurityState {
     required this.deviceCredentialAvailable,
     required this.strongBiometricAvailable,
     required this.securityLevel,
+    this.systemRebindRequired = false,
+    this.pinResetRequired = false,
   });
 
   final NativeSecurityStatus status;
@@ -31,6 +68,8 @@ class NativeSecurityState {
   final bool deviceCredentialAvailable;
   final bool strongBiometricAvailable;
   final KeySecurityLevel securityLevel;
+  final bool systemRebindRequired;
+  final bool pinResetRequired;
 }
 
 class NativeUnlockResult {
@@ -39,12 +78,14 @@ class NativeUnlockResult {
     required this.databaseKey,
     required this.fieldKey,
     required this.unlockMethod,
+    this.legacyDatabasePassword,
   });
 
   final String keyId;
   final Uint8List databaseKey;
   final Uint8List fieldKey;
   final String unlockMethod;
+  final Uint8List? legacyDatabasePassword;
 
   bool _isCleared = false;
 
@@ -53,6 +94,7 @@ class NativeUnlockResult {
   void clear() {
     databaseKey.fillRange(0, databaseKey.length, 0);
     fieldKey.fillRange(0, fieldKey.length, 0);
+    legacyDatabasePassword?.fillRange(0, legacyDatabasePassword!.length, 0);
     _isCleared = true;
   }
 }

@@ -335,12 +335,6 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
   Future<void> configurePin({required String pin}) async {}
 
   @override
-  Future<void> ensureRootKey() async {}
-
-  @override
-  Future<String> getDatabasePasswordMaterial() async => 'material';
-
-  @override
   Future<NativeSecurityState> getSecurityState() async {
     return const NativeSecurityState(
       status: NativeSecurityStatus.locked,
@@ -382,6 +376,9 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
     return await (unlockResult ??
         Future<NativeUnlockResult>.value(_pinUnlockMaterial()));
   }
+
+  @override
+  Future<void> rebindSystemAuthWithPin({required String pin}) async {}
 }
 
 NativeUnlockResult _pinUnlockMaterial() {

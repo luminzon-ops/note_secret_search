@@ -87,6 +87,58 @@ internal class PinKeyringCoordinator(
         }
     }
 
+    fun rebindSystemAuthWithPin(
+        reason: String,
+        keyset: SecurityKeyset,
+        pin: ByteArray,
+        rebinder: SystemKeyringRebinder,
+        result: NativeResult<Unit>,
+    ) {
+        val envelope = keyset.pinEnvelope
+        if (envelope == null || !isValidPin(pin)) {
+            pin.fill(0)
+            result.error(
+                NativeSecurityException(NativeSecurityErrorCode.INVALID_ARGUMENT),
+            )
+            return
+        }
+        val pinGeneration = PinEnvelopeGeneration.create(
+            keyId = keyset.keyId,
+            envelope = envelope,
+        )
+        try {
+            throttle.checkAllowed(pinGeneration)
+        } catch (error: Throwable) {
+            pin.fill(0)
+            result.error(KeyringCrypto.mapKeyError(error))
+            return
+        }
+        try {
+            val handle = worker.execute {
+                rebindOnWorker(
+                    reason = reason,
+                    keyset = keyset,
+                    envelope = envelope,
+                    pinGeneration = pinGeneration,
+                    pin = pin,
+                    rebinder = rebinder,
+                    result = result,
+                )
+            }
+            if (!result.registerCancellationCleanup {
+                    handle.cancel()
+                    pin.fill(0)
+                }
+            ) {
+                handle.cancel()
+                pin.fill(0)
+            }
+        } catch (error: Throwable) {
+            pin.fill(0)
+            result.error(KeyringCrypto.mapKeyError(error))
+        }
+    }
+
     fun removePin(
         reason: String,
         keyset: SecurityKeyset,
@@ -101,7 +153,10 @@ internal class PinKeyringCoordinator(
             if (keyset.pinEnvelope != null) {
                 envelopeStore.write(
                     SecurityKeysetCodec.encode(
-                        keyset.copy(pinEnvelope = null),
+                        keyset.copy(
+                            pinEnvelope = null,
+                            pinResetRequired = false,
+                        ),
                     ),
                 )
             }
@@ -137,7 +192,10 @@ internal class PinKeyringCoordinator(
                     )
                     envelopeStore.write(
                         SecurityKeysetCodec.encode(
-                            keyset.copy(pinEnvelope = pinEnvelope),
+                            keyset.copy(
+                                pinEnvelope = pinEnvelope,
+                                pinResetRequired = false,
+                            ),
                         ),
                     )
                     Unit
@@ -211,6 +269,66 @@ internal class PinKeyringCoordinator(
         } finally {
             masterKey?.fill(0)
             material?.zeroize()
+            pin.fill(0)
+        }
+    }
+
+    private fun rebindOnWorker(
+        reason: String,
+        keyset: SecurityKeyset,
+        envelope: PinEnvelope,
+        pinGeneration: String,
+        pin: ByteArray,
+        rebinder: SystemKeyringRebinder,
+        result: NativeResult<Unit>,
+    ) {
+        var masterKey: ByteArray? = null
+        var transferred = false
+        try {
+            masterKey = crypto.unwrap(keyset.keyId, envelope, pin)
+            if (masterKey.size != KeyringCrypto.MASTER_KEY_BYTES) {
+                throw NativeSecurityException(
+                    NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                )
+            }
+            throttle.recordSuccess(pinGeneration)
+            val recoveredMasterKey = masterKey
+            if (!result.registerCancellationCleanup {
+                    recoveredMasterKey.fill(0)
+                }
+            ) {
+                return
+            }
+            transferred = result.runIfActive {
+                rebinder.rebind(
+                    reason = reason,
+                    keyset = keyset,
+                    masterKey = recoveredMasterKey,
+                    capabilities = capabilities(),
+                    result = result,
+                )
+            }
+        } catch (error: Throwable) {
+            val mapped = KeyringCrypto.mapKeyError(error)
+            result.runIfActive {
+                val throttleError = if (
+                    mapped.code == NativeSecurityErrorCode.PIN_INCORRECT
+                ) {
+                    try {
+                        throttle.recordFailure(pinGeneration)
+                        null
+                    } catch (storageError: Throwable) {
+                        KeyringCrypto.mapKeyError(storageError)
+                    }
+                } else {
+                    null
+                }
+                result.error(throttleError ?: mapped)
+            }
+        } finally {
+            if (!transferred) {
+                masterKey?.fill(0)
+            }
             pin.fill(0)
         }
     }

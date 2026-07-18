@@ -1,9 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/database_key_provider.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/native_security_bridge.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +26,8 @@ void main() {
         'deviceCredentialAvailable': true,
         'strongBiometricAvailable': false,
         'securityLevel': 'strongBox',
+        'systemRebindRequired': true,
+        'pinResetRequired': false,
       };
     });
 
@@ -38,6 +40,8 @@ void main() {
     expect(state.deviceCredentialAvailable, isTrue);
     expect(state.strongBiometricAvailable, isFalse);
     expect(state.securityLevel, KeySecurityLevel.strongBox);
+    expect(state.systemRebindRequired, isTrue);
+    expect(state.pinResetRequired, isFalse);
   });
 
   test('getSecurityState accepts unprovisioned state without keyId', () async {
@@ -183,6 +187,85 @@ void main() {
     expect(result.fieldKey, everyElement(0));
   });
 
+  test('legacy migration methods use the dedicated channel contract', () async {
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      switch (call.method) {
+        case 'beginLegacyMigration':
+          expect(call.arguments, <String, Object?>{'reason': '升级安全存储'});
+          return <String, Object?>{
+            'keyId': _validKeyId,
+            'databaseKey': Uint8List(32),
+            'fieldKey': Uint8List(32),
+            'unlockMethod': 'system',
+            'legacyDatabasePassword': Uint8List.fromList(
+              utf8.encode('legacy-password'),
+            ),
+          };
+        case 'getLegacyMigrationState':
+          return _migrationStatePayload('detected');
+        case 'prepareLegacyMigrationBackup':
+        case 'prepareLegacyMigrationPending':
+        case 'markLegacyMigrationRowsCopied':
+        case 'markLegacyMigrationValidated':
+        case 'activateLegacyMigration':
+        case 'markLegacyMigrationPostSwapValidated':
+        case 'cleanupLegacyMigrationFiles':
+          expect(call.arguments, <String, Object?>{'keyId': _validKeyId});
+          return _migrationStatePayload('cleanupComplete');
+        case 'commitLegacyMigration':
+          expect(call.arguments, <String, Object?>{
+            'keyId': _validKeyId,
+            'activeDigest': 'b' * 64,
+          });
+          return null;
+        case 'finishLegacyMigration':
+          expect(call.arguments, <String, Object?>{'keyId': _validKeyId});
+          return null;
+        case 'abortLegacyMigration':
+          return null;
+      }
+      fail('Unexpected method: ${call.method}');
+    });
+    const bridge = MethodChannelNativeSecurityBridge();
+
+    final material = await bridge.beginLegacyMigration();
+    addTearDown(material.clear);
+    final detected = await bridge.getLegacyMigrationState();
+    await bridge.prepareLegacyMigrationBackup(_validKeyId);
+    await bridge.prepareLegacyMigrationPending(_validKeyId);
+    await bridge.markLegacyMigrationRowsCopied(_validKeyId);
+    await bridge.markLegacyMigrationValidated(_validKeyId);
+    await bridge.activateLegacyMigration(_validKeyId);
+    await bridge.markLegacyMigrationPostSwapValidated(_validKeyId);
+    await bridge.cleanupLegacyMigrationFiles(_validKeyId);
+    await bridge.commitLegacyMigration(
+      keyId: _validKeyId,
+      activeDigest: 'b' * 64,
+    );
+    await bridge.finishLegacyMigration(_validKeyId);
+    await bridge.abortLegacyMigration();
+
+    expect(material.keyId, _validKeyId);
+    expect(utf8.decode(material.legacyDatabasePassword!), 'legacy-password');
+    expect(detected.stage, NativeLegacyMigrationStage.detected);
+    expect(calls, <String>[
+      'beginLegacyMigration',
+      'getLegacyMigrationState',
+      'prepareLegacyMigrationBackup',
+      'prepareLegacyMigrationPending',
+      'markLegacyMigrationRowsCopied',
+      'markLegacyMigrationValidated',
+      'activateLegacyMigration',
+      'markLegacyMigrationPostSwapValidated',
+      'cleanupLegacyMigrationFiles',
+      'commitLegacyMigration',
+      'finishLegacyMigration',
+      'abortLegacyMigration',
+    ]);
+  });
+
   test('NativeUnlockResult takes ownership of decoder key arrays', () {
     final databaseKey = Uint8List.fromList(List<int>.filled(32, 7));
     final fieldKey = Uint8List.fromList(List<int>.filled(32, 9));
@@ -288,6 +371,32 @@ void main() {
 
     expect(transmittedPin, everyElement(0));
   });
+
+  test(
+    'rebindSystemAuthWithPin forwards and clears temporary pin bytes',
+    () async {
+      Uint8List? transmittedPin;
+      Uint8List? capturedPin;
+      final bridge = MethodChannelNativeSecurityBridge(
+        invoker: _CallbackNativeSecurityMethodInvoker((
+          method,
+          arguments,
+        ) async {
+          expect(method, 'rebindSystemAuthWithPin');
+          final payload = arguments as Map<Object?, Object?>;
+          expect(payload['reason'], '恢复系统认证');
+          transmittedPin = payload['pin'] as Uint8List;
+          capturedPin = Uint8List.fromList(transmittedPin!);
+          return null;
+        }),
+      );
+
+      await bridge.rebindSystemAuthWithPin(pin: '2468', reason: '恢复系统认证');
+
+      expect(capturedPin, orderedEquals('2468'.codeUnits));
+      expect(transmittedPin, everyElement(0));
+    },
+  );
 
   test('removePin forwards its authenticated reason', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -422,6 +531,49 @@ void main() {
     );
   });
 
+  test('migration state rejects a pending path outside the migration root', () {
+    final payload = _migrationStatePayload('pendingCreated')
+      ..['pendingPath'] = r'E:\app\documents\note_secret_search.db';
+
+    expect(
+      () => parseNativeLegacyMigrationState(payload),
+      throwsFormatException,
+    );
+  });
+
+  test('migration state rejects path traversal', () {
+    final payload = _migrationStatePayload('pendingCreated')
+      ..['pendingPath'] =
+          r'E:\app\no_backup\security\migration-v2\pending\..\..\victim.db';
+
+    expect(
+      () => parseNativeLegacyMigrationState(payload),
+      throwsFormatException,
+    );
+  });
+
+  test('migration state rejects an active database inside the workspace', () {
+    final payload = _migrationStatePayload('pendingCreated')
+      ..['activePath'] =
+          r'E:\app\no_backup\security\migration-v2\active\note_secret_search.db';
+
+    expect(
+      () => parseNativeLegacyMigrationState(payload),
+      throwsFormatException,
+    );
+  });
+
+  test('migration state accepts the fixed Android migration layout', () {
+    final state = parseNativeLegacyMigrationState(
+      _migrationStatePayload('pendingCreated'),
+    );
+
+    expect(
+      state.pendingPath,
+      r'E:\app\no_backup\security\migration-v2\pending\note_secret_search.db',
+    );
+  });
+
   test('PlatformException is mapped to NativeSecurityException', () async {
     messenger.setMockMethodCallHandler(channel, (call) async {
       throw PlatformException(
@@ -447,110 +599,22 @@ void main() {
       ),
     );
   });
-
-  test(
-    'native security bridge rejects null database password material',
-    () async {
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        expect(call.method, 'getDatabasePasswordMaterial');
-        return null;
-      });
-
-      await expectLater(
-        const MethodChannelNativeSecurityBridge().getDatabasePasswordMaterial(),
-        throwsA(isA<StateError>()),
-      );
-    },
-  );
-
-  test(
-    'native security bridge rejects blank database password material',
-    () async {
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        expect(call.method, 'getDatabasePasswordMaterial');
-        return '   ';
-      });
-
-      await expectLater(
-        const MethodChannelNativeSecurityBridge().getDatabasePasswordMaterial(),
-        throwsA(isA<StateError>()),
-      );
-    },
-  );
-
-  test('database key provider rejects blank gateway material', () async {
-    final provider = NativeDatabaseKeyProvider(
-      secureKeyGateway: _StaticSecureKeyGateway('  '),
-    );
-
-    await expectLater(
-      provider.getDatabasePassword(),
-      throwsA(isA<StateError>()),
-    );
-  });
-
-  test('database key provider returns trimmed valid material', () async {
-    final provider = NativeDatabaseKeyProvider(
-      secureKeyGateway: _StaticSecureKeyGateway(' valid-material '),
-    );
-
-    expect(await provider.getDatabasePassword(), 'valid-material');
-  });
 }
 
-class _StaticSecureKeyGateway implements SecureKeyGateway {
-  _StaticSecureKeyGateway(this.material);
-
-  final String material;
-
-  @override
-  Future<void> ensureRootKey() async {}
-
-  @override
-  Future<String> getDatabasePasswordMaterial() async => material;
-
-  @override
-  Future<NativeSecurityState> getSecurityState() async {
-    return const NativeSecurityState(
-      status: NativeSecurityStatus.locked,
-      keyId: _validKeyId,
-      pinConfigured: false,
-      deviceCredentialAvailable: true,
-      strongBiometricAvailable: true,
-      securityLevel: KeySecurityLevel.tee,
-    );
-  }
-
-  @override
-  Future<NativeUnlockResult> provisionWithSystemAuth() {
-    return unlockWithSystemAuth();
-  }
-
-  @override
-  Future<NativeUnlockResult> unlockWithSystemAuth() async {
-    return NativeUnlockResult(
-      keyId: _validKeyId,
-      databaseKey: Uint8List(32),
-      fieldKey: Uint8List(32),
-      unlockMethod: 'system',
-    );
-  }
-
-  @override
-  Future<void> configurePin({required String pin}) async {}
-
-  @override
-  Future<NativeUnlockResult> unlockWithPin({required String pin}) async {
-    return NativeUnlockResult(
-      keyId: _validKeyId,
-      databaseKey: Uint8List(32),
-      fieldKey: Uint8List(32),
-      unlockMethod: 'pin',
-    );
-  }
-
-  @override
-  Future<void> removePin() async {}
+Map<String, Object?> _migrationStatePayload(String stage) {
+  final detected = stage == 'detected';
+  return <String, Object?>{
+    'stage': stage,
+    'keyId': detected ? null : _validKeyId,
+    'sourcePath':
+        r'E:\app\no_backup\security\migration-v2\backup\note_secret_search.db',
+    'pendingPath':
+        r'E:\app\no_backup\security\migration-v2\pending\note_secret_search.db',
+    'activePath': r'E:\app\databases\note_secret_search.db',
+    'sourceDigest': detected ? null : 'a' * 64,
+    'pendingDigest': detected ? null : 'b' * 64,
+    'activeDigest': detected ? null : 'b' * 64,
+  };
 }
 
 class _CallbackNativeSecurityMethodInvoker
@@ -573,6 +637,8 @@ Map<String, Object?> _validStatePayload() {
     'deviceCredentialAvailable': true,
     'strongBiometricAvailable': true,
     'securityLevel': 'tee',
+    'systemRebindRequired': false,
+    'pinResetRequired': false,
   };
 }
 

@@ -12,6 +12,10 @@ interface SecurityEnvelopeStore {
     fun write(value: ByteArray)
 }
 
+internal fun SecurityEnvelopeStore.readRecoverableKeyset(): SecurityKeyset? {
+    return read()?.let(SecurityKeysetCodec::decodeRecoverable)
+}
+
 class AtomicFileSecurityEnvelopeStore private constructor(
     private val access: AtomicFileAccess,
 ) : SecurityEnvelopeStore {

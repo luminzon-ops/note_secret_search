@@ -4,8 +4,11 @@ import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONArray
+import org.json.JSONObject
 
 class SecurityKeysetCodecTest {
     private val envelope = SecurityEnvelope(
@@ -88,17 +91,7 @@ class SecurityKeysetCodecTest {
 
     @Test
     fun `round trips an Argon2id PIN envelope beside system envelopes`() {
-        val pinEnvelope = PinEnvelope(
-            kdf = PinKdfParameters(
-                memoryKiB = 65_536,
-                iterations = 3,
-                parallelism = 1,
-                salt = ByteArray(16) { (it + 3).toByte() },
-            ),
-            nonce = ByteArray(12) { (it + 20).toByte() },
-            ciphertext = ByteArray(32) { (it + 40).toByte() },
-            tag = ByteArray(16) { (it + 80).toByte() },
-        )
+        val pinEnvelope = pinEnvelope()
         val withPin = keyset.copy(pinEnvelope = pinEnvelope)
 
         val decoded = SecurityKeysetCodec.decode(
@@ -107,6 +100,32 @@ class SecurityKeysetCodecTest {
 
         assertEquals(listOf(envelope), decoded.envelopes)
         assertEquals(pinEnvelope, decoded.pinEnvelope)
+    }
+
+    @Test
+    fun `recoverable decode isolates malformed PIN JSON types`() {
+        val encoded = SecurityKeysetCodec.encode(
+            keyset.copy(pinEnvelope = pinEnvelope()),
+        )
+
+        listOf(
+            JSONObject.NULL,
+            "not-an-object",
+            JSONArray(),
+            JSONObject().put("purpose", "pin").put("kdf", "not-an-object"),
+        ).forEach { malformedPin ->
+            val root = JSONObject(encoded.toString(StandardCharsets.UTF_8))
+                .put("pinEnvelope", malformedPin)
+
+            val decoded = SecurityKeysetCodec.decodeRecoverable(
+                root.toString().toByteArray(StandardCharsets.UTF_8),
+            )
+
+            assertEquals(keyset.keyId, decoded.keyId)
+            assertEquals(keyset.envelopes, decoded.envelopes)
+            assertNull(decoded.pinEnvelope)
+            assertTrue(decoded.pinResetRequired)
+        }
     }
 
     @Test(expected = NativeSecurityException::class)
@@ -150,5 +169,19 @@ class SecurityKeysetCodecTest {
             .toByteArray(StandardCharsets.UTF_8)
 
         SecurityKeysetCodec.decode(malformed)
+    }
+
+    private fun pinEnvelope(): PinEnvelope {
+        return PinEnvelope(
+            kdf = PinKdfParameters(
+                memoryKiB = 65_536,
+                iterations = 3,
+                parallelism = 1,
+                salt = ByteArray(16) { (it + 3).toByte() },
+            ),
+            nonce = ByteArray(12) { (it + 20).toByte() },
+            ciphertext = ByteArray(32) { (it + 40).toByte() },
+            tag = ByteArray(16) { (it + 80).toByte() },
+        )
     }
 }

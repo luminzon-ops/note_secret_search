@@ -66,6 +66,17 @@ object SecurityKeysetCodec {
     }
 
     fun decode(value: ByteArray): SecurityKeyset {
+        return decodeInternal(value, recoverCorruptPin = false)
+    }
+
+    fun decodeRecoverable(value: ByteArray): SecurityKeyset {
+        return decodeInternal(value, recoverCorruptPin = true)
+    }
+
+    private fun decodeInternal(
+        value: ByteArray,
+        recoverCorruptPin: Boolean,
+    ): SecurityKeyset {
         if (value.isEmpty() || value.size > MAX_KEYSET_BYTES) {
             corrupt()
         }
@@ -90,14 +101,32 @@ object SecurityKeysetCodec {
                     add(decodeEnvelope(array.getJSONObject(index)))
                 }
             }
+            var pinResetRequired = false
+            val pinEnvelope = if (root.has("pinEnvelope")) {
+                try {
+                    decodePinEnvelope(root.getJSONObject("pinEnvelope"))
+                } catch (error: Exception) {
+                    if (!recoverCorruptPin) {
+                        throw if (error is NativeSecurityException) {
+                            error
+                        } else {
+                            NativeSecurityException(
+                                NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                                error,
+                            )
+                        }
+                    }
+                    pinResetRequired = true
+                    null
+                }
+            } else {
+                null
+            }
             SecurityKeyset(
                 keyId = keyId,
                 envelopes = envelopes,
-                pinEnvelope = if (root.has("pinEnvelope")) {
-                    decodePinEnvelope(root.getJSONObject("pinEnvelope"))
-                } else {
-                    null
-                },
+                pinEnvelope = pinEnvelope,
+                pinResetRequired = pinResetRequired,
             ).also(::validateKeyset)
         } catch (error: NativeSecurityException) {
             throw error

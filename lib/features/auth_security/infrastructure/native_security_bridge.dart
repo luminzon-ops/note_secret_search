@@ -2,6 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
+import 'package:note_secret_search/features/auth_security/infrastructure/native_security_payload_parser.dart';
+
+export 'package:note_secret_search/features/auth_security/infrastructure/native_security_payload_parser.dart'
+    show parseNativeLegacyMigrationState, parseNativeUnlockResult;
 
 abstract interface class NativeSecurityBridge {
   Future<void> enableScreenshotProtection();
@@ -20,15 +24,14 @@ abstract interface class NativeSecurityBridge {
 
   Future<NativeUnlockResult> unlockWithPin({required String pin});
 
+  Future<void> rebindSystemAuthWithPin({
+    required String pin,
+    String reason = '恢复系统认证',
+  });
+
   Future<void> removePin({String reason = '移除备用 PIN'});
 
   Future<void> lock();
-
-  /// Compatibility-only until production orchestration moves to the P2A API.
-  Future<void> ensureRootKey();
-
-  /// Compatibility-only until production orchestration moves to the P2A API.
-  Future<String> getDatabasePasswordMaterial();
 
   /// Compatibility-only until production orchestration moves to the P2A API.
   Future<BiometricAvailability> getBiometricAvailability();
@@ -37,11 +40,47 @@ abstract interface class NativeSecurityBridge {
   Future<bool> authenticateWithBiometrics({String reason = '解锁保险库'});
 }
 
+abstract interface class NativeSecurityMigrationBridge {
+  Future<NativeUnlockResult> beginLegacyMigration({String reason = '升级安全存储'});
+
+  Future<NativeLegacyMigrationState> getLegacyMigrationState();
+
+  Future<NativeLegacyMigrationState> prepareLegacyMigrationBackup(String keyId);
+
+  Future<NativeLegacyMigrationState> prepareLegacyMigrationPending(
+    String keyId,
+  );
+
+  Future<NativeLegacyMigrationState> markLegacyMigrationRowsCopied(
+    String keyId,
+  );
+
+  Future<NativeLegacyMigrationState> markLegacyMigrationValidated(String keyId);
+
+  Future<NativeLegacyMigrationState> activateLegacyMigration(String keyId);
+
+  Future<NativeLegacyMigrationState> markLegacyMigrationPostSwapValidated(
+    String keyId,
+  );
+
+  Future<NativeLegacyMigrationState> cleanupLegacyMigrationFiles(String keyId);
+
+  Future<void> commitLegacyMigration({
+    required String keyId,
+    required String activeDigest,
+  });
+
+  Future<void> finishLegacyMigration(String keyId);
+
+  Future<void> abortLegacyMigration();
+}
+
 abstract interface class NativeSecurityMethodInvoker {
   Future<Object?> invokeMethod(String method, [Object? arguments]);
 }
 
-class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
+class MethodChannelNativeSecurityBridge
+    implements NativeSecurityBridge, NativeSecurityMigrationBridge {
   const MethodChannelNativeSecurityBridge({
     NativeSecurityMethodInvoker invoker =
         const _MethodChannelNativeSecurityMethodInvoker(),
@@ -64,24 +103,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
   @override
   Future<NativeSecurityState> getSecurityState() async {
     final payload = await _invokeMethod<Object?>('getSecurityState');
-    if (payload is! Map) {
-      throw const FormatException('Invalid native security state payload.');
-    }
-
-    final status = _parseSecurityStatus(payload['status']);
-    return NativeSecurityState(
-      status: status,
-      keyId: _parseKeyId(
-        payload['keyId'],
-        requiredForPayload: status == NativeSecurityStatus.locked,
-      ),
-      pinConfigured: _parseBool(payload['pinConfigured']),
-      deviceCredentialAvailable: _parseBool(
-        payload['deviceCredentialAvailable'],
-      ),
-      strongBiometricAvailable: _parseBool(payload['strongBiometricAvailable']),
-      securityLevel: _parseSecurityLevel(payload['securityLevel']),
-    );
+    return parseNativeSecurityState(payload);
   }
 
   @override
@@ -118,7 +140,7 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
         'pin': pinBytes,
       });
     } finally {
-      _clearReceivedKey(pinBytes);
+      pinBytes.fillRange(0, pinBytes.length, 0);
     }
   }
 
@@ -132,7 +154,23 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
       );
       return parseNativeUnlockResult(payload, expectedUnlockMethod: 'pin');
     } finally {
-      _clearReceivedKey(pinBytes);
+      pinBytes.fillRange(0, pinBytes.length, 0);
+    }
+  }
+
+  @override
+  Future<void> rebindSystemAuthWithPin({
+    required String pin,
+    String reason = '恢复系统认证',
+  }) async {
+    final pinBytes = Uint8List.fromList(utf8.encode(pin));
+    try {
+      await _invokeMethod<void>('rebindSystemAuthWithPin', <String, Object?>{
+        'reason': reason,
+        'pin': pinBytes,
+      });
+    } finally {
+      pinBytes.fillRange(0, pinBytes.length, 0);
     }
   }
 
@@ -146,21 +184,103 @@ class MethodChannelNativeSecurityBridge implements NativeSecurityBridge {
     await _invokeMethod<void>('lock');
   }
 
-  // Compatibility-only implementation for pre-P2A callers.
   @override
-  Future<void> ensureRootKey() async {
-    await _invokeMethod<void>('ensureRootKey');
+  Future<NativeUnlockResult> beginLegacyMigration({
+    String reason = '升级安全存储',
+  }) async {
+    final payload = await _invokeMethod<Object?>(
+      'beginLegacyMigration',
+      <String, Object?>{'reason': reason},
+    );
+    return parseNativeUnlockResult(
+      payload,
+      expectedUnlockMethod: 'system',
+      requireLegacyDatabasePassword: true,
+    );
   }
 
-  // Compatibility-only implementation for pre-P2A callers.
   @override
-  Future<String> getDatabasePasswordMaterial() async {
-    final value = await _invokeMethod<String>('getDatabasePasswordMaterial');
-    final material = value?.trim();
-    if (material == null || material.isEmpty) {
-      throw StateError('Database key material is unavailable.');
-    }
-    return material;
+  Future<NativeLegacyMigrationState> getLegacyMigrationState() {
+    return _migrationState('getLegacyMigrationState');
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> prepareLegacyMigrationBackup(
+    String keyId,
+  ) {
+    return _migrationState('prepareLegacyMigrationBackup', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> prepareLegacyMigrationPending(
+    String keyId,
+  ) {
+    return _migrationState('prepareLegacyMigrationPending', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> markLegacyMigrationRowsCopied(
+    String keyId,
+  ) {
+    return _migrationState('markLegacyMigrationRowsCopied', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> markLegacyMigrationValidated(
+    String keyId,
+  ) {
+    return _migrationState('markLegacyMigrationValidated', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> activateLegacyMigration(String keyId) {
+    return _migrationState('activateLegacyMigration', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> markLegacyMigrationPostSwapValidated(
+    String keyId,
+  ) {
+    return _migrationState('markLegacyMigrationPostSwapValidated', keyId);
+  }
+
+  @override
+  Future<NativeLegacyMigrationState> cleanupLegacyMigrationFiles(String keyId) {
+    return _migrationState('cleanupLegacyMigrationFiles', keyId);
+  }
+
+  @override
+  Future<void> commitLegacyMigration({
+    required String keyId,
+    required String activeDigest,
+  }) async {
+    await _invokeMethod<void>('commitLegacyMigration', <String, Object?>{
+      'keyId': keyId,
+      'activeDigest': activeDigest,
+    });
+  }
+
+  @override
+  Future<void> finishLegacyMigration(String keyId) async {
+    await _invokeMethod<void>('finishLegacyMigration', <String, Object?>{
+      'keyId': keyId,
+    });
+  }
+
+  @override
+  Future<void> abortLegacyMigration() async {
+    await _invokeMethod<void>('abortLegacyMigration');
+  }
+
+  Future<NativeLegacyMigrationState> _migrationState(
+    String method, [
+    String? keyId,
+  ]) async {
+    final payload = await _invokeMethod<Object?>(
+      method,
+      keyId == null ? null : <String, Object?>{'keyId': keyId},
+    );
+    return parseNativeLegacyMigrationState(payload);
   }
 
   // Compatibility-only implementation for pre-P2A callers.
@@ -213,91 +333,3 @@ class _MethodChannelNativeSecurityMethodInvoker
     return _channel.invokeMethod<Object?>(method, arguments);
   }
 }
-
-NativeSecurityStatus _parseSecurityStatus(Object? value) {
-  return switch (value) {
-    'unprovisioned' => NativeSecurityStatus.unprovisioned,
-    'legacyMigrationRequired' => NativeSecurityStatus.legacyMigrationRequired,
-    'locked' => NativeSecurityStatus.locked,
-    'recoveryRequired' => NativeSecurityStatus.recoveryRequired,
-    _ => throw const FormatException('Unknown native security status.'),
-  };
-}
-
-KeySecurityLevel _parseSecurityLevel(Object? value) {
-  return switch (value) {
-    'strongBox' => KeySecurityLevel.strongBox,
-    'tee' => KeySecurityLevel.tee,
-    'software' => KeySecurityLevel.software,
-    'unknown' => KeySecurityLevel.unknown,
-    _ => throw const FormatException('Unknown key security level.'),
-  };
-}
-
-NativeUnlockResult parseNativeUnlockResult(
-  Object? payload, {
-  String? expectedUnlockMethod,
-}) {
-  if (payload is! Map) {
-    throw const FormatException('Invalid native unlock payload.');
-  }
-
-  final keyId = payload['keyId'];
-  final databaseKey = payload['databaseKey'];
-  final fieldKey = payload['fieldKey'];
-  final unlockMethod = payload['unlockMethod'];
-  try {
-    if (databaseKey is! Uint8List ||
-        fieldKey is! Uint8List ||
-        databaseKey.length != 32 ||
-        fieldKey.length != 32 ||
-        (unlockMethod != 'system' && unlockMethod != 'pin') ||
-        (expectedUnlockMethod != null &&
-            unlockMethod != expectedUnlockMethod)) {
-      throw const FormatException('Invalid native unlock payload.');
-    }
-
-    return NativeUnlockResult(
-      keyId: _parseKeyId(keyId, requiredForPayload: true)!,
-      databaseKey: databaseKey,
-      fieldKey: fieldKey,
-      unlockMethod: unlockMethod as String,
-    );
-  } catch (_) {
-    _clearReceivedKey(databaseKey);
-    _clearReceivedKey(fieldKey);
-    rethrow;
-  }
-}
-
-void _clearReceivedKey(Object? value) {
-  if (value is Uint8List) {
-    value.fillRange(0, value.length, 0);
-  }
-}
-
-String? _parseKeyId(Object? value, {required bool requiredForPayload}) {
-  if (value == null) {
-    if (requiredForPayload) {
-      throw const FormatException('Native security key ID is missing.');
-    }
-    return null;
-  }
-  if (value is! String ||
-      value != value.trim() ||
-      !_canonicalUuidPattern.hasMatch(value)) {
-    throw const FormatException('Native security key ID is invalid.');
-  }
-  return value;
-}
-
-bool _parseBool(Object? value) {
-  if (value is! bool) {
-    throw const FormatException('Invalid native security state payload.');
-  }
-  return value;
-}
-
-final RegExp _canonicalUuidPattern = RegExp(
-  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-);

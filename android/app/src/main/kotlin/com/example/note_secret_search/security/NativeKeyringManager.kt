@@ -1,37 +1,5 @@
 package com.example.note_secret_search.security
 
-interface NativeKeyringOperations {
-    fun getSecurityState(): NativeSecurityState
-
-    fun provisionWithSystemAuth(
-        reason: String,
-        result: NativeResult<NativeUnlockMaterial>,
-    )
-
-    fun unlockWithSystemAuth(
-        reason: String,
-        result: NativeResult<NativeUnlockMaterial>,
-    )
-
-    fun configurePin(
-        reason: String,
-        pin: ByteArray,
-        result: NativeResult<Unit>,
-    )
-
-    fun unlockWithPin(
-        pin: ByteArray,
-        result: NativeResult<NativeUnlockMaterial>,
-    )
-
-    fun removePin(
-        reason: String,
-        result: NativeResult<Unit>,
-    )
-
-    fun lock(): Any?
-}
-
 internal class NativeKeyringManager(
     private val apiLevel: Int,
     private val envelopeStore: SecurityEnvelopeStore,
@@ -43,6 +11,9 @@ internal class NativeKeyringManager(
     pinKdfEngine: PinKdfEngine = Argon2KtPinKdfEngine(),
     private val pinWorker: PinWorkScheduler = SerialPinWorkScheduler(),
     pinThrottle: PinAttemptThrottle,
+    private val migrationFileCoordinator: MigrationFileCoordinator? = null,
+    migrationCompletionVerifier: MigrationCompletionVerifier =
+        migrationFileCoordinator ?: MigrationCompletionVerifier { _, _ -> false },
 ) : NativeKeyringOperations, AutoCloseable {
     private val operationLock = Any()
     private var activeOperation: CompletingResult<*>? = null
@@ -70,84 +41,32 @@ internal class NativeKeyringManager(
         worker = pinWorker,
         throttle = pinThrottle,
     )
+    private val systemRebinder = SystemKeyringRebinder(
+        apiLevel = apiLevel,
+        envelopeStore = envelopeStore,
+        wrappingKeys = wrappingKeys,
+        authenticator = authenticator,
+    )
+    private val migrationCoordinator = MigrationKeyringCoordinator(
+        envelopeStore = envelopeStore,
+        legacyStore = legacyDetector,
+        provisioner = provisioner,
+        unlocker = unlocker,
+        capabilities = capabilities,
+        completionVerifier = migrationCompletionVerifier,
+        migrationFiles = migrationFileCoordinator,
+    )
+    private val stateResolver = NativeSecurityStateResolver(
+        apiLevel = apiLevel,
+        envelopeStore = envelopeStore,
+        legacyDetector = legacyDetector,
+        wrappingKeys = wrappingKeys,
+        capabilities = capabilities,
+        migrationFileCoordinator = migrationFileCoordinator,
+    )
 
     override fun getSecurityState(): NativeSecurityState = synchronized(operationLock) {
-        val auth = capabilities()
-        if (legacyDetector.hasLegacyPassword()) {
-            return@synchronized state(
-                status = SecurityStatus.LEGACY_MIGRATION_REQUIRED,
-                auth = auth,
-            )
-        }
-        val encoded = envelopeStore.read()
-            ?: return@synchronized state(
-                SecurityStatus.UNPROVISIONED,
-                auth = auth,
-            )
-        val keyset = try {
-            SecurityKeysetCodec.decode(encoded)
-        } catch (_: NativeSecurityException) {
-            return@synchronized state(
-                SecurityStatus.RECOVERY_REQUIRED,
-                auth = auth,
-            )
-        }
-        val envelope = requiredStateEnvelope(keyset)
-            ?: return@synchronized state(
-                SecurityStatus.RECOVERY_REQUIRED,
-                keyId = keyset.keyId,
-                pinConfigured = keyset.pinEnvelope != null,
-                auth = auth,
-            )
-        val handle = try {
-            wrappingKeys.load(envelope.keyAlias)
-        } catch (_: WrappingKeyInvalidatedException) {
-            null
-        } catch (error: KeystoreOperationFailure) {
-            throw NativeSecurityException(
-                NativeSecurityErrorCode.KEYSTORE_UNAVAILABLE,
-                error,
-            )
-        }
-        val resolvedSecurityLevel = handle?.let {
-            resolveSecurityLevel(
-                stored = envelope.securityLevel,
-                loaded = it.securityLevel,
-            )
-        }
-        if (resolvedSecurityLevel != null) {
-            state(
-                status = SecurityStatus.LOCKED,
-                keyId = keyset.keyId,
-                pinConfigured = keyset.pinEnvelope != null,
-                securityLevel = resolvedSecurityLevel,
-                auth = auth,
-            )
-        } else {
-            state(
-                status = SecurityStatus.RECOVERY_REQUIRED,
-                keyId = keyset.keyId,
-                pinConfigured = keyset.pinEnvelope != null,
-                auth = auth,
-            )
-        }
-    }
-
-    private fun resolveSecurityLevel(
-        stored: KeySecurityLevel,
-        loaded: KeySecurityLevel,
-    ): KeySecurityLevel? {
-        if (stored == loaded) {
-            return loaded
-        }
-        if (
-            apiLevel in 28..30 &&
-            stored == KeySecurityLevel.STRONG_BOX &&
-            loaded == KeySecurityLevel.TEE
-        ) {
-            return KeySecurityLevel.UNKNOWN
-        }
-        return null
+        stateResolver.resolve()
     }
 
     override fun provisionWithSystemAuth(
@@ -155,24 +74,22 @@ internal class NativeKeyringManager(
         result: NativeResult<NativeUnlockMaterial>,
     ) {
         start(reason, result) { operation ->
-            if (legacyDetector.hasLegacyPassword()) {
-                operation.error(NativeSecurityException(
-                    NativeSecurityErrorCode.MIGRATION_REQUIRED,
-                ))
-                return@start
+            requireNoLegacyMigration()
+            if (migrationFileCoordinator?.hasActiveDatabase() == true) {
+                throw NativeSecurityException(
+                    NativeSecurityErrorCode.RECOVERY_REQUIRED,
+                )
             }
             if (envelopeStore.read() != null) {
-                operation.error(NativeSecurityException(
+                throw NativeSecurityException(
                     NativeSecurityErrorCode.INVALID_ARGUMENT,
-                ))
-                return@start
+                )
             }
             val auth = capabilities()
             if (!auth.deviceCredentialAvailable) {
-                operation.error(NativeSecurityException(
+                throw NativeSecurityException(
                     NativeSecurityErrorCode.DEVICE_CREDENTIAL_NOT_SET,
-                ))
-                return@start
+                )
             }
             provisioner.provision(reason, auth, operation)
         }
@@ -183,26 +100,13 @@ internal class NativeKeyringManager(
         result: NativeResult<NativeUnlockMaterial>,
     ) {
         start(reason, result) { operation ->
-            if (legacyDetector.hasLegacyPassword()) {
-                operation.error(NativeSecurityException(
-                    NativeSecurityErrorCode.MIGRATION_REQUIRED,
-                ))
-                return@start
-            }
-            val encoded = envelopeStore.read()
-            if (encoded == null) {
-                operation.error(NativeSecurityException(
-                    NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
-                ))
-                return@start
-            }
-            val keyset = try {
-                SecurityKeysetCodec.decode(encoded)
-            } catch (error: NativeSecurityException) {
-                operation.error(error)
-                return@start
-            }
-            unlocker.unlock(reason, keyset, capabilities(), operation)
+            requireNoLegacyMigration()
+            unlocker.unlock(
+                reason,
+                requireKeyset(),
+                capabilities(),
+                operation,
+            )
         }
     }
 
@@ -214,24 +118,15 @@ internal class NativeKeyringManager(
         start(reason, result, rejected = { pin.fill(0) }) { operation ->
             var transferred = false
             try {
-                if (legacyDetector.hasLegacyPassword()) {
-                    operation.error(NativeSecurityException(
+                val keyset = requireKeyset()
+                if (
+                    legacyDetector.hasLegacyPasswordSafely() &&
+                    migrationFileCoordinator
+                        ?.isCredentialFinalizationReady(keyset.keyId) != true
+                ) {
+                    throw NativeSecurityException(
                         NativeSecurityErrorCode.MIGRATION_REQUIRED,
-                    ))
-                    return@start
-                }
-                val encoded = envelopeStore.read()
-                if (encoded == null) {
-                    operation.error(NativeSecurityException(
-                        NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
-                    ))
-                    return@start
-                }
-                val keyset = try {
-                    SecurityKeysetCodec.decode(encoded)
-                } catch (error: NativeSecurityException) {
-                    operation.error(error)
-                    return@start
+                    )
                 }
                 transferred = true
                 pinCoordinator.configurePin(reason, keyset, pin, operation)
@@ -250,27 +145,36 @@ internal class NativeKeyringManager(
         start(PIN_UNLOCK_OPERATION, result, rejected = { pin.fill(0) }) { operation ->
             var transferred = false
             try {
-                if (legacyDetector.hasLegacyPassword()) {
-                    operation.error(NativeSecurityException(
-                        NativeSecurityErrorCode.MIGRATION_REQUIRED,
-                    ))
-                    return@start
-                }
-                val encoded = envelopeStore.read()
-                if (encoded == null) {
-                    operation.error(NativeSecurityException(
-                        NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
-                    ))
-                    return@start
-                }
-                val keyset = try {
-                    SecurityKeysetCodec.decode(encoded)
-                } catch (error: NativeSecurityException) {
-                    operation.error(error)
-                    return@start
-                }
+                requireNoLegacyMigration()
+                val keyset = requireUsablePinKeyset()
                 transferred = true
                 pinCoordinator.unlockWithPin(keyset, pin, operation)
+            } finally {
+                if (!transferred) {
+                    pin.fill(0)
+                }
+            }
+        }
+    }
+
+    override fun rebindSystemAuthWithPin(
+        reason: String,
+        pin: ByteArray,
+        result: NativeResult<Unit>,
+    ) {
+        start(reason, result, rejected = { pin.fill(0) }) { operation ->
+            var transferred = false
+            try {
+                requireNoLegacyMigration()
+                val keyset = requireUsablePinKeyset()
+                transferred = true
+                pinCoordinator.rebindSystemAuthWithPin(
+                    reason = reason,
+                    keyset = keyset,
+                    pin = pin,
+                    rebinder = systemRebinder,
+                    result = operation,
+                )
             } finally {
                 if (!transferred) {
                     pin.fill(0)
@@ -284,27 +188,65 @@ internal class NativeKeyringManager(
         result: NativeResult<Unit>,
     ) {
         start(reason, result) { operation ->
-            if (legacyDetector.hasLegacyPassword()) {
-                operation.error(NativeSecurityException(
-                    NativeSecurityErrorCode.MIGRATION_REQUIRED,
-                ))
-                return@start
-            }
-            val encoded = envelopeStore.read()
-            if (encoded == null) {
-                operation.error(NativeSecurityException(
-                    NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
-                ))
-                return@start
-            }
-            val keyset = try {
-                SecurityKeysetCodec.decode(encoded)
-            } catch (error: NativeSecurityException) {
-                operation.error(error)
-                return@start
-            }
-            pinCoordinator.removePin(reason, keyset, operation)
+            requireNoLegacyMigration()
+            pinCoordinator.removePin(reason, requireKeyset(), operation)
         }
+    }
+
+    override fun beginLegacyMigration(
+        reason: String,
+        result: NativeResult<NativeUnlockMaterial>,
+    ) {
+        start(reason, result) { operation ->
+            migrationCoordinator.begin(reason, operation)
+        }
+    }
+
+    override fun getLegacyMigrationState(): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().inspectState()
+
+    override fun prepareLegacyMigrationBackup(keyId: String): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().prepareBackupState(keyId)
+
+    override fun prepareLegacyMigrationPending(keyId: String): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().preparePendingState(keyId)
+
+    override fun markLegacyMigrationRowsCopied(keyId: String): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().markRowsCopiedState(keyId)
+
+    override fun markLegacyMigrationValidated(keyId: String): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().markValidatedState(keyId)
+
+    override fun activateLegacyMigration(keyId: String): Map<String, Any?> {
+        return migrationFileCoordinator.requireConfigured().activateState(keyId)
+    }
+
+    override fun markLegacyMigrationPostSwapValidated(
+        keyId: String,
+    ): Map<String, Any?> {
+        return migrationFileCoordinator.requireConfigured()
+            .markPostSwapValidatedState(keyId)
+    }
+
+    override fun cleanupLegacyMigrationFiles(keyId: String): Map<String, Any?> =
+        migrationFileCoordinator.requireConfigured().cleanupState(keyId)
+
+    override fun finishLegacyMigration(keyId: String) =
+        migrationCoordinator.finish(keyId)
+
+    override fun commitLegacyMigration(
+        keyId: String,
+        activeDigest: String,
+        result: NativeResult<Unit>,
+    ) {
+        start(MIGRATION_COMMIT_OPERATION, result) { operation ->
+            migrationCoordinator.commit(keyId, activeDigest, operation)
+        }
+    }
+
+    override fun abortLegacyMigration(result: NativeResult<Unit>) {
+        cancelActiveOperation()
+        result.success(Unit)
     }
 
     override fun lock(): Any? {
@@ -344,33 +286,6 @@ internal class NativeKeyringManager(
         } catch (_: Throwable) {
             // The operation is already revoked and its sensitive buffers cleared.
         }
-    }
-
-    private fun requiredStateEnvelope(
-        keyset: SecurityKeyset,
-    ): SecurityEnvelope? {
-        return keyset.envelopes.firstOrNull {
-            it.kind == EnvelopeKind.COMBINED
-        } ?: keyset.envelopes.firstOrNull {
-            it.kind == EnvelopeKind.DEVICE_CREDENTIAL
-        }
-    }
-
-    private fun state(
-        status: SecurityStatus,
-        keyId: String? = null,
-        pinConfigured: Boolean = false,
-        securityLevel: KeySecurityLevel = KeySecurityLevel.UNKNOWN,
-        auth: SystemAuthCapabilities,
-    ): NativeSecurityState {
-        return NativeSecurityState(
-            status = status,
-            keyId = keyId,
-            pinConfigured = pinConfigured,
-            deviceCredentialAvailable = auth.deviceCredentialAvailable,
-            strongBiometricAvailable = auth.strongBiometricAvailable,
-            securityLevel = securityLevel,
-        )
     }
 
     private fun <T> start(
@@ -422,6 +337,31 @@ internal class NativeKeyringManager(
                         error,
                     ),
             )
+        }
+    }
+
+    private fun requireNoLegacyMigration() {
+        if (legacyDetector.hasLegacyPasswordSafely()) {
+            throw NativeSecurityException(
+                NativeSecurityErrorCode.MIGRATION_REQUIRED,
+            )
+        }
+    }
+
+    private fun requireKeyset(): SecurityKeyset {
+        return envelopeStore.readRecoverableKeyset()
+            ?: throw NativeSecurityException(
+                NativeSecurityErrorCode.SECURITY_NOT_PROVISIONED,
+            )
+    }
+
+    private fun requireUsablePinKeyset(): SecurityKeyset {
+        return requireKeyset().also { keyset ->
+            if (keyset.pinResetRequired) {
+                throw NativeSecurityException(
+                    NativeSecurityErrorCode.ENVELOPE_CORRUPT,
+                )
+            }
         }
     }
 
@@ -479,5 +419,6 @@ internal class NativeKeyringManager(
     companion object {
         private const val MAX_REASON_LENGTH = 200
         private const val PIN_UNLOCK_OPERATION = "PIN unlock"
+        private const val MIGRATION_COMMIT_OPERATION = "Migration commit"
     }
 }

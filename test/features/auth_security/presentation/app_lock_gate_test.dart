@@ -10,6 +10,7 @@ import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/core/storage/migration/legacy_security_migration_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
@@ -119,6 +120,60 @@ void main() {
     expect(secureKeyGateway.provisionCalls, 1);
     expect(sessionController.isUnlocked, isTrue);
     expect(unlocked, isTrue);
+  });
+
+  testWidgets('legacy migration starts only after explicit verification', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final secureKeyGateway = _FakeSecureKeyGateway(
+      status: NativeSecurityStatus.legacyMigrationRequired,
+    );
+    final migration = _FakeLegacySecurityMigration(
+      onStart: () {
+        secureKeyGateway.status = NativeSecurityStatus.locked;
+        secureKeyGateway.pinConfigured = true;
+      },
+    );
+    final orchestrator = SecurityOrchestrator(
+      biometricGateway: _FakeBiometricGateway(),
+      screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+      secureKeyGateway: secureKeyGateway,
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+      sessionKeyStore: DatabaseSessionKeyStore(),
+      database: FakeAppDatabase(),
+      logger: const AppLogger(),
+      appIsForeground: () => true,
+      legacySecurityMigration: migration,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securityOrchestratorProvider.overrideWithValue(orchestrator),
+        ],
+        child: const MaterialApp(home: AppLockGate(child: Placeholder())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(migration.calls, 0);
+    expect(find.text('需要升级安全存储'), findsOneWidget);
+    expect(find.text('验证并升级安全存储'), findsOneWidget);
+
+    await tester.tap(find.text('验证并升级安全存储'));
+    await tester.pumpAndSettle();
+
+    expect(migration.calls, 1);
+    expect(find.text('使用生物识别解锁'), findsOneWidget);
+    expect(sessionController.isUnlocked, isFalse);
+    expect(pinStateController.state.enabled, isTrue);
   });
 
   testWidgets('a provisioned gate uses system unlock after the next lock', (
@@ -786,16 +841,12 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
   }
 
   @override
-  Future<void> ensureRootKey() async {}
-
-  @override
-  Future<String> getDatabasePasswordMaterial() async => 'material';
-
-  @override
   Future<NativeSecurityState> getSecurityState() async {
     return NativeSecurityState(
       status: status,
-      keyId: status == NativeSecurityStatus.unprovisioned
+      keyId:
+          status == NativeSecurityStatus.unprovisioned ||
+              status == NativeSecurityStatus.legacyMigrationRequired
           ? null
           : '123e4567-e89b-42d3-a456-426614174000',
       pinConfigured: pinConfigured,
@@ -842,6 +893,22 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
       fieldKey: Uint8List(32),
       unlockMethod: 'pin',
     );
+  }
+
+  @override
+  Future<void> rebindSystemAuthWithPin({required String pin}) async {}
+}
+
+class _FakeLegacySecurityMigration implements LegacySecurityMigrationRunner {
+  _FakeLegacySecurityMigration({this.onStart});
+
+  final void Function()? onStart;
+  int calls = 0;
+
+  @override
+  Future<void> startOrResume() async {
+    calls += 1;
+    onStart?.call();
   }
 }
 

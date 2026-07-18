@@ -133,12 +133,6 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
   }
 
   @override
-  Future<void> ensureRootKey() async {}
-
-  @override
-  Future<String> getDatabasePasswordMaterial() async => 'material';
-
-  @override
   Future<NativeSecurityState> getSecurityState() async {
     return NativeSecurityState(
       status: NativeSecurityStatus.locked,
@@ -180,6 +174,9 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
       unlockMethod: 'pin',
     );
   }
+
+  @override
+  Future<void> rebindSystemAuthWithPin({required String pin}) async {}
 }
 
 class _NoopBiometricGateway implements BiometricGateway {

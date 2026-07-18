@@ -8,10 +8,6 @@ abstract interface class ScreenshotProtectionGateway {
 }
 
 abstract interface class SecureKeyGateway {
-  Future<void> ensureRootKey();
-
-  Future<String> getDatabasePasswordMaterial();
-
   Future<NativeSecurityState> getSecurityState();
 
   Future<NativeUnlockResult> provisionWithSystemAuth();
@@ -21,6 +17,8 @@ abstract interface class SecureKeyGateway {
   Future<void> configurePin({required String pin});
 
   Future<NativeUnlockResult> unlockWithPin({required String pin});
+
+  Future<void> rebindSystemAuthWithPin({required String pin});
 
   Future<void> removePin();
 }
@@ -55,16 +53,6 @@ class DeviceSecureKeyGateway implements SecureKeyGateway {
   final NativeSecurityBridge _bridge;
 
   @override
-  Future<void> ensureRootKey() {
-    return _bridge.ensureRootKey();
-  }
-
-  @override
-  Future<String> getDatabasePasswordMaterial() {
-    return _bridge.getDatabasePasswordMaterial();
-  }
-
-  @override
   Future<NativeSecurityState> getSecurityState() {
     return _bridge.getSecurityState();
   }
@@ -87,6 +75,11 @@ class DeviceSecureKeyGateway implements SecureKeyGateway {
   @override
   Future<NativeUnlockResult> unlockWithPin({required String pin}) {
     return _bridge.unlockWithPin(pin: pin);
+  }
+
+  @override
+  Future<void> rebindSystemAuthWithPin({required String pin}) {
+    return _bridge.rebindSystemAuthWithPin(pin: pin);
   }
 
   @override

@@ -38,7 +38,27 @@ internal class FakeSecurityEnvelopeStore(
 internal class FakeLegacySecurityDetector(
     var legacyPasswordPresent: Boolean = false,
 ) : LegacySecurityDetector {
-    override fun hasLegacyPassword(): Boolean = legacyPasswordPresent
+    var clearSucceeds = true
+    var legacyPassword = "legacy-password"
+    var stateFailure: Throwable? = null
+
+    override fun hasLegacyPassword(): Boolean {
+        stateFailure?.let { throw it }
+        return legacyPasswordPresent
+    }
+
+    override fun readLegacyPassword(): String? {
+        stateFailure?.let { throw it }
+        return if (legacyPasswordPresent) legacyPassword else null
+    }
+
+    override fun clearLegacyPassword(): Boolean {
+        if (!clearSucceeds) {
+            return false
+        }
+        legacyPasswordPresent = false
+        return true
+    }
 }
 
 internal class FakeWrappingKeyRepository(
@@ -48,7 +68,9 @@ internal class FakeWrappingKeyRepository(
     val keys = linkedMapOf<String, Key>()
     var createCalls = 0
     var deleteCalls = 0
+    var decryptionCipherCalls = 0
     var invalidated = false
+    var authenticationRequired = false
     var failPolicy: WrappingKeyPolicy? = null
     var failAfterCreatePolicy: WrappingKeyPolicy? = null
 
@@ -62,17 +84,37 @@ internal class FakeWrappingKeyRepository(
         if (policy == failAfterCreatePolicy) {
             throw KeystoreOperationFailure()
         }
-        return TestWrappingKeyHandle(alias, generatedLevel, key) { invalidated }
+        return TestWrappingKeyHandle(
+            alias = alias,
+            securityLevel = generatedLevel,
+            key = key,
+            beforeDecryption = ::beforeDecryption,
+        )
     }
 
     override fun load(alias: String): WrappingKeyHandle? {
         val key = keys[alias] ?: return null
-        return TestWrappingKeyHandle(alias, loadedLevel, key) { invalidated }
+        return TestWrappingKeyHandle(
+            alias = alias,
+            securityLevel = loadedLevel,
+            key = key,
+            beforeDecryption = ::beforeDecryption,
+        )
     }
 
     override fun delete(alias: String) {
         deleteCalls += 1
         keys.remove(alias)
+    }
+
+    private fun beforeDecryption() {
+        decryptionCipherCalls += 1
+        if (invalidated) {
+            throw WrappingKeyInvalidatedException()
+        }
+        if (authenticationRequired) {
+            throw WrappingKeyAuthenticationRequiredException()
+        }
     }
 }
 
@@ -80,25 +122,18 @@ internal class TestWrappingKeyHandle(
     override val alias: String,
     override val securityLevel: KeySecurityLevel,
     private val key: Key,
-    private val invalidated: () -> Boolean = { false },
+    private val beforeDecryption: () -> Unit = {},
 ) : WrappingKeyHandle {
     override fun encryptionCipher(): Cipher {
-        checkValid()
         return Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(Cipher.ENCRYPT_MODE, key)
         }
     }
 
     override fun decryptionCipher(nonce: ByteArray): Cipher {
-        checkValid()
+        beforeDecryption()
         return Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce))
-        }
-    }
-
-    private fun checkValid() {
-        if (invalidated()) {
-            throw WrappingKeyInvalidatedException()
         }
     }
 }

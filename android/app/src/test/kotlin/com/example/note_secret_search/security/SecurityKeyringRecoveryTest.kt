@@ -4,7 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 internal class SecurityKeyringRecoveryTest : SecurityKeyringTestFixture() {
     @Test
@@ -193,5 +195,184 @@ internal class SecurityKeyringRecoveryTest : SecurityKeyringTestFixture() {
         assertEquals(true, state["strongBiometricAvailable"])
         assertEquals("unknown", state["securityLevel"])
         assertFalse(state.containsKey("keyId"))
+    }
+
+    @Test
+    fun `valid pin remains reachable when system wrapping key is invalidated`() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        manager.configurePin(
+            "Configure PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+        keys.keys.clear()
+        val pinUnlock = RecordingNativeResult<NativeUnlockMaterial>()
+
+        val state = manager.getSecurityState()
+        manager.unlockWithPin("2468".toByteArray(), pinUnlock)
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertTrue(state.pinConfigured)
+        assertTrue(state.systemRebindRequired)
+        assertNull(pinUnlock.error)
+        assertEquals("pin", pinUnlock.value?.unlockMethod)
+    }
+
+    @Test
+    fun `retained invalidated alias requires system rebind when pin remains usable`() {
+        provisionWithPin()
+        keys.invalidated = true
+        val manager = manager(apiLevel = 30)
+
+        val state = manager.getSecurityState()
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertTrue(state.pinConfigured)
+        assertTrue(state.systemRebindRequired)
+    }
+
+    @Test
+    fun `state probe keeps an authentication-gated wrapping key locked`() {
+        provisionWithPin()
+        keys.authenticationRequired = true
+        keys.decryptionCipherCalls = 0
+        val manager = manager(apiLevel = 29)
+
+        val state = manager.getSecurityState()
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertFalse(state.systemRebindRequired)
+        assertEquals(1, keys.decryptionCipherCalls)
+    }
+
+    @Test
+    fun `pin recovery rebinds system auth without replacing the master key`() {
+        provisionWithPin()
+        val manager = manager(apiLevel = 30)
+        val before = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("2468".toByteArray(), before)
+        val originalKeyId = before.value!!.keyId
+        val originalDatabaseKey = before.value!!.databaseKey.clone()
+        before.value!!.zeroize()
+        keys.keys.clear()
+        val rebind = RecordingNativeResult<Unit>()
+
+        manager.rebindSystemAuthWithPin(
+            "Restore system authentication",
+            "2468".toByteArray(),
+            rebind,
+        )
+        val systemUnlock = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithSystemAuth("Unlock", systemUnlock)
+
+        assertNull(rebind.error)
+        assertEquals(Unit, rebind.value)
+        assertEquals(originalKeyId, systemUnlock.value?.keyId)
+        assertTrue(
+            originalDatabaseKey.contentEquals(systemUnlock.value?.databaseKey),
+        )
+        assertFalse(manager.getSecurityState().systemRebindRequired)
+        originalDatabaseKey.fill(0)
+        systemUnlock.value?.zeroize()
+    }
+
+    @Test
+    fun `failed pin recovery does not recreate system wrapping keys`() {
+        provisionWithPin()
+        keys.keys.clear()
+        val createCallsBeforeRecovery = keys.createCalls
+        val manager = manager(apiLevel = 30)
+        val rebind = RecordingNativeResult<Unit>()
+
+        manager.rebindSystemAuthWithPin(
+            "Restore system authentication",
+            "0000".toByteArray(),
+            rebind,
+        )
+
+        assertEquals(NativeSecurityErrorCode.PIN_INCORRECT, rebind.error?.code)
+        assertEquals(createCallsBeforeRecovery, keys.createCalls)
+        assertTrue(manager.getSecurityState().systemRebindRequired)
+    }
+
+    @Test
+    fun `cancelled system rebind leaves the pin envelope usable`() {
+        provisionWithPin()
+        keys.keys.clear()
+        authenticator.enqueue(
+            AuthOutcome.Error(NativeSecurityErrorCode.AUTH_CANCELLED),
+        )
+        val manager = manager(apiLevel = 30)
+        val rebind = RecordingNativeResult<Unit>()
+
+        manager.rebindSystemAuthWithPin(
+            "Restore system authentication",
+            "2468".toByteArray(),
+            rebind,
+        )
+        val pinUnlock = RecordingNativeResult<NativeUnlockMaterial>()
+        manager.unlockWithPin("2468".toByteArray(), pinUnlock)
+
+        assertEquals(NativeSecurityErrorCode.AUTH_CANCELLED, rebind.error?.code)
+        assertNull(pinUnlock.error)
+        assertEquals("pin", pinUnlock.value?.unlockMethod)
+        pinUnlock.value?.zeroize()
+    }
+
+    @Test
+    fun `corrupt pin envelope requires replacement but system unlock remains usable`() {
+        provisionWithPin()
+        corruptPinEnvelope()
+        val manager = manager(apiLevel = 30)
+        val systemUnlock = RecordingNativeResult<NativeUnlockMaterial>()
+
+        val state = manager.getSecurityState()
+        manager.unlockWithSystemAuth("Unlock", systemUnlock)
+
+        assertEquals(SecurityStatus.LOCKED, state.status)
+        assertTrue(state.pinResetRequired)
+        assertFalse(state.pinConfigured)
+        assertNull(systemUnlock.error)
+    }
+
+    @Test
+    fun `corrupt pin and invalid system envelope require recovery without regeneration`() {
+        provisionWithPin()
+        corruptPinEnvelope()
+        keys.keys.clear()
+        val manager = manager(apiLevel = 30)
+
+        val state = manager.getSecurityState()
+
+        assertEquals(SecurityStatus.RECOVERY_REQUIRED, state.status)
+        assertEquals(1, keys.createCalls)
+        assertNotNull(store.bytes)
+    }
+
+    private fun provisionWithPin() {
+        random.enqueue(ByteArray(16) { (it + 2).toByte() })
+        random.enqueue(ByteArray(32) { it.toByte() })
+        val manager = manager(apiLevel = 30)
+        manager.provisionWithSystemAuth(
+            "Create keyring",
+            RecordingNativeResult(),
+        )
+        manager.configurePin(
+            "Configure PIN",
+            "2468".toByteArray(),
+            RecordingNativeResult(),
+        )
+    }
+
+    private fun corruptPinEnvelope() {
+        val root = JSONObject(store.bytes!!.toString(Charsets.UTF_8))
+        root.getJSONObject("pinEnvelope").put("nonce", "broken")
+        store.bytes = root.toString().toByteArray()
     }
 }

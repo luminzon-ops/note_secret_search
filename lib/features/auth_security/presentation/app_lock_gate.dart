@@ -66,7 +66,18 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
           securityState: _securityState,
           databaseState: databaseState,
           onProvisioned: () => _refreshSecurityState(clearCachedState: true),
-          onUnlocked: () => ref.read(appRouterProvider).go('/vault'),
+          onMigrationCompleted: (securityState) async {
+            if (mounted) {
+              setState(() => _securityState = securityState);
+            }
+          },
+          onUnlocked: () => ref
+              .read(appRouterProvider)
+              .go(
+                _securityState?.pinResetRequired == true
+                    ? '/settings/security/pin'
+                    : '/vault',
+              ),
         );
       },
     );
@@ -157,6 +168,7 @@ class AppLockScreen extends ConsumerStatefulWidget {
     this.securityState,
     this.databaseState,
     this.onProvisioned,
+    this.onMigrationCompleted,
     super.key,
   });
 
@@ -164,6 +176,8 @@ class AppLockScreen extends ConsumerStatefulWidget {
   final NativeSecurityState? securityState;
   final DatabaseLifecycleState? databaseState;
   final Future<void> Function()? onProvisioned;
+  final Future<void> Function(NativeSecurityState securityState)?
+  onMigrationCompleted;
 
   @override
   ConsumerState<AppLockScreen> createState() => _AppLockScreenState();
@@ -182,13 +196,15 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
         coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
     final securityStatus =
         widget.securityState?.status ?? NativeSecurityStatus.locked;
+    final pinResetRequired = widget.securityState?.pinResetRequired ?? false;
     final provisioning = securityStatus == NativeSecurityStatus.unprovisioned;
+    final legacyMigration =
+        securityStatus == NativeSecurityStatus.legacyMigrationRequired;
     final databaseOpening =
         widget.databaseState?.status == DatabaseLifecycleStatus.opening;
     final databaseError =
         widget.databaseState?.status == DatabaseLifecycleStatus.error;
     final blocked =
-        securityStatus == NativeSecurityStatus.legacyMigrationRequired ||
         securityStatus == NativeSecurityStatus.recoveryRequired ||
         databaseOpening ||
         databaseError;
@@ -211,7 +227,10 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
             NativeSecurityStatus.legacyMigrationRequired =>
               '检测到旧版安全数据，完成升级前不会打开数据库。',
             NativeSecurityStatus.recoveryRequired => '安全密钥暂不可用，数据库将保持关闭并等待恢复。',
-            NativeSecurityStatus.locked => '默认使用系统生物识别解锁。应用 PIN 可在解锁后的安全设置中启用。',
+            NativeSecurityStatus.locked =>
+              pinResetRequired
+                  ? '应用 PIN 已损坏，请使用系统认证解锁并立即重新设置。'
+                  : '默认使用系统生物识别解锁。应用 PIN 可在解锁后的安全设置中启用。',
           };
 
     return Scaffold(
@@ -243,13 +262,19 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                       ? null
                       : provisioning
                       ? _provisionWithSystemAuth
+                      : legacyMigration
+                      ? _migrateLegacySecurity
                       : _unlockWithBiometrics,
-                  icon: const Icon(Icons.fingerprint),
+                  icon: Icon(
+                    legacyMigration ? Icons.upgrade : Icons.fingerprint,
+                  ),
                   label: Text(
                     _busy
                         ? '验证中...'
                         : provisioning
                         ? '使用系统凭据启用'
+                        : legacyMigration
+                        ? '验证并升级安全存储'
                         : blocked
                         ? '安全存储不可用'
                         : '使用生物识别解锁',
@@ -267,6 +292,7 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
                 ],
                 if (!blocked &&
                     !provisioning &&
+                    !pinResetRequired &&
                     session.pinEnabled &&
                     pinState.enabled &&
                     pinState.hasPinMaterial) ...[
@@ -365,6 +391,42 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
       if (mounted) {
         setState(() {
           _authenticationError = '安全数据库暂不可用，请重试';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _migrateLegacySecurity() async {
+    setState(() {
+      _busy = true;
+      _authenticationError = null;
+    });
+    try {
+      final securityState = await ref
+          .read(securityOrchestratorProvider)
+          .migrateLegacySecurity();
+      if (mounted) {
+        await widget.onMigrationCompleted?.call(securityState);
+      }
+    } on NativeSecurityException catch (error) {
+      if (mounted) {
+        setState(() {
+          _authenticationError = switch (error.code) {
+            'AUTH_CANCELLED' => '身份验证已取消',
+            'DEVICE_CREDENTIAL_NOT_SET' => '请先在系统设置中启用安全锁屏',
+            'MIGRATION_STORAGE_INSUFFICIENT' => '存储空间不足，暂时无法升级安全存储',
+            _ => '安全存储升级失败，请重试',
+          };
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _authenticationError = '安全存储升级失败，请重试';
         });
       }
     } finally {
