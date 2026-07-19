@@ -150,6 +150,7 @@ void main() {
   test('provisionWithSystemAuth decodes and clears session keys', () async {
     final databaseKey = Uint8List.fromList(List<int>.generate(32, (i) => i));
     final fieldKey = Uint8List.fromList(List<int>.generate(32, (i) => 255 - i));
+    final fingerprintKey = Uint8List.fromList(List<int>.filled(32, 0x5a));
     messenger.setMockMethodCallHandler(channel, (call) async {
       expect(call.method, 'provisionWithSystemAuth');
       expect(call.arguments, <String, Object?>{'reason': '启用安全存储'});
@@ -157,6 +158,7 @@ void main() {
         'keyId': _validKeyId,
         'databaseKey': databaseKey,
         'fieldKey': fieldKey,
+        'searchIndexFingerprintKey': fingerprintKey,
         'unlockMethod': 'system',
       };
     });
@@ -167,6 +169,7 @@ void main() {
     expect(result.keyId, _validKeyId);
     expect(result.databaseKey, orderedEquals(databaseKey));
     expect(result.fieldKey, orderedEquals(fieldKey));
+    expect(result.searchIndexFingerprintKey, orderedEquals(fingerprintKey));
     expect(result.unlockMethod, 'system');
     expect(result.isCleared, isFalse);
 
@@ -176,8 +179,10 @@ void main() {
     expect(result.isCleared, isTrue);
     expect(result.databaseKey, everyElement(0));
     expect(result.fieldKey, everyElement(0));
+    expect(result.searchIndexFingerprintKey, everyElement(0));
     expect(databaseKey, isNot(everyElement(0)));
     expect(fieldKey, isNot(everyElement(0)));
+    expect(fingerprintKey, isNot(everyElement(0)));
 
     result.databaseKey[0] = 7;
     result.fieldKey[0] = 9;
@@ -198,6 +203,7 @@ void main() {
             'keyId': _validKeyId,
             'databaseKey': Uint8List(32),
             'fieldKey': Uint8List(32),
+            'searchIndexFingerprintKey': Uint8List(32),
             'unlockMethod': 'system',
             'legacyDatabasePassword': Uint8List.fromList(
               utf8.encode('legacy-password'),
@@ -269,10 +275,12 @@ void main() {
   test('NativeUnlockResult takes ownership of decoder key arrays', () {
     final databaseKey = Uint8List.fromList(List<int>.filled(32, 7));
     final fieldKey = Uint8List.fromList(List<int>.filled(32, 9));
+    final fingerprintKey = Uint8List.fromList(List<int>.filled(32, 11));
     final result = NativeUnlockResult(
       keyId: _validKeyId,
       databaseKey: databaseKey,
       fieldKey: fieldKey,
+      searchIndexFingerprintKey: fingerprintKey,
       unlockMethod: 'system',
     );
 
@@ -280,6 +288,7 @@ void main() {
 
     expect(databaseKey, everyElement(0));
     expect(fieldKey, everyElement(0));
+    expect(fingerprintKey, everyElement(0));
   });
 
   test('unlockWithSystemAuth decodes typed key material', () async {
@@ -290,6 +299,7 @@ void main() {
         'keyId': _validKeyId,
         'databaseKey': Uint8List(32),
         'fieldKey': Uint8List(32),
+        'searchIndexFingerprintKey': Uint8List(32),
         'unlockMethod': 'system',
       };
     });
@@ -301,6 +311,7 @@ void main() {
     expect(result.keyId, _validKeyId);
     expect(result.databaseKey, hasLength(32));
     expect(result.fieldKey, hasLength(32));
+    expect(result.searchIndexFingerprintKey, hasLength(32));
     expect(result.unlockMethod, 'system');
   });
 
@@ -445,13 +456,26 @@ void main() {
     }
   });
 
+  test('unlock result requires a search index fingerprint key', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return _validUnlockPayload()..remove('searchIndexFingerprintKey');
+    });
+
+    await expectLater(
+      const MethodChannelNativeSecurityBridge().unlockWithSystemAuth(),
+      throwsFormatException,
+    );
+  });
+
   test('invalid unlock metadata clears received key arrays', () {
     final databaseKey = Uint8List.fromList(List<int>.filled(32, 7));
     final fieldKey = Uint8List.fromList(List<int>.filled(32, 9));
+    final fingerprintKey = Uint8List.fromList(List<int>.filled(32, 11));
     final payload = <String, Object?>{
       'keyId': 'invalid-key-id',
       'databaseKey': databaseKey,
       'fieldKey': fieldKey,
+      'searchIndexFingerprintKey': fingerprintKey,
       'unlockMethod': 'system',
     };
 
@@ -459,6 +483,7 @@ void main() {
 
     expect(databaseKey, everyElement(0));
     expect(fieldKey, everyElement(0));
+    expect(fingerprintKey, everyElement(0));
   });
 
   test('unlock result rejects non-Uint8List key material', () async {
@@ -473,7 +498,11 @@ void main() {
   });
 
   test('unlock result rejects key material with wrong lengths', () async {
-    for (final field in <String>['databaseKey', 'fieldKey']) {
+    for (final field in <String>[
+      'databaseKey',
+      'fieldKey',
+      'searchIndexFingerprintKey',
+    ]) {
       for (final length in <int>[31, 33]) {
         messenger.setMockMethodCallHandler(channel, (call) async {
           return _validUnlockPayload()..[field] = Uint8List(length);
@@ -647,6 +676,7 @@ Map<String, Object?> _validUnlockPayload() {
     'keyId': _validKeyId,
     'databaseKey': Uint8List(32),
     'fieldKey': Uint8List(32),
+    'searchIndexFingerprintKey': Uint8List(32),
     'unlockMethod': 'system',
   };
 }

@@ -143,6 +143,8 @@ internal class MigrationKeyringCoordinator(
                             keyId = value.keyId,
                             databaseKey = value.databaseKey.clone(),
                             fieldKey = value.fieldKey.clone(),
+                            searchIndexFingerprintKey =
+                                value.searchIndexFingerprintKey?.clone(),
                             unlockMethod = value.unlockMethod,
                             legacyDatabasePassword = legacyPassword.toByteArray(
                                 Charsets.UTF_8,

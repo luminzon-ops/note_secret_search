@@ -5,11 +5,16 @@ class DatabaseSessionKeys {
   DatabaseSessionKeys({
     required Uint8List databaseKey,
     required Uint8List fieldKey,
+    Uint8List? searchIndexFingerprintKey,
   }) : _databaseKey = _copyKey(databaseKey, 'databaseKey'),
-       _fieldKey = _copyKey(fieldKey, 'fieldKey');
+       _fieldKey = _copyKey(fieldKey, 'fieldKey'),
+       _searchIndexFingerprintKey = searchIndexFingerprintKey == null
+           ? null
+           : _copyKey(searchIndexFingerprintKey, 'searchIndexFingerprintKey');
 
   final Uint8List _databaseKey;
   final Uint8List _fieldKey;
+  final Uint8List? _searchIndexFingerprintKey;
   bool _isCleared = false;
 
   bool get isCleared => _isCleared;
@@ -22,12 +27,25 @@ class DatabaseSessionKeys {
     return _withKey(_fieldKey, consume);
   }
 
+  T withSearchIndexFingerprintKey<T>(T Function(Uint8List key) consume) {
+    final key = _searchIndexFingerprintKey;
+    if (key == null) {
+      throw StateError('Search index fingerprint key is unavailable.');
+    }
+    return _withKey(key, consume);
+  }
+
   void clear() {
     if (_isCleared) {
       return;
     }
     _databaseKey.fillRange(0, _databaseKey.length, 0);
     _fieldKey.fillRange(0, _fieldKey.length, 0);
+    _searchIndexFingerprintKey?.fillRange(
+      0,
+      _searchIndexFingerprintKey!.length,
+      0,
+    );
     _isCleared = true;
   }
 

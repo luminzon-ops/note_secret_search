@@ -1,7 +1,9 @@
 package com.example.note_secret_search.security
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class SecurityKeyDerivationTest {
@@ -27,6 +29,27 @@ class SecurityKeyDerivationTest {
             fieldKey,
         )
         assertFalse(databaseKey.contentEquals(fieldKey))
+    }
+
+    @Test
+    fun `search index fingerprint key uses an independent versioned label`() {
+        val masterKey = ByteArray(32) { it.toByte() }
+
+        val fingerprintKey = HkdfSha256.derive(
+            inputKeyMaterial = masterKey,
+            info = KeyDerivationLabels.SEARCH_INDEX_FINGERPRINT,
+        )
+        val fieldKey = HkdfSha256.derive(
+            inputKeyMaterial = masterKey,
+            info = KeyDerivationLabels.FIELD,
+        )
+
+        assertEquals(32, fingerprintKey.size)
+        assertNotEquals(fieldKey.toList(), fingerprintKey.toList())
+        assertArrayEquals(
+            hex("2710ecdc8b7f05a1bdf21d12580dbd9660a0948e6c0214da752f59c0e56fd0d8"),
+            fingerprintKey,
+        )
     }
 
     private fun hex(value: String): ByteArray {

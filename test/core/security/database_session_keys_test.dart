@@ -36,6 +36,30 @@ void main() {
     expect(fieldLease, everyElement(0));
   });
 
+  test('owns and clears the search index fingerprint key', () {
+    final source = Uint8List.fromList(List<int>.generate(32, (index) => index));
+    final keys = DatabaseSessionKeys(
+      databaseKey: Uint8List(32),
+      fieldKey: Uint8List(32),
+      searchIndexFingerprintKey: source,
+    );
+    source.fillRange(0, source.length, 0);
+    Uint8List? lease;
+
+    final copy = keys.withSearchIndexFingerprintKey((key) {
+      lease = key;
+      return Uint8List.fromList(key);
+    });
+
+    expect(copy, orderedEquals(List<int>.generate(32, (index) => index)));
+    expect(lease, everyElement(0));
+    keys.clear();
+    expect(
+      () => keys.withSearchIndexFingerprintKey((key) => key.length),
+      throwsStateError,
+    );
+  });
+
   test('clear is idempotent and rejects later key access', () {
     final keys = DatabaseSessionKeys(
       databaseKey: Uint8List(32),

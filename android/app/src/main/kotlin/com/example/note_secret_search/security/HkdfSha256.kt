@@ -9,6 +9,9 @@ object KeyDerivationLabels {
         "note-secret-search/sqlcipher/v1".toByteArray(StandardCharsets.UTF_8)
     val FIELD: ByteArray =
         "note-secret-search/field/v1".toByteArray(StandardCharsets.UTF_8)
+    val SEARCH_INDEX_FINGERPRINT: ByteArray =
+        "note-secret-search/search-index-fingerprint/v1"
+            .toByteArray(StandardCharsets.UTF_8)
 }
 
 object HkdfSha256 {

@@ -88,6 +88,10 @@ internal object KeyringCrypto {
             keyId = keyId,
             databaseKey = HkdfSha256.derive(masterKey, KeyDerivationLabels.DATABASE),
             fieldKey = HkdfSha256.derive(masterKey, KeyDerivationLabels.FIELD),
+            searchIndexFingerprintKey = HkdfSha256.derive(
+                masterKey,
+                KeyDerivationLabels.SEARCH_INDEX_FINGERPRINT,
+            ),
             unlockMethod = unlockMethod,
         )
     }

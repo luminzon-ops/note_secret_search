@@ -51,10 +51,19 @@ class SecurityKeyNativeMethodHandlerTest {
         assertEquals("123e4567-e89b-12d3-a456-426614174000", map["keyId"])
         assertArrayEquals(ByteArray(32) { 1 }, map["databaseKey"] as ByteArray)
         assertArrayEquals(ByteArray(32) { 2 }, map["fieldKey"] as ByteArray)
+        assertArrayEquals(
+            ByteArray(32) { 3 },
+            map["searchIndexFingerprintKey"] as ByteArray,
+        )
         assertEquals("system", map["unlockMethod"])
         assertEquals("Unlock", operations.lastReason)
         assertTrue(operations.lastMaterial!!.databaseKey.all { it == 0.toByte() })
         assertTrue(operations.lastMaterial!!.fieldKey.all { it == 0.toByte() })
+        assertTrue(
+            operations.lastMaterial!!.searchIndexFingerprintKey!!.all {
+                it == 0.toByte()
+            },
+        )
     }
 
     @Test
@@ -84,6 +93,11 @@ class SecurityKeyNativeMethodHandlerTest {
         assertTrue(pin.all { it == 0.toByte() })
         assertTrue(operations.lastMaterial!!.databaseKey.all { it == 0.toByte() })
         assertTrue(operations.lastMaterial!!.fieldKey.all { it == 0.toByte() })
+        assertTrue(
+            operations.lastMaterial!!.searchIndexFingerprintKey!!.all {
+                it == 0.toByte()
+            },
+        )
     }
 
     @Test
@@ -125,8 +139,17 @@ class SecurityKeyNativeMethodHandlerTest {
         assertEquals("Upgrade security", operations.lastReason)
         assertArrayEquals(ByteArray(32) { 1 }, map["databaseKey"] as ByteArray)
         assertArrayEquals(ByteArray(32) { 2 }, map["fieldKey"] as ByteArray)
+        assertArrayEquals(
+            ByteArray(32) { 3 },
+            map["searchIndexFingerprintKey"] as ByteArray,
+        )
         assertTrue(operations.lastMaterial!!.databaseKey.all { it == 0.toByte() })
         assertTrue(operations.lastMaterial!!.fieldKey.all { it == 0.toByte() })
+        assertTrue(
+            operations.lastMaterial!!.searchIndexFingerprintKey!!.all {
+                it == 0.toByte()
+            },
+        )
     }
 
     @Test
@@ -374,6 +397,7 @@ private class RecordingNativeKeyringOperations : NativeKeyringOperations {
             keyId = "123e4567-e89b-12d3-a456-426614174000",
             databaseKey = ByteArray(32) { 1 },
             fieldKey = ByteArray(32) { 2 },
+            searchIndexFingerprintKey = ByteArray(32) { 3 },
         ).also { lastMaterial = it }
     }
 
@@ -432,6 +456,8 @@ private class CopyingMethodResult : MethodChannel.Result {
             "keyId" to map["keyId"],
             "databaseKey" to (map["databaseKey"] as ByteArray).clone(),
             "fieldKey" to (map["fieldKey"] as ByteArray).clone(),
+            "searchIndexFingerprintKey" to
+                (map["searchIndexFingerprintKey"] as ByteArray).clone(),
             "unlockMethod" to map["unlockMethod"],
         )
     }

@@ -211,6 +211,7 @@ class LegacySecurityMigrationOrchestrator
           DatabaseSessionKeys(
             databaseKey: material.databaseKey,
             fieldKey: material.fieldKey,
+            searchIndexFingerprintKey: material.searchIndexFingerprintKey,
           ),
         );
         state = await _migrationBridge.getLegacyMigrationState();

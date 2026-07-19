@@ -105,6 +105,7 @@ data class NativeUnlockMaterial(
     val keyId: String,
     val databaseKey: ByteArray,
     val fieldKey: ByteArray,
+    val searchIndexFingerprintKey: ByteArray? = null,
     val unlockMethod: String = "system",
     val legacyDatabasePassword: ByteArray? = null,
 ) {
@@ -113,6 +114,9 @@ data class NativeUnlockMaterial(
             put("keyId", keyId)
             put("databaseKey", databaseKey)
             put("fieldKey", fieldKey)
+            searchIndexFingerprintKey?.let {
+                put("searchIndexFingerprintKey", it)
+            }
             put("unlockMethod", unlockMethod)
             legacyDatabasePassword?.let {
                 put("legacyDatabasePassword", it)
@@ -123,6 +127,7 @@ data class NativeUnlockMaterial(
     fun zeroize() {
         databaseKey.fill(0)
         fieldKey.fill(0)
+        searchIndexFingerprintKey?.fill(0)
         legacyDatabasePassword?.fill(0)
     }
 }

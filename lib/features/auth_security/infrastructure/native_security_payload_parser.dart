@@ -35,13 +35,16 @@ NativeUnlockResult parseNativeUnlockResult(
   final keyId = payload['keyId'];
   final databaseKey = payload['databaseKey'];
   final fieldKey = payload['fieldKey'];
+  final searchIndexFingerprintKey = payload['searchIndexFingerprintKey'];
   final unlockMethod = payload['unlockMethod'];
   final legacyDatabasePassword = payload['legacyDatabasePassword'];
   try {
     if (databaseKey is! Uint8List ||
         fieldKey is! Uint8List ||
+        searchIndexFingerprintKey is! Uint8List ||
         databaseKey.length != 32 ||
         fieldKey.length != 32 ||
+        searchIndexFingerprintKey.length != 32 ||
         (unlockMethod != 'system' && unlockMethod != 'pin') ||
         (legacyDatabasePassword != null &&
             legacyDatabasePassword is! Uint8List) ||
@@ -57,12 +60,14 @@ NativeUnlockResult parseNativeUnlockResult(
       keyId: _parseKeyId(keyId, requiredForPayload: true)!,
       databaseKey: databaseKey,
       fieldKey: fieldKey,
+      searchIndexFingerprintKey: searchIndexFingerprintKey,
       unlockMethod: unlockMethod as String,
       legacyDatabasePassword: legacyDatabasePassword as Uint8List?,
     );
   } catch (_) {
     _clearReceivedKey(databaseKey);
     _clearReceivedKey(fieldKey);
+    _clearReceivedKey(searchIndexFingerprintKey);
     _clearReceivedKey(legacyDatabasePassword);
     rethrow;
   }

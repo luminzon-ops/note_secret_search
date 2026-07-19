@@ -194,6 +194,7 @@ class SecurityOrchestrator {
     final sessionKeys = DatabaseSessionKeys(
       databaseKey: material.databaseKey,
       fieldKey: material.fieldKey,
+      searchIndexFingerprintKey: material.searchIndexFingerprintKey,
     );
     _sessionKeyStore.replace(sessionKeys);
     try {

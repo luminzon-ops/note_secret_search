@@ -78,12 +78,14 @@ class NativeUnlockResult {
     required this.databaseKey,
     required this.fieldKey,
     required this.unlockMethod,
+    this.searchIndexFingerprintKey,
     this.legacyDatabasePassword,
   });
 
   final String keyId;
   final Uint8List databaseKey;
   final Uint8List fieldKey;
+  final Uint8List? searchIndexFingerprintKey;
   final String unlockMethod;
   final Uint8List? legacyDatabasePassword;
 
@@ -94,6 +96,11 @@ class NativeUnlockResult {
   void clear() {
     databaseKey.fillRange(0, databaseKey.length, 0);
     fieldKey.fillRange(0, fieldKey.length, 0);
+    searchIndexFingerprintKey?.fillRange(
+      0,
+      searchIndexFingerprintKey!.length,
+      0,
+    );
     legacyDatabasePassword?.fillRange(0, legacyDatabasePassword!.length, 0);
     _isCleared = true;
   }
