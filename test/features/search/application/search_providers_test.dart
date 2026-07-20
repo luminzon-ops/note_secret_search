@@ -8,10 +8,14 @@ import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
+import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_repository.dart';
@@ -42,14 +46,15 @@ class _FakeCryptoService implements CryptoService {
   }
 }
 
-class _FakeSearchRepository implements SearchRepository {
+class _FakeSearchRepository
+    implements SearchRepository, EmbeddingIndexRepository {
   @override
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
   ) async {
-    return const <EmbeddingChunk>[];
+    return const <LegacyEmbeddingChunk>[];
   }
 
   @override
@@ -66,7 +71,19 @@ class _FakeSearchRepository implements SearchRepository {
   Future<void> saveScopeConfig(SearchScopeConfig config) async {}
 
   @override
-  Future<void> upsertEmbeddingChunks(List<EmbeddingChunk> chunks) async {}
+  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) async {}
+
+  @override
+  Future<EmbeddingIndexSet?> getIndexSetBySource(
+    SearchSourceKey sourceKey,
+    String modelId,
+  ) async => null;
+
+  @override
+  Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey) async {}
+
+  @override
+  Future<bool> replaceIndexSet(EmbeddingIndexSet indexSet) async => true;
 }
 
 class _FakeEmbeddingEngine implements EmbeddingEngine {
@@ -99,7 +116,8 @@ class _FakeSearchIndexService extends SearchIndexService {
   Future<void> indexPendingItems({
     required List<SearchIndexPendingItem> items,
     required ModelRegistryEntry activeEmbeddingModel,
-    required SearchIndexSettings settings,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
   }) async {}
 }
 
@@ -164,6 +182,12 @@ void main() {
           searchIndexSettingsProvider.overrideWith(
             (ref) async => const SearchIndexSettings.defaults(),
           ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider(
+            _fakeEmbeddingModel,
+          ).overrideWith((ref) async => 'a' * 64),
           searchIndexServiceProvider.overrideWith(
             (ref) => _FakeSearchIndexService(),
           ),
@@ -208,6 +232,12 @@ void main() {
           searchIndexSettingsProvider.overrideWith(
             (ref) async => const SearchIndexSettings.defaults(),
           ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider(
+            _fakeEmbeddingModel,
+          ).overrideWith((ref) async => 'a' * 64),
           searchIndexServiceProvider.overrideWith(
             (ref) => _FakeSearchIndexService(),
           ),
@@ -252,6 +282,12 @@ void main() {
           searchIndexSettingsProvider.overrideWith(
             (ref) async => const SearchIndexSettings.defaults(),
           ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider(
+            _fakeEmbeddingModel,
+          ).overrideWith((ref) async => 'a' * 64),
           searchIndexServiceProvider.overrideWith(
             (ref) => _FakeSearchIndexService(),
           ),
@@ -297,6 +333,12 @@ void main() {
           searchIndexSettingsProvider.overrideWith(
             (ref) async => const SearchIndexSettings.defaults(),
           ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider(
+            _fakeEmbeddingModel,
+          ).overrideWith((ref) async => 'a' * 64),
           searchIndexServiceProvider.overrideWith(
             (ref) => _FakeSearchIndexService(),
           ),

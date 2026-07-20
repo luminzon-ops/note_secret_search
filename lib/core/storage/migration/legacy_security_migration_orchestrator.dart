@@ -211,6 +211,7 @@ class LegacySecurityMigrationOrchestrator
           DatabaseSessionKeys(
             databaseKey: material.databaseKey,
             fieldKey: material.fieldKey,
+            keyId: material.keyId,
             searchIndexFingerprintKey: material.searchIndexFingerprintKey,
           ),
         );

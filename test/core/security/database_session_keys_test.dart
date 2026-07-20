@@ -60,6 +60,19 @@ void main() {
     );
   });
 
+  test('exposes the root key ID only while the session is active', () {
+    final keys = DatabaseSessionKeys(
+      databaseKey: Uint8List(32),
+      fieldKey: Uint8List(32),
+      keyId: 'key-1',
+      searchIndexFingerprintKey: Uint8List(32),
+    );
+
+    expect(keys.requireKeyId(), 'key-1');
+    keys.clear();
+    expect(keys.requireKeyId, throwsStateError);
+  });
+
   test('clear is idempotent and rejects later key access', () {
     final keys = DatabaseSessionKeys(
       databaseKey: Uint8List(32),

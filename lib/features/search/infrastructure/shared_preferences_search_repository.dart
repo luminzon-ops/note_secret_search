@@ -8,8 +8,8 @@ class SharedPreferencesSearchRepository implements SearchRepository {
   SharedPreferencesSearchRepository({
     required SharedPreferences preferences,
     required SqliteEmbeddingRepository embeddingRepository,
-  })  : _preferences = preferences,
-        _embeddingRepository = embeddingRepository;
+  }) : _preferences = preferences,
+       _embeddingRepository = embeddingRepository;
 
   final SharedPreferences _preferences;
   final SqliteEmbeddingRepository _embeddingRepository;
@@ -22,20 +22,24 @@ class SharedPreferencesSearchRepository implements SearchRepository {
   static const _includeTagsKey = 'search.scope.include_tags';
   static const _includeNoteBodyKey = 'search.scope.include_note_body';
   static const _allowLocalEmbeddingKey = 'search.scope.allow_local_embedding';
-  static const _allowExternalProviderAccessKey = 'search.scope.allow_external_provider_access';
+  static const _allowExternalProviderAccessKey =
+      'search.scope.allow_external_provider_access';
 
   @override
   Future<SearchScopeConfig> loadScopeConfig() async {
     return SearchScopeConfig(
       includeTitle: _preferences.getBool(_includeTitleKey) ?? true,
       includeSecretNote: _preferences.getBool(_includeSecretNoteKey) ?? true,
-      includePasswordField: _preferences.getBool(_includePasswordFieldKey) ?? false,
+      includePasswordField:
+          _preferences.getBool(_includePasswordFieldKey) ?? false,
       includeUsername: _preferences.getBool(_includeUsernameKey) ?? true,
       includeUrl: _preferences.getBool(_includeUrlKey) ?? true,
       includeTags: _preferences.getBool(_includeTagsKey) ?? true,
       includeNoteBody: _preferences.getBool(_includeNoteBodyKey) ?? true,
-      allowLocalEmbedding: _preferences.getBool(_allowLocalEmbeddingKey) ?? true,
-      allowExternalProviderAccess: _preferences.getBool(_allowExternalProviderAccessKey) ?? false,
+      allowLocalEmbedding:
+          _preferences.getBool(_allowLocalEmbeddingKey) ?? true,
+      allowExternalProviderAccess:
+          _preferences.getBool(_allowExternalProviderAccessKey) ?? false,
     );
   }
 
@@ -43,31 +47,47 @@ class SharedPreferencesSearchRepository implements SearchRepository {
   Future<void> saveScopeConfig(SearchScopeConfig config) async {
     await _preferences.setBool(_includeTitleKey, config.includeTitle);
     await _preferences.setBool(_includeSecretNoteKey, config.includeSecretNote);
-    await _preferences.setBool(_includePasswordFieldKey, config.includePasswordField);
+    await _preferences.setBool(
+      _includePasswordFieldKey,
+      config.includePasswordField,
+    );
     await _preferences.setBool(_includeUsernameKey, config.includeUsername);
     await _preferences.setBool(_includeUrlKey, config.includeUrl);
     await _preferences.setBool(_includeTagsKey, config.includeTags);
     await _preferences.setBool(_includeNoteBodyKey, config.includeNoteBody);
-    await _preferences.setBool(_allowLocalEmbeddingKey, config.allowLocalEmbedding);
-    await _preferences.setBool(_allowExternalProviderAccessKey, config.allowExternalProviderAccess);
+    await _preferences.setBool(
+      _allowLocalEmbeddingKey,
+      config.allowLocalEmbedding,
+    );
+    await _preferences.setBool(
+      _allowExternalProviderAccessKey,
+      config.allowExternalProviderAccess,
+    );
   }
 
   @override
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
   ) {
-    return _embeddingRepository.getChunksBySource(sourceId, sourceType, modelId);
+    return _embeddingRepository.getChunksBySource(
+      sourceId,
+      sourceType,
+      modelId,
+    );
   }
 
   @override
-  Future<void> removeChunksBySource(String sourceId, SearchSourceType sourceType) {
+  Future<void> removeChunksBySource(
+    String sourceId,
+    SearchSourceType sourceType,
+  ) {
     return _embeddingRepository.removeChunksBySource(sourceId, sourceType);
   }
 
   @override
-  Future<void> upsertEmbeddingChunks(List<EmbeddingChunk> chunks) {
+  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) {
     return _embeddingRepository.upsertEmbeddingChunks(chunks);
   }
 }

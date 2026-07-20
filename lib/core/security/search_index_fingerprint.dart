@@ -91,9 +91,19 @@ String keyedFingerprint({
   required String domain,
   required void Function(SearchIndexCanonicalWriter writer) write,
 }) {
+  return hexDigest(
+    keyedFingerprintBytes(key: key, domain: domain, write: write),
+  );
+}
+
+Uint8List keyedFingerprintBytes({
+  required Uint8List key,
+  required String domain,
+  required void Function(SearchIndexCanonicalWriter writer) write,
+}) {
   final writer = SearchIndexCanonicalWriter()..string(domain);
   write(writer);
-  return hexDigest(hmacSha256(key, writer.takeBytes()));
+  return hmacSha256(key, writer.takeBytes());
 }
 
 String sourceFingerprint({
@@ -127,6 +137,55 @@ String chunkFingerprint({
   required String text,
 }) {
   return keyedFingerprint(
+    key: key,
+    domain: chunkFingerprintDomain,
+    write: (writer) {
+      writer.string(sourceType);
+      writer.string(sourceId);
+      writer.string(sourceField);
+      writer.uint32(fieldChunkIndex);
+      writer.string(canonicalText(text));
+    },
+  );
+}
+
+Uint8List structuredSourceFingerprintBytes({
+  required Uint8List key,
+  required String sourceType,
+  required String sourceId,
+  required String vaultId,
+  required Iterable<({String id, Iterable<String> values})> fields,
+}) {
+  final fieldList = fields.toList(growable: false);
+  return keyedFingerprintBytes(
+    key: key,
+    domain: sourceFingerprintDomain,
+    write: (writer) {
+      writer.string(sourceType);
+      writer.string(sourceId);
+      writer.string(vaultId);
+      writer.uint32(fieldList.length);
+      for (final field in fieldList) {
+        final values = field.values.toList(growable: false);
+        writer.string(field.id);
+        writer.uint32(values.length);
+        for (final value in values) {
+          writer.string(canonicalText(value));
+        }
+      }
+    },
+  );
+}
+
+Uint8List chunkFingerprintBytes({
+  required Uint8List key,
+  required String sourceType,
+  required String sourceId,
+  required String sourceField,
+  required int fieldChunkIndex,
+  required String text,
+}) {
+  return keyedFingerprintBytes(
     key: key,
     domain: chunkFingerprintDomain,
     write: (writer) {

@@ -292,11 +292,11 @@ class _ReadyLlmEngine implements LlmEngine {
   Future<void> releaseModel(String modelId) async {}
 }
 
-class _SearchRepository implements SearchRepository {
+class _SearchRepository implements SearchRepository, EmbeddingIndexRepository {
   var chunkReads = 0;
 
   @override
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
@@ -309,6 +309,18 @@ class _SearchRepository implements SearchRepository {
   Future<SearchScopeConfig> loadScopeConfig() async {
     return const SearchScopeConfig.defaults();
   }
+
+  @override
+  Future<EmbeddingIndexSet?> getIndexSetBySource(
+    SearchSourceKey sourceKey,
+    String modelId,
+  ) async => null;
+
+  @override
+  Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey) async {}
+
+  @override
+  Future<bool> replaceIndexSet(EmbeddingIndexSet indexSet) async => true;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

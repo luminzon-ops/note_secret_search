@@ -40,15 +40,15 @@ class _FakeCryptoService implements CryptoService {
 class _FakeSearchRepository implements SearchRepository {
   _FakeSearchRepository({required this.chunksBySource});
 
-  final Map<String, List<EmbeddingChunk>> chunksBySource;
+  final Map<String, List<LegacyEmbeddingChunk>> chunksBySource;
 
   @override
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
   ) async {
-    return chunksBySource[sourceId] ?? const <EmbeddingChunk>[];
+    return chunksBySource[sourceId] ?? const <LegacyEmbeddingChunk>[];
   }
 
   @override
@@ -65,7 +65,7 @@ class _FakeSearchRepository implements SearchRepository {
   Future<void> saveScopeConfig(SearchScopeConfig config) async {}
 
   @override
-  Future<void> upsertEmbeddingChunks(List<EmbeddingChunk> chunks) async {}
+  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) async {}
 }
 
 class _FakeEmbeddingEngine implements EmbeddingEngine {
@@ -107,13 +107,13 @@ const _model = ModelRegistryEntry(
 
 List<int> _vectorBlob(List<double> values) => utf8.encode(jsonEncode(values));
 
-EmbeddingChunk _chunk({
+LegacyEmbeddingChunk _chunk({
   required String sourceId,
   required SearchSourceType sourceType,
   required int chunkIndex,
   required List<double> vector,
 }) {
-  return EmbeddingChunk(
+  return LegacyEmbeddingChunk(
     id: '$sourceId-$chunkIndex',
     sourceId: sourceId,
     sourceType: sourceType,
@@ -127,7 +127,7 @@ EmbeddingChunk _chunk({
   );
 }
 
-List<EmbeddingChunk> _noteSummaryOnlyChunks({
+List<LegacyEmbeddingChunk> _noteSummaryOnlyChunks({
   required String sourceId,
   required List<double> summaryVector,
 }) {
@@ -147,7 +147,7 @@ List<EmbeddingChunk> _noteSummaryOnlyChunks({
   ];
 }
 
-List<EmbeddingChunk> _noteBodyOnlyChunks({
+List<LegacyEmbeddingChunk> _noteBodyOnlyChunks({
   required String sourceId,
   required List<double> bodyVector,
 }) {
@@ -173,7 +173,7 @@ List<EmbeddingChunk> _noteBodyOnlyChunks({
   ];
 }
 
-List<EmbeddingChunk> _noteTagsOnlyChunks({
+List<LegacyEmbeddingChunk> _noteTagsOnlyChunks({
   required String sourceId,
   required List<double> tagsVector,
 }) {
@@ -205,7 +205,7 @@ List<EmbeddingChunk> _noteTagsOnlyChunks({
   ];
 }
 
-List<EmbeddingChunk> _secretUsernameOnlyChunks({
+List<LegacyEmbeddingChunk> _secretUsernameOnlyChunks({
   required String sourceId,
   required List<double> usernameVector,
 }) {
@@ -225,7 +225,7 @@ List<EmbeddingChunk> _secretUsernameOnlyChunks({
   ];
 }
 
-List<EmbeddingChunk> _secretUrlOnlyChunks({
+List<LegacyEmbeddingChunk> _secretUrlOnlyChunks({
   required String sourceId,
   required List<double> urlVector,
 }) {

@@ -191,7 +191,7 @@ class SemanticSearchService {
 
   _ChunkMatch? _aggregateChunkMatches(
     List<double> queryVector,
-    List<EmbeddingChunk> chunks,
+    List<LegacyEmbeddingChunk> chunks,
     List<_ChunkDescriptor> chunkSummaries,
   ) {
     final matches = <_ChunkMatch>[];

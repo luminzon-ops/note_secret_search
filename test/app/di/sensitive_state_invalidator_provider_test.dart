@@ -40,6 +40,8 @@ import 'package:note_secret_search/features/search/application/search_providers.
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';

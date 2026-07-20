@@ -4,13 +4,13 @@ import 'package:note_secret_search/features/search/domain/search_scope.dart';
 
 class InMemorySearchRepository implements SearchRepository {
   SearchScopeConfig _config = const SearchScopeConfig.defaults();
-  final List<EmbeddingChunk> _chunks = <EmbeddingChunk>[];
+  final List<LegacyEmbeddingChunk> _chunks = <LegacyEmbeddingChunk>[];
 
   @override
   Future<SearchScopeConfig> loadScopeConfig() async => _config;
 
   @override
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
@@ -26,7 +26,10 @@ class InMemorySearchRepository implements SearchRepository {
   }
 
   @override
-  Future<void> removeChunksBySource(String sourceId, SearchSourceType sourceType) async {
+  Future<void> removeChunksBySource(
+    String sourceId,
+    SearchSourceType sourceType,
+  ) async {
     _chunks.removeWhere(
       (chunk) => chunk.sourceId == sourceId && chunk.sourceType == sourceType,
     );
@@ -38,7 +41,7 @@ class InMemorySearchRepository implements SearchRepository {
   }
 
   @override
-  Future<void> upsertEmbeddingChunks(List<EmbeddingChunk> chunks) async {
+  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) async {
     for (final chunk in chunks) {
       _chunks.removeWhere((existing) => existing.id == chunk.id);
       _chunks.add(chunk);

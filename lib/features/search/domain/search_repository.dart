@@ -6,13 +6,16 @@ abstract interface class SearchRepository {
 
   Future<void> saveScopeConfig(SearchScopeConfig config);
 
-  Future<List<EmbeddingChunk>> getChunksBySource(
+  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
     String sourceId,
     SearchSourceType sourceType,
     String modelId,
   );
 
-  Future<void> upsertEmbeddingChunks(List<EmbeddingChunk> chunks);
+  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks);
 
-  Future<void> removeChunksBySource(String sourceId, SearchSourceType sourceType);
+  Future<void> removeChunksBySource(
+    String sourceId,
+    SearchSourceType sourceType,
+  );
 }

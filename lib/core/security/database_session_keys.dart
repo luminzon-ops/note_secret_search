@@ -5,19 +5,33 @@ class DatabaseSessionKeys {
   DatabaseSessionKeys({
     required Uint8List databaseKey,
     required Uint8List fieldKey,
+    String? keyId,
     Uint8List? searchIndexFingerprintKey,
   }) : _databaseKey = _copyKey(databaseKey, 'databaseKey'),
        _fieldKey = _copyKey(fieldKey, 'fieldKey'),
+       _keyId = _copyKeyId(keyId),
        _searchIndexFingerprintKey = searchIndexFingerprintKey == null
            ? null
            : _copyKey(searchIndexFingerprintKey, 'searchIndexFingerprintKey');
 
   final Uint8List _databaseKey;
   final Uint8List _fieldKey;
+  final String? _keyId;
   final Uint8List? _searchIndexFingerprintKey;
   bool _isCleared = false;
 
   bool get isCleared => _isCleared;
+
+  String requireKeyId() {
+    if (_isCleared) {
+      throw StateError('Database session keys have been cleared.');
+    }
+    final keyId = _keyId;
+    if (keyId == null) {
+      throw StateError('Database session key ID is unavailable.');
+    }
+    return keyId;
+  }
 
   T withDatabaseKey<T>(T Function(Uint8List key) consume) {
     return _withKey(_databaseKey, consume);
@@ -71,6 +85,16 @@ class DatabaseSessionKeys {
       throw ArgumentError.value(value.length, name, 'Must contain 32 bytes.');
     }
     return Uint8List.fromList(value);
+  }
+
+  static String? _copyKeyId(String? value) {
+    if (value == null) {
+      return null;
+    }
+    if (value.isEmpty || value != value.trim()) {
+      throw ArgumentError.value(value, 'keyId', 'Must be a canonical ID.');
+    }
+    return value;
   }
 }
 

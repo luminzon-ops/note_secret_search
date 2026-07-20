@@ -5,8 +5,10 @@ import 'package:note_secret_search/features/notes/application/note_providers.dar
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_repository.dart';
@@ -18,7 +20,9 @@ import 'package:note_secret_search/features/search/infrastructure/sqlite_embeddi
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 
-final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((ref) {
+final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((
+  ref,
+) {
   return SqliteEmbeddingRepository(database: ref.watch(appDatabaseProvider));
 });
 
@@ -30,9 +34,21 @@ final searchRepositoryProvider = FutureProvider<SearchRepository>((ref) async {
   );
 });
 
-final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((ref) async {
-  final repository = await ref.watch(searchRepositoryProvider.future);
-  return repository.loadScopeConfig();
+final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
+  ref,
+) async {
+  final configuration = await ref.watch(searchConfigurationProvider.future);
+  return SearchScopeConfig(
+    includeTitle: configuration.includeTitle,
+    includeSecretNote: configuration.includeSecretNote,
+    includePasswordField: configuration.includePasswordField,
+    includeUsername: configuration.includeUsername,
+    includeUrl: configuration.includeUrl,
+    includeTags: configuration.includeTags,
+    includeNoteBody: configuration.includeNoteBody,
+    allowLocalEmbedding: configuration.allowLocalEmbedding,
+    allowExternalProviderAccess: configuration.allowExternalProviderAccess,
+  );
 });
 
 final searchServiceProvider = Provider<SearchService>((ref) {
@@ -45,9 +61,10 @@ final searchFusionServiceProvider = Provider<SearchFusionService>((ref) {
 
 final searchIndexServiceProvider = Provider<SearchIndexService>((ref) {
   return SearchIndexService(
-    repository: ref.watch(searchRepositoryProvider).value!,
+    repository: ref.watch(sqliteEmbeddingRepositoryProvider),
     cryptoService: ref.watch(cryptoServiceProvider),
     embeddingEngine: ref.watch(embeddingEngineProvider),
+    sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
   );
 });
 
@@ -61,8 +78,9 @@ final semanticSearchServiceProvider = Provider<SemanticSearchService>((ref) {
 
 final searchQueryProvider = StateProvider<String>((ref) => '');
 
-final keywordSearchResultsProvider =
-    FutureProvider<List<SearchResultItem>>((ref) {
+final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
+  ref,
+) {
   return guardSensitiveFuture<List<SearchResultItem>>(
     ref,
     lockedValue: const <SearchResultItem>[],
@@ -75,12 +93,9 @@ final keywordSearchResultsProvider =
       final scope = await ref.watch(searchScopeConfigProvider.future);
       final secrets = await ref.watch(secretListProvider.future);
       final notes = await ref.watch(noteListProvider.future);
-      return ref.watch(searchServiceProvider).search(
-            query: query,
-            scope: scope,
-            secrets: secrets,
-            notes: notes,
-          );
+      return ref
+          .watch(searchServiceProvider)
+          .search(query: query, scope: scope, secrets: secrets, notes: notes);
     },
   );
 });
@@ -98,14 +113,21 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
       final secrets = await ref.watch(secretListProvider.future);
       final notes = await ref.watch(noteListProvider.future);
       final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
-      final settings = await ref.watch(searchIndexSettingsProvider.future);
-      final baseStatus =
-          await ref.watch(searchIndexServiceProvider).buildStatus(
-                secrets: secrets,
-                notes: notes,
-                activeEmbeddingModel: activeModel,
-                settings: settings,
-              );
+      final configuration = await ref.watch(searchConfigurationProvider.future);
+      final modelRevisionHash = activeModel == null
+          ? ''
+          : await ref.watch(
+              searchIndexModelRevisionProvider(activeModel).future,
+            );
+      final baseStatus = await ref
+          .watch(searchIndexServiceProvider)
+          .buildStatus(
+            secrets: secrets,
+            notes: notes,
+            activeEmbeddingModel: activeModel,
+            modelRevisionHash: modelRevisionHash,
+            configuration: configuration,
+          );
       final taskState = ref.watch(searchIndexTaskStateProvider);
       return SearchIndexStatus(
         engineReady: baseStatus.engineReady,
@@ -120,45 +142,54 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
 
 final semanticSearchResultsProvider =
     FutureProvider<List<SemanticSearchResult>>((ref) {
-  return guardSensitiveFuture<List<SemanticSearchResult>>(
-    ref,
-    lockedValue: const <SemanticSearchResult>[],
-    load: () async {
-      final query = ref.watch(searchQueryProvider).trim();
-      if (query.isEmpty) {
-        return const <SemanticSearchResult>[];
-      }
+      return guardSensitiveFuture<List<SemanticSearchResult>>(
+        ref,
+        lockedValue: const <SemanticSearchResult>[],
+        load: () async {
+          final query = ref.watch(searchQueryProvider).trim();
+          if (query.isEmpty) {
+            return const <SemanticSearchResult>[];
+          }
 
-      final readiness = await ref.watch(semanticSearchReadinessProvider.future);
-      if (!readiness.ready || readiness.activeEmbeddingModel == null) {
-        return const <SemanticSearchResult>[];
-      }
-
-      final scope = await ref.watch(searchScopeConfigProvider.future);
-      final secrets = await ref.watch(secretListProvider.future);
-      final notes = await ref.watch(noteListProvider.future);
-      return ref.watch(semanticSearchServiceProvider).search(
-            query: query,
-            scope: scope,
-            activeEmbeddingModel: readiness.activeEmbeddingModel!,
-            secrets: secrets,
-            notes: notes,
+          final readiness = await ref.watch(
+            semanticSearchReadinessProvider.future,
           );
-    },
-  );
-});
+          if (!readiness.ready || readiness.activeEmbeddingModel == null) {
+            return const <SemanticSearchResult>[];
+          }
 
-final unifiedSearchResultsProvider =
-    FutureProvider<List<SearchResultItem>>((ref) {
+          final scope = await ref.watch(searchScopeConfigProvider.future);
+          final secrets = await ref.watch(secretListProvider.future);
+          final notes = await ref.watch(noteListProvider.future);
+          return ref
+              .watch(semanticSearchServiceProvider)
+              .search(
+                query: query,
+                scope: scope,
+                activeEmbeddingModel: readiness.activeEmbeddingModel!,
+                secrets: secrets,
+                notes: notes,
+              );
+        },
+      );
+    });
+
+final unifiedSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
+  ref,
+) {
   return guardSensitiveFuture<List<SearchResultItem>>(
     ref,
     lockedValue: const <SearchResultItem>[],
     load: () async {
-      final keywordResults =
-          await ref.watch(keywordSearchResultsProvider.future);
-      final semanticResults =
-          await ref.watch(semanticSearchResultsProvider.future);
-      return ref.watch(searchFusionServiceProvider).fuse(
+      final keywordResults = await ref.watch(
+        keywordSearchResultsProvider.future,
+      );
+      final semanticResults = await ref.watch(
+        semanticSearchResultsProvider.future,
+      );
+      return ref
+          .watch(searchFusionServiceProvider)
+          .fuse(
             keywordResults: keywordResults,
             semanticResults: semanticResults,
           );
@@ -182,9 +213,10 @@ final searchRefreshFeedbackProvider = StateProvider<SearchRefreshFeedbackState>(
   (ref) => const SearchRefreshFeedbackState.hidden(),
 );
 
-final searchPendingReindexHandoffProvider = StateProvider<SearchPendingReindexHandoffState>(
-  (ref) => const SearchPendingReindexHandoffState.hidden(),
-);
+final searchPendingReindexHandoffProvider =
+    StateProvider<SearchPendingReindexHandoffState>(
+      (ref) => const SearchPendingReindexHandoffState.hidden(),
+    );
 
 class SearchRefreshSessionState {
   const SearchRefreshSessionState({
@@ -194,9 +226,9 @@ class SearchRefreshSessionState {
   });
 
   const SearchRefreshSessionState.idle()
-      : refreshing = false,
-        message = null,
-        lastCompletedAt = null;
+    : refreshing = false,
+      message = null,
+      lastCompletedAt = null;
 
   final bool refreshing;
   final String? message;
@@ -212,7 +244,9 @@ class SearchRefreshSessionState {
     return SearchRefreshSessionState(
       refreshing: refreshing ?? this.refreshing,
       message: clearMessage ? null : (message ?? this.message),
-      lastCompletedAt: clearLastCompletedAt ? null : (lastCompletedAt ?? this.lastCompletedAt),
+      lastCompletedAt: clearLastCompletedAt
+          ? null
+          : (lastCompletedAt ?? this.lastCompletedAt),
     );
   }
 }
@@ -228,12 +262,12 @@ class SearchRefreshFeedbackState {
   });
 
   const SearchRefreshFeedbackState.hidden()
-      : visible = false,
-        headline = null,
-        message = null,
-        changed = null,
-        queryAtRefresh = null,
-        completedAt = null;
+    : visible = false,
+      headline = null,
+      message = null,
+      changed = null,
+      queryAtRefresh = null,
+      completedAt = null;
 
   final bool visible;
   final String? headline;
@@ -247,8 +281,8 @@ class SearchPendingReindexHandoffState {
   const SearchPendingReindexHandoffState({required this.visible, this.message});
 
   const SearchPendingReindexHandoffState.hidden()
-      : visible = false,
-        message = null;
+    : visible = false,
+      message = null;
 
   final bool visible;
   final String? message;
@@ -273,7 +307,7 @@ class SearchIndexController {
     if (!_canContinue(lockEpoch)) {
       return;
     }
-    final settings = await _ref.read(searchIndexSettingsProvider.future);
+    final configuration = await _ref.read(searchConfigurationProvider.future);
     if (!_canContinue(lockEpoch)) {
       return;
     }
@@ -284,26 +318,34 @@ class SearchIndexController {
     if (!_canContinue(lockEpoch)) {
       return;
     }
-    _ref.read(searchIndexTaskStateProvider.notifier).state = status.taskState.copyWith(
-          running: true,
-          clearLastError: true,
-        );
+    _ref.read(searchIndexTaskStateProvider.notifier).state = status.taskState
+        .copyWith(running: true, clearLastError: true);
 
     try {
-      await _ref.read(searchIndexServiceProvider).indexPendingItems(
+      final modelRevisionHash = await _ref.read(
+        searchIndexModelRevisionProvider(activeModel).future,
+      );
+      if (!_canContinue(lockEpoch)) {
+        return;
+      }
+      await _ref
+          .read(searchIndexServiceProvider)
+          .indexPendingItems(
             items: status.pendingItems,
             activeEmbeddingModel: activeModel,
-            settings: settings,
+            modelRevisionHash: modelRevisionHash,
+            configuration: configuration,
           );
 
       if (!_canContinue(lockEpoch)) {
         return;
       }
-      _ref.read(searchIndexTaskStateProvider.notifier).state = const SearchIndexTaskState.idle()
-          .copyWith(
-            lastCompletedAt: DateTime.now(),
-            lastIndexedCount: status.pendingItems.length,
-          );
+      _ref
+          .read(searchIndexTaskStateProvider.notifier)
+          .state = const SearchIndexTaskState.idle().copyWith(
+        lastCompletedAt: DateTime.now(),
+        lastIndexedCount: status.pendingItems.length,
+      );
       if (!_canContinue(lockEpoch)) {
         return;
       }
@@ -312,12 +354,13 @@ class SearchIndexController {
       if (!_canContinue(lockEpoch)) {
         return;
       }
-      _ref.read(searchIndexTaskStateProvider.notifier).state = const SearchIndexTaskState.idle()
-          .copyWith(
-            lastCompletedAt: DateTime.now(),
-            lastIndexedCount: 0,
-            lastError: error.toString(),
-          );
+      _ref
+          .read(searchIndexTaskStateProvider.notifier)
+          .state = const SearchIndexTaskState.idle().copyWith(
+        lastCompletedAt: DateTime.now(),
+        lastIndexedCount: 0,
+        lastError: error.toString(),
+      );
       rethrow;
     }
   }
@@ -333,7 +376,9 @@ class SearchIndexController {
     if (!_canContinue(lockEpoch)) {
       return;
     }
-    final beforeIds = beforeResults.map((item) => item.id).toList(growable: false);
+    final beforeIds = beforeResults
+        .map((item) => item.id)
+        .toList(growable: false);
 
     if (!_canContinue(lockEpoch)) {
       return;
@@ -346,11 +391,12 @@ class SearchIndexController {
       return;
     }
 
-    _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
-        .copyWith(
-          refreshing: true,
-          message: '正在刷新搜索状态与结果...',
-        );
+    _ref
+        .read(searchRefreshSessionProvider.notifier)
+        .state = const SearchRefreshSessionState.idle().copyWith(
+      refreshing: true,
+      message: '正在刷新搜索状态与结果...',
+    );
 
     try {
       if (!_canContinue(lockEpoch)) {
@@ -379,7 +425,9 @@ class SearchIndexController {
         return;
       }
 
-      _ref.read(searchRefreshFeedbackProvider.notifier).state = _buildRefreshFeedback(
+      _ref
+          .read(searchRefreshFeedbackProvider.notifier)
+          .state = _buildRefreshFeedback(
         query: query,
         beforeIds: beforeIds,
         afterIds: afterResults.map((item) => item.id).toList(growable: false),
@@ -388,8 +436,11 @@ class SearchIndexController {
       if (!_canContinue(lockEpoch)) {
         return;
       }
-      _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle()
-          .copyWith(lastCompletedAt: DateTime.now());
+      _ref
+          .read(searchRefreshSessionProvider.notifier)
+          .state = const SearchRefreshSessionState.idle().copyWith(
+        lastCompletedAt: DateTime.now(),
+      );
     } catch (_) {
       if (!_canContinue(lockEpoch)) {
         return;
@@ -399,7 +450,8 @@ class SearchIndexController {
       if (!_canContinue(lockEpoch)) {
         return;
       }
-      _ref.read(searchRefreshSessionProvider.notifier).state = const SearchRefreshSessionState.idle();
+      _ref.read(searchRefreshSessionProvider.notifier).state =
+          const SearchRefreshSessionState.idle();
       rethrow;
     }
   }
@@ -484,13 +536,30 @@ class SearchScopeController {
   final Ref _ref;
 
   Future<void> update(SearchScopeConfig config) async {
-    final repository = await _ref.read(searchRepositoryProvider.future);
-    await repository.saveScopeConfig(config);
-    _ref.invalidate(searchScopeConfigProvider);
-    _ref.invalidate(keywordSearchResultsProvider);
-    _ref.invalidate(semanticSearchResultsProvider);
-    _ref.invalidate(unifiedSearchResultsProvider);
-    _ref.invalidate(semanticSearchReadinessProvider);
-    _ref.invalidate(searchIndexStatusProvider);
+    final current = await _ref.read(searchConfigurationProvider.future);
+    final repository = await _ref.read(
+      searchConfigurationRepositoryProvider.future,
+    );
+    await repository.save(
+      _configurationFromScope(current: current, scope: config),
+    );
+    invalidateSearchConfiguration(_ref);
   }
+}
+
+SearchConfiguration _configurationFromScope({
+  required SearchConfiguration current,
+  required SearchScopeConfig scope,
+}) {
+  return current.copyWith(
+    includeTitle: scope.includeTitle,
+    includeSecretNote: scope.includeSecretNote,
+    includePasswordField: scope.includePasswordField,
+    includeUsername: scope.includeUsername,
+    includeUrl: scope.includeUrl,
+    includeTags: scope.includeTags,
+    includeNoteBody: scope.includeNoteBody,
+    allowLocalEmbedding: scope.allowLocalEmbedding,
+    allowExternalProviderAccess: scope.allowExternalProviderAccess,
+  );
 }
