@@ -57,7 +57,7 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
     _validateModelId(modelId);
     return _database.transaction((executor) async {
       await executor.delete(
-        DatabaseSchema.embeddingChunks,
+        DatabaseSchema.embeddingIndexSets,
         where: 'model_id = ?',
         whereArgs: <Object>[modelId],
       );
