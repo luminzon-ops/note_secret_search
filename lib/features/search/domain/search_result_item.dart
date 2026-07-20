@@ -1,12 +1,8 @@
-enum SearchResultType {
-  secret,
-  note,
-}
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 
-enum SearchMatchSource {
-  keyword,
-  semantic,
-}
+enum SearchResultType { secret, note }
+
+enum SearchMatchSource { keyword, semantic }
 
 enum SemanticHitField {
   title,
@@ -29,8 +25,12 @@ class SearchResultItem {
     required this.updatedAt,
     this.matchSources = const <SearchMatchSource>{SearchMatchSource.keyword},
     this.semanticScore,
+    this.semanticRawSimilarity,
     this.semanticHitSummary,
     this.semanticHitField,
+    this.semanticQueryAffinity = 0,
+    this.semanticFieldQualityTier = 0,
+    this.keywordHitFields = const <SearchSourceField>[],
   });
 
   final String id;
@@ -42,8 +42,12 @@ class SearchResultItem {
   final DateTime updatedAt;
   final Set<SearchMatchSource> matchSources;
   final double? semanticScore;
+  final double? semanticRawSimilarity;
   final String? semanticHitSummary;
   final SemanticHitField? semanticHitField;
+  final int semanticQueryAffinity;
+  final int semanticFieldQualityTier;
+  final List<SearchSourceField> keywordHitFields;
 
   SearchResultItem copyWith({
     String? id,
@@ -56,10 +60,15 @@ class SearchResultItem {
     Set<SearchMatchSource>? matchSources,
     double? semanticScore,
     bool clearSemanticScore = false,
+    double? semanticRawSimilarity,
+    bool clearSemanticRawSimilarity = false,
     String? semanticHitSummary,
     bool clearSemanticHitSummary = false,
     SemanticHitField? semanticHitField,
     bool clearSemanticHitField = false,
+    int? semanticQueryAffinity,
+    int? semanticFieldQualityTier,
+    List<SearchSourceField>? keywordHitFields,
   }) {
     return SearchResultItem(
       id: id ?? this.id,
@@ -70,11 +79,23 @@ class SearchResultItem {
       favorite: favorite ?? this.favorite,
       updatedAt: updatedAt ?? this.updatedAt,
       matchSources: matchSources ?? this.matchSources,
-      semanticScore: clearSemanticScore ? null : (semanticScore ?? this.semanticScore),
+      semanticScore: clearSemanticScore
+          ? null
+          : (semanticScore ?? this.semanticScore),
+      semanticRawSimilarity: clearSemanticRawSimilarity
+          ? null
+          : (semanticRawSimilarity ?? this.semanticRawSimilarity),
       semanticHitSummary: clearSemanticHitSummary
           ? null
           : (semanticHitSummary ?? this.semanticHitSummary),
-      semanticHitField: clearSemanticHitField ? null : (semanticHitField ?? this.semanticHitField),
+      semanticHitField: clearSemanticHitField
+          ? null
+          : (semanticHitField ?? this.semanticHitField),
+      semanticQueryAffinity:
+          semanticQueryAffinity ?? this.semanticQueryAffinity,
+      semanticFieldQualityTier:
+          semanticFieldQualityTier ?? this.semanticFieldQualityTier,
+      keywordHitFields: keywordHitFields ?? this.keywordHitFields,
     );
   }
 }

@@ -154,6 +154,127 @@ void main() {
       );
     },
   );
+
+  test('replacement removes stale generations from other models', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    await _insertOwners(database);
+    await database.run(
+      (db) => db.insert('model_registry', <String, Object?>{
+        'id': 'model-2',
+        'type': 'embedding',
+        'provider': 'local',
+        'name': 'Embedding 2',
+        'integrity_status': 'valid',
+        'enabled': 1,
+      }),
+    );
+    final repository = SqliteEmbeddingRepository(database: database);
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-model-1',
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-model-2',
+        modelId: 'model-2',
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+
+    expect(
+      await repository.getIndexSetBySource(
+        const SearchSourceKey.secret('secret-1'),
+        'model-1',
+      ),
+      isNull,
+    );
+    expect(
+      await repository.getIndexSetBySource(
+        const SearchSourceKey.secret('secret-1'),
+        'model-2',
+      ),
+      isNotNull,
+    );
+  });
+
+  test(
+    'compatible reader filters generation metadata and loads chunks',
+    () async {
+      final database = await openTestAppDatabase();
+      addTearDown(database.close);
+      await _insertOwners(database);
+      final repository = SqliteEmbeddingRepository(database: database);
+      await repository.replaceIndexSet(
+        _generation(
+          id: 'set-compatible',
+          fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+        ),
+      );
+
+      final compatible = await repository.getCompatibleIndexSets(
+        _compatibility(),
+        limit: 100,
+      );
+      final wrongKey = await repository.getCompatibleIndexSets(
+        _compatibility(fingerprintKeyId: 'other-key'),
+        limit: 100,
+      );
+
+      expect(compatible, hasLength(1));
+      expect(compatible.single.id, 'set-compatible');
+      expect(compatible.single.chunks, hasLength(1));
+      expect(wrongKey, isEmpty);
+    },
+  );
+
+  test('stale purge deletes at most one bounded batch', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    await _insertOwners(database);
+    final repository = SqliteEmbeddingRepository(database: database);
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-stale',
+        indexConfigEpoch: 1,
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+
+    expect(
+      await repository.purgeIncompatibleIndexSets(
+        _compatibility(indexConfigEpoch: 2),
+        batchSize: 100,
+      ),
+      1,
+    );
+    expect(
+      await repository.purgeIncompatibleIndexSets(
+        _compatibility(indexConfigEpoch: 2),
+        batchSize: 100,
+      ),
+      0,
+    );
+  });
+
+  test('full purge deletes derived index data in bounded batches', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    await _insertOwners(database);
+    final repository = SqliteEmbeddingRepository(database: database);
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-to-purge',
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+
+    expect(await repository.purgeAllIndexSets(batchSize: 1), 1);
+    expect(await repository.purgeAllIndexSets(batchSize: 1), 0);
+  });
 }
 
 Future<void> _insertOwners(TestAppDatabase database) {
@@ -179,6 +300,8 @@ Future<void> _insertOwners(TestAppDatabase database) {
 
 EmbeddingIndexSet _generation({
   required String id,
+  String modelId = 'model-1',
+  int indexConfigEpoch = 1,
   required List<SearchSourceField> fields,
 }) {
   final dimension = fields.isEmpty ? 0 : 2;
@@ -186,14 +309,14 @@ EmbeddingIndexSet _generation({
     id: id,
     sourceKey: const SearchSourceKey.secret('secret-1'),
     vaultId: 'default',
-    modelId: 'model-1',
+    modelId: modelId,
     modelRevisionHash: 'a' * 64,
     sourceUpdatedAt: DateTime.fromMillisecondsSinceEpoch(1),
     sourceFingerprint: Uint8List(32),
     fingerprintKeyId: 'key-1',
     fingerprintVersion: 1,
     indexConfigVersion: 1,
-    indexConfigEpoch: 1,
+    indexConfigEpoch: indexConfigEpoch,
     indexConfigHash: 'b' * 64,
     chunkSchemaVersion: 1,
     vectorFormatVersion: 1,
@@ -215,5 +338,23 @@ EmbeddingIndexSet _generation({
         ),
     ],
     createdAt: DateTime.fromMillisecondsSinceEpoch(1),
+  );
+}
+
+EmbeddingIndexCompatibility _compatibility({
+  String fingerprintKeyId = 'key-1',
+  int indexConfigEpoch = 1,
+}) {
+  return EmbeddingIndexCompatibility(
+    vaultId: 'default',
+    modelId: 'model-1',
+    modelRevisionHash: 'a' * 64,
+    fingerprintKeyId: fingerprintKeyId,
+    fingerprintVersion: 1,
+    indexConfigVersion: 1,
+    indexConfigEpoch: indexConfigEpoch,
+    indexConfigHash: 'b' * 64,
+    chunkSchemaVersion: 1,
+    vectorFormatVersion: 1,
   );
 }

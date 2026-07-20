@@ -1,380 +1,354 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/database_session_keys.dart';
+import 'package:note_secret_search/core/security/search_index_fingerprint.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
+import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
+import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
-import 'package:note_secret_search/features/search/domain/search_scope.dart';
-import 'package:note_secret_search/features/search/domain/search_repository.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
-import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 
 class SemanticSearchService {
   const SemanticSearchService({
-    required SearchRepository repository,
+    required EmbeddingIndexCorpusRepository repository,
     required EmbeddingEngine embeddingEngine,
     required CryptoService cryptoService,
+    DatabaseSessionKeyStore? sessionKeyStore,
     SemanticQualityPolicy qualityPolicy =
         const SemanticQualityPolicy.conservativeMvp(),
   }) : _repository = repository,
        _embeddingEngine = embeddingEngine,
        _cryptoService = cryptoService,
+       _sessionKeyStore = sessionKeyStore,
        _qualityPolicy = qualityPolicy;
 
-  final SearchRepository _repository;
+  final EmbeddingIndexCorpusRepository _repository;
   final EmbeddingEngine _embeddingEngine;
   final CryptoService _cryptoService;
+  final DatabaseSessionKeyStore? _sessionKeyStore;
   final SemanticQualityPolicy _qualityPolicy;
 
   Future<List<SemanticSearchResult>> search({
     required String query,
-    required SearchScopeConfig scope,
+    required SearchConfiguration configuration,
+    required String modelRevisionHash,
     required ModelRegistryEntry activeEmbeddingModel,
     required List<SecretItem> secrets,
     required List<NoteItem> notes,
+    SearchOperation operation = SearchOperation.semanticSearch,
   }) async {
     final normalizedQuery = query.trim();
-    if (normalizedQuery.isEmpty || !scope.allowLocalEmbedding) {
+    final policy = EffectiveSearchPolicy(configuration);
+    if (normalizedQuery.isEmpty) {
+      return const <SemanticSearchResult>[];
+    }
+    if (!configuration.allowLocalEmbedding) {
+      while (await _repository.purgeAllIndexSets(batchSize: 100) == 100) {}
       return const <SemanticSearchResult>[];
     }
 
     final queryVector = await _embeddingEngine.embed(
       EmbeddingRequest(model: activeEmbeddingModel, text: normalizedQuery),
     );
+    if (queryVector.values.isEmpty ||
+        queryVector.values.any((value) => !value.isFinite)) {
+      return const <SemanticSearchResult>[];
+    }
+
+    final secretById = <String, SecretItem>{
+      for (final secret in secrets) secret.id: secret,
+    };
+    final noteById = <String, NoteItem>{
+      for (final note in notes) note.id: note,
+    };
+    final vaultIds = <String>{
+      ...secrets.map((secret) => secret.vaultId),
+      ...notes.map((note) => note.vaultId),
+    };
+    if (vaultIds.isEmpty) {
+      return const <SemanticSearchResult>[];
+    }
 
     final candidates = <SemanticSearchResult>[];
-    candidates.addAll(
-      await _matchSecrets(queryVector.values, activeEmbeddingModel.id, secrets),
-    );
-    candidates.addAll(
-      await _matchNotes(queryVector.values, activeEmbeddingModel.id, notes),
-    );
-    candidates.sort((a, b) {
-      final queryAwareSort = _queryAwareFieldPriority(
-        normalizedQuery,
-        b.hitField,
-      ).compareTo(_queryAwareFieldPriority(normalizedQuery, a.hitField));
-      if (queryAwareSort != 0) {
-        return queryAwareSort;
+    final corruptSetIds = <String>{};
+    for (final vaultId in vaultIds) {
+      final compatibility = _compatibility(
+        vaultId: vaultId,
+        model: activeEmbeddingModel,
+        modelRevisionHash: modelRevisionHash,
+        configuration: configuration,
+      );
+      await _repository.purgeIncompatibleIndexSets(
+        compatibility,
+        batchSize: 100,
+      );
+      String? afterId;
+      while (true) {
+        final page = await _repository.getCompatibleIndexSets(
+          compatibility,
+          afterId: afterId,
+          limit: 100,
+        );
+        if (page.isEmpty) {
+          break;
+        }
+        for (final indexSet in page) {
+          final evaluated = _evaluateGeneration(
+            query: normalizedQuery,
+            queryVector: queryVector.values,
+            indexSet: indexSet,
+            policy: policy,
+            operation: operation,
+            secret: indexSet.sourceKey.type == SearchSourceType.secret
+                ? secretById[indexSet.sourceKey.id]
+                : null,
+            note: indexSet.sourceKey.type == SearchSourceType.note
+                ? noteById[indexSet.sourceKey.id]
+                : null,
+          );
+          if (evaluated.corrupt) {
+            corruptSetIds.add(indexSet.id);
+          } else if (evaluated.result != null) {
+            candidates.add(evaluated.result!);
+          }
+        }
+        candidates.sort(_compareCandidates);
+        if (candidates.length > 100) {
+          candidates.removeRange(100, candidates.length);
+        }
+        afterId = page.last.id;
+        if (page.length < 100) {
+          break;
+        }
       }
+    }
 
-      final qualitySort = _semanticFieldQualityTier(
-        b.hitField,
-      ).compareTo(_semanticFieldQualityTier(a.hitField));
-      if (qualitySort != 0) {
-        return qualitySort;
-      }
-      return b.score.compareTo(a.score);
-    });
-    return candidates.take(5).toList(growable: false);
+    for (var offset = 0; offset < corruptSetIds.length; offset += 100) {
+      final ids = corruptSetIds.skip(offset).take(100);
+      await _repository.purgeIndexSetsByIds(ids);
+    }
+    candidates.sort(_compareCandidates);
+    return List<SemanticSearchResult>.unmodifiable(candidates.take(100));
   }
 
-  Future<List<SemanticSearchResult>> _matchSecrets(
-    List<double> queryVector,
-    String modelId,
-    List<SecretItem> secrets,
-  ) async {
-    final results = <SemanticSearchResult>[];
-    for (final item in secrets) {
-      final chunks = await _repository.getChunksBySource(
-        item.id,
-        SearchSourceType.secret,
-        modelId,
-      );
-      if (chunks.isEmpty) {
+  _EvaluatedGeneration _evaluateGeneration({
+    required String query,
+    required List<double> queryVector,
+    required EmbeddingIndexSet indexSet,
+    required EffectiveSearchPolicy policy,
+    required SearchOperation operation,
+    required SecretItem? secret,
+    required NoteItem? note,
+  }) {
+    final sourceVaultId = secret?.vaultId ?? note?.vaultId;
+    final sourceUpdatedAt = secret?.updatedAt ?? note?.updatedAt;
+    if (sourceVaultId == null ||
+        sourceVaultId != indexSet.vaultId ||
+        sourceUpdatedAt != indexSet.sourceUpdatedAt) {
+      return const _EvaluatedGeneration.corrupt();
+    }
+    if (indexSet.chunks.isEmpty) {
+      return const _EvaluatedGeneration.empty();
+    }
+    if (queryVector.length != indexSet.vectorDimension) {
+      return const _EvaluatedGeneration.corrupt();
+    }
+
+    final evidence = <SearchEvidence>[];
+    for (final chunk in indexSet.chunks) {
+      if (!policy.allows(chunk.sourceField, operation)) {
         continue;
       }
-
-      final aggregatedMatch = _aggregateChunkMatches(
-        queryVector,
-        chunks,
-        _secretChunkSummaries(item, chunks.length),
+      final decoded = Float32VectorCodec.decode(
+        chunk.vectorBlob,
+        expectedDimension: indexSet.vectorDimension,
       );
-      if (aggregatedMatch == null || aggregatedMatch.score <= 0) {
+      if (!decoded.isValid) {
+        return const _EvaluatedGeneration.corrupt();
+      }
+      final rawSimilarity = _cosineSimilarity(queryVector, decoded.values);
+      final threshold = _qualityPolicy.minimumRawSimilarityFor(
+        chunk.sourceField,
+      );
+      if (rawSimilarity < threshold) {
         continue;
       }
-
-      final username = _cryptoService.decryptField(
-        item.usernameCiphertext,
-        field: EncryptedDatabaseField.secretUsername,
-        rowId: item.id,
-      );
-      final note = _cryptoService.decryptField(
-        item.noteCiphertext,
-        field: EncryptedDatabaseField.secretNote,
-        rowId: item.id,
-      );
-
-      results.add(
-        SemanticSearchResult(
-          item: SearchResultItem(
-            id: item.id,
-            type: SearchResultType.secret,
-            title: item.title,
-            preview: username.isNotEmpty ? username : note,
-            tags: item.tags,
-            favorite: item.favorite,
-            updatedAt: item.updatedAt,
-            semanticHitSummary: aggregatedMatch.summary,
-            semanticHitField: aggregatedMatch.field,
+      final weight = _qualityPolicy.rankingWeightFor(chunk.sourceField);
+      evidence.add(
+        SearchEvidence(
+          kind: SearchEvidenceKind.semantic,
+          sourceField: chunk.sourceField,
+          fieldChunkIndex: chunk.fieldChunkIndex,
+          summary: _summaryFor(
+            chunk.sourceField,
+            chunk.fieldChunkIndex,
+            secret: secret,
+            note: note,
           ),
-          score: aggregatedMatch.score,
-          hitSummary: aggregatedMatch.summary,
-          hitField: aggregatedMatch.field,
+          rawSimilarity: rawSimilarity,
+          weight: weight,
+          rankingScore: rawSimilarity * weight,
+          threshold: threshold,
+          modelRevisionHash: indexSet.modelRevisionHash,
+          fingerprintVersion: indexSet.fingerprintVersion,
+          indexConfigVersion: indexSet.indexConfigVersion,
+          indexConfigEpoch: indexSet.indexConfigEpoch,
+          chunkSchemaVersion: indexSet.chunkSchemaVersion,
+          vectorFormatVersion: indexSet.vectorFormatVersion,
         ),
       );
     }
-    return results;
-  }
-
-  Future<List<SemanticSearchResult>> _matchNotes(
-    List<double> queryVector,
-    String modelId,
-    List<NoteItem> notes,
-  ) async {
-    final results = <SemanticSearchResult>[];
-    for (final item in notes) {
-      final chunks = await _repository.getChunksBySource(
-        item.id,
-        SearchSourceType.note,
-        modelId,
-      );
-      if (chunks.isEmpty) {
-        continue;
-      }
-
-      final aggregatedMatch = _aggregateChunkMatches(
-        queryVector,
-        chunks,
-        _noteChunkSummaries(item, chunks.length),
-      );
-      if (aggregatedMatch == null || aggregatedMatch.score <= 0) {
-        continue;
-      }
-
-      final summary = _cryptoService.decryptField(
-        item.summaryCacheCiphertext,
-        field: EncryptedDatabaseField.noteSummary,
-        rowId: item.id,
-      );
-      final content = _cryptoService.decryptField(
-        item.contentCiphertext,
-        field: EncryptedDatabaseField.noteContent,
-        rowId: item.id,
-      );
-
-      results.add(
-        SemanticSearchResult(
-          item: SearchResultItem(
-            id: item.id,
-            type: SearchResultType.note,
-            title: item.title,
-            preview: summary.isNotEmpty ? summary : content,
-            tags: item.tags,
-            favorite: item.favorite,
-            updatedAt: item.updatedAt,
-            semanticHitSummary: aggregatedMatch.summary,
-            semanticHitField: aggregatedMatch.field,
-          ),
-          score: aggregatedMatch.score,
-          hitSummary: aggregatedMatch.summary,
-          hitField: aggregatedMatch.field,
-        ),
-      );
+    if (evidence.isEmpty) {
+      return const _EvaluatedGeneration.empty();
     }
-    return results;
-  }
-
-  _ChunkMatch? _aggregateChunkMatches(
-    List<double> queryVector,
-    List<LegacyEmbeddingChunk> chunks,
-    List<_ChunkDescriptor> chunkSummaries,
-  ) {
-    final matches = <_ChunkMatch>[];
-    for (var index = 0; index < chunks.length; index++) {
-      final chunk = chunks[index];
-      if (chunk.vectorBlob == null) {
-        continue;
-      }
-      final vector = _decodeVector(chunk.vectorBlob!);
-      final rawScore = _cosineSimilarity(queryVector, vector);
-      if (rawScore <= 0) {
-        continue;
-      }
-      final descriptor = index < chunkSummaries.length
-          ? chunkSummaries[index]
-          : _ChunkDescriptor(
-              summary: '命中分片 ${chunk.chunkIndex + 1}',
-              field: SemanticHitField.noteBody,
-            );
-      final weightedScore = rawScore * _semanticFieldWeight(descriptor.field);
-      if (!_passesSemanticQualityGate(weightedScore, descriptor.field)) {
-        continue;
-      }
-      matches.add(
-        _ChunkMatch(
-          score: weightedScore,
-          summary: descriptor.summary,
-          field: descriptor.field,
-        ),
-      );
-    }
-
-    if (matches.isEmpty) {
-      return null;
-    }
-
-    matches.sort((a, b) => b.score.compareTo(a.score));
-    final topMatches = matches.take(2).toList(growable: false);
-    final combinedScore =
-        topMatches.fold<double>(0, (sum, match) => sum + match.score) /
-        topMatches.length;
-    final combinedSummary = topMatches.map((match) => match.summary).join('；');
-    return _ChunkMatch(
-      score: combinedScore,
-      summary: combinedSummary,
-      field: topMatches.first.field,
+    evidence.sort(_compareEvidence);
+    final top = evidence.take(2).toList(growable: false);
+    final aggregate =
+        top.fold<double>(0, (sum, item) => sum + item.rankingScore) /
+        top.length;
+    final primary = evidence.first;
+    final item = _resultItem(
+      secret: secret,
+      note: note,
+      preview: primary.summary,
+      hitSummary: top.map((item) => item.summary).join('；'),
+      hitField: _legacyField(primary.sourceField),
     );
-  }
-
-  List<_ChunkDescriptor> _secretChunkSummaries(
-    SecretItem item,
-    int chunkCount,
-  ) {
-    final username = _cryptoService.decryptField(
-      item.usernameCiphertext,
-      field: EncryptedDatabaseField.secretUsername,
-      rowId: item.id,
-    );
-    final website = _cryptoService.decryptField(
-      item.websiteUrlCiphertext,
-      field: EncryptedDatabaseField.secretWebsiteUrl,
-      rowId: item.id,
-    );
-    final note = _cryptoService.decryptField(
-      item.noteCiphertext,
-      field: EncryptedDatabaseField.secretNote,
-      rowId: item.id,
-    );
-
-    final candidates = <_ChunkDescriptor>[
-      _ChunkDescriptor(
-        summary: '标题：${item.title}',
-        field: SemanticHitField.title,
+    return _EvaluatedGeneration.result(
+      SemanticSearchResult(
+        item: item,
+        score: aggregate,
+        hitSummary: top.map((item) => item.summary).join('；'),
+        hitField: _legacyField(primary.sourceField),
+        primaryRawSimilarity: primary.rawSimilarity,
+        evidence: List<SearchEvidence>.unmodifiable(evidence),
+        queryAffinity: _queryAffinity(query, primary.sourceField),
+        fieldQualityTier: _fieldQualityTier(primary.sourceField),
       ),
-      if (username.isNotEmpty)
-        _ChunkDescriptor(
-          summary: '账号：$username',
-          field: SemanticHitField.username,
-        ),
-      if (website.isNotEmpty)
-        _ChunkDescriptor(summary: '网址：$website', field: SemanticHitField.url),
-      if (note.isNotEmpty)
-        _ChunkDescriptor(
-          summary: '附注：${_truncate(note)}',
-          field: SemanticHitField.secretNote,
-        ),
-      if (item.tags.isNotEmpty)
-        _ChunkDescriptor(
-          summary: '标签：${item.tags.join('、')}',
-          field: SemanticHitField.tags,
-        ),
-    ];
-
-    return _expandSummaries(candidates, chunkCount);
+    );
   }
 
-  List<_ChunkDescriptor> _noteChunkSummaries(NoteItem item, int chunkCount) {
-    final summary = _cryptoService.decryptField(
-      item.summaryCacheCiphertext,
-      field: EncryptedDatabaseField.noteSummary,
-      rowId: item.id,
+  EmbeddingIndexCompatibility _compatibility({
+    required String vaultId,
+    required ModelRegistryEntry model,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) {
+    return EmbeddingIndexCompatibility(
+      vaultId: vaultId,
+      modelId: model.id,
+      modelRevisionHash: modelRevisionHash,
+      fingerprintKeyId: _keys.requireCurrent().requireKeyId(),
+      fingerprintVersion: 1,
+      indexConfigVersion: searchIndexConfigurationVersion,
+      indexConfigEpoch: configuration.configurationEpoch,
+      indexConfigHash: searchIndexConfigurationHash(configuration),
+      chunkSchemaVersion: 1,
+      vectorFormatVersion: float32VectorFormatVersion,
     );
-    final content = _cryptoService.decryptField(
-      item.contentCiphertext,
-      field: EncryptedDatabaseField.noteContent,
-      rowId: item.id,
-    );
-    final paragraphs = content
-        .split(RegExp(r'\n{2,}'))
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .toList(growable: false);
-
-    final candidates = <_ChunkDescriptor>[
-      _ChunkDescriptor(
-        summary: '标题：${item.title}',
-        field: SemanticHitField.title,
-      ),
-      if (summary.isNotEmpty)
-        _ChunkDescriptor(
-          summary: '摘要：${_truncate(summary)}',
-          field: SemanticHitField.summary,
-        ),
-      ...paragraphs.map(
-        (part) => _ChunkDescriptor(
-          summary: '正文：${_truncate(part)}',
-          field: SemanticHitField.noteBody,
-        ),
-      ),
-      if (item.tags.isNotEmpty)
-        _ChunkDescriptor(
-          summary: '标签：${item.tags.join('、')}',
-          field: SemanticHitField.tags,
-        ),
-    ];
-
-    return _expandSummaries(candidates, chunkCount);
   }
 
-  List<_ChunkDescriptor> _expandSummaries(
-    List<_ChunkDescriptor> candidates,
-    int chunkCount,
-  ) {
-    if (candidates.isEmpty) {
-      return List<_ChunkDescriptor>.generate(
-        chunkCount,
-        (index) => _ChunkDescriptor(
-          summary: '命中分片 ${index + 1}',
-          field: SemanticHitField.noteBody,
-        ),
+  SearchResultItem _resultItem({
+    required SecretItem? secret,
+    required NoteItem? note,
+    required String preview,
+    required String hitSummary,
+    required SemanticHitField hitField,
+  }) {
+    if (secret != null) {
+      return SearchResultItem(
+        id: secret.id,
+        type: SearchResultType.secret,
+        title: secret.title,
+        preview: preview,
+        tags: secret.tags,
+        favorite: secret.favorite,
+        updatedAt: secret.updatedAt,
+        semanticHitSummary: hitSummary,
+        semanticHitField: hitField,
       );
     }
-
-    final summaries = <_ChunkDescriptor>[];
-    for (var index = 0; index < chunkCount; index++) {
-      summaries.add(candidates[index % candidates.length]);
-    }
-    return summaries;
+    final item = note!;
+    return SearchResultItem(
+      id: item.id,
+      type: SearchResultType.note,
+      title: item.title,
+      preview: preview,
+      tags: item.tags,
+      favorite: item.favorite,
+      updatedAt: item.updatedAt,
+      semanticHitSummary: hitSummary,
+      semanticHitField: hitField,
+    );
   }
 
-  String _truncate(String value, {int maxLength = 72}) {
-    final normalized = value.trim();
-    if (normalized.length <= maxLength) {
+  String _summaryFor(
+    SearchSourceField field,
+    int fieldChunkIndex, {
+    required SecretItem? secret,
+    required NoteItem? note,
+  }) {
+    return switch (field) {
+      SearchSourceField.secretTitle => '标题：${secret!.title}',
+      SearchSourceField.secretUsername =>
+        '账号：${_decrypt(secret!, EncryptedDatabaseField.secretUsername)}',
+      SearchSourceField.secretWebsiteUrl =>
+        '网址：${_decrypt(secret!, EncryptedDatabaseField.secretWebsiteUrl)}',
+      SearchSourceField.secretNote =>
+        '附注：${_truncate(_decrypt(secret!, EncryptedDatabaseField.secretNote))}',
+      SearchSourceField.secretTags =>
+        '标签：${_tagAt(secret!.tags, fieldChunkIndex)}',
+      SearchSourceField.noteTitle => '标题：${note!.title}',
+      SearchSourceField.noteSummary =>
+        '摘要：${_truncate(_decrypt(note!, EncryptedDatabaseField.noteSummary))}',
+      SearchSourceField.noteBody =>
+        '正文：${_truncate(_decrypt(note!, EncryptedDatabaseField.noteContent))}',
+      SearchSourceField.noteTags => '标签：${_tagAt(note!.tags, fieldChunkIndex)}',
+      SearchSourceField.secretPassword => '',
+    };
+  }
+
+  String _decrypt(Object item, EncryptedDatabaseField field) {
+    final rowId = item is SecretItem ? item.id : (item as NoteItem).id;
+    final ciphertext = switch (field) {
+      EncryptedDatabaseField.secretUsername =>
+        (item as SecretItem).usernameCiphertext,
+      EncryptedDatabaseField.secretWebsiteUrl =>
+        (item as SecretItem).websiteUrlCiphertext,
+      EncryptedDatabaseField.secretNote => (item as SecretItem).noteCiphertext,
+      EncryptedDatabaseField.noteSummary =>
+        (item as NoteItem).summaryCacheCiphertext,
+      EncryptedDatabaseField.noteContent =>
+        (item as NoteItem).contentCiphertext,
+      _ => null,
+    };
+    return _cryptoService.decryptField(ciphertext, field: field, rowId: rowId);
+  }
+
+  String _tagAt(List<String> tags, int index) {
+    final canonical = canonicalTags(tags);
+    return index < canonical.length ? canonical[index] : '';
+  }
+
+  String _truncate(String value, {int maxRunes = 72}) {
+    final normalized = canonicalText(value);
+    final runes = normalized.runes.toList(growable: false);
+    if (runes.length <= maxRunes) {
       return normalized;
     }
-    return '${normalized.substring(0, maxLength)}…';
-  }
-
-  List<double> _decodeVector(List<int> blob) {
-    final decoded = jsonDecode(utf8.decode(blob));
-    if (decoded is! List) {
-      return const <double>[];
-    }
-    return decoded
-        .map((value) => (value as num).toDouble())
-        .toList(growable: false);
+    return '${String.fromCharCodes(runes.take(maxRunes))}…';
   }
 
   double _cosineSimilarity(List<double> left, List<double> right) {
-    if (left.isEmpty || right.isEmpty || left.length != right.length) {
-      return 0;
-    }
-
     var dot = 0.0;
     var leftNorm = 0.0;
     var rightNorm = 0.0;
@@ -383,101 +357,119 @@ class SemanticSearchService {
       leftNorm += left[index] * left[index];
       rightNorm += right[index] * right[index];
     }
-
     if (leftNorm == 0 || rightNorm == 0) {
-      return 0;
+      return -1;
     }
-
     return dot / (math.sqrt(leftNorm) * math.sqrt(rightNorm));
   }
 
-  double _semanticFieldWeight(SemanticHitField field) {
-    switch (field) {
-      case SemanticHitField.title:
-        return 1.16;
-      case SemanticHitField.username:
-      case SemanticHitField.summary:
-        return 1.1;
-      case SemanticHitField.url:
-      case SemanticHitField.secretNote:
-        return 1.04;
-      case SemanticHitField.tags:
-        return 0.96;
-      case SemanticHitField.noteBody:
-        return 0.92;
+  int _compareEvidence(SearchEvidence left, SearchEvidence right) {
+    final score = right.rankingScore.compareTo(left.rankingScore);
+    if (score != 0) {
+      return score;
     }
+    final field = _fieldPriority(
+      right.sourceField,
+    ).compareTo(_fieldPriority(left.sourceField));
+    return field != 0
+        ? field
+        : left.fieldChunkIndex.compareTo(right.fieldChunkIndex);
   }
 
-  bool _passesSemanticQualityGate(double score, SemanticHitField field) {
-    return score >= _qualityPolicy.minimumThresholdFor(field);
+  int _compareCandidates(
+    SemanticSearchResult left,
+    SemanticSearchResult right,
+  ) {
+    var result = right.queryAffinity.compareTo(left.queryAffinity);
+    result = result != 0
+        ? result
+        : right.fieldQualityTier.compareTo(left.fieldQualityTier);
+    result = result != 0 ? result : right.score.compareTo(left.score);
+    result = result != 0
+        ? result
+        : _fieldPriority(
+            right.evidence.first.sourceField,
+          ).compareTo(_fieldPriority(left.evidence.first.sourceField));
+    result = result != 0
+        ? result
+        : (right.item.favorite ? 1 : 0).compareTo(left.item.favorite ? 1 : 0);
+    result = result != 0
+        ? result
+        : right.item.updatedAt.compareTo(left.item.updatedAt);
+    result = result != 0
+        ? result
+        : left.item.type.index.compareTo(right.item.type.index);
+    return result != 0 ? result : left.item.id.compareTo(right.item.id);
   }
 
-  int _queryAwareFieldPriority(String query, SemanticHitField field) {
-    if (_isAccountLikeQuery(query) && field == SemanticHitField.username) {
+  int _queryAffinity(String query, SearchSourceField field) {
+    if (query.contains('@') && field == SearchSourceField.secretUsername) {
       return 1;
     }
-
-    if (_isUrlLikeQuery(query) && field == SemanticHitField.url) {
+    if ((query.contains('://') || query.contains('.') || query.contains('/')) &&
+        field == SearchSourceField.secretWebsiteUrl) {
       return 1;
     }
-
-    if (_isTagLikeQuery(query) && field == SemanticHitField.tags) {
+    if (RegExp(r'^[a-zA-Z0-9_-]{1,24}$').hasMatch(query) &&
+        (field == SearchSourceField.secretTags ||
+            field == SearchSourceField.noteTags)) {
       return 1;
     }
-
     return 0;
   }
 
-  bool _isUrlLikeQuery(String query) {
-    return query.contains('://') || query.contains('.') || query.contains('/');
+  int _fieldQualityTier(SearchSourceField field) {
+    return switch (field) {
+      SearchSourceField.secretTitle ||
+      SearchSourceField.noteTitle ||
+      SearchSourceField.secretUsername ||
+      SearchSourceField.noteSummary => 2,
+      _ => 1,
+    };
   }
 
-  bool _isAccountLikeQuery(String query) {
-    return query.contains('@');
+  int _fieldPriority(SearchSourceField field) {
+    return switch (field) {
+      SearchSourceField.secretTitle || SearchSourceField.noteTitle => 6,
+      SearchSourceField.secretUsername || SearchSourceField.noteSummary => 5,
+      SearchSourceField.secretWebsiteUrl || SearchSourceField.secretNote => 4,
+      SearchSourceField.secretTags || SearchSourceField.noteTags => 3,
+      SearchSourceField.noteBody => 2,
+      SearchSourceField.secretPassword => 0,
+    };
   }
 
-  bool _isTagLikeQuery(String query) {
-    if (query.isEmpty || query.length > 24) {
-      return false;
-    }
-
-    if (query.contains(' ') || query.contains('@') || _isUrlLikeQuery(query)) {
-      return false;
-    }
-
-    return RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(query);
+  SemanticHitField _legacyField(SearchSourceField field) {
+    return switch (field) {
+      SearchSourceField.secretTitle ||
+      SearchSourceField.noteTitle => SemanticHitField.title,
+      SearchSourceField.secretUsername => SemanticHitField.username,
+      SearchSourceField.secretWebsiteUrl => SemanticHitField.url,
+      SearchSourceField.secretNote => SemanticHitField.secretNote,
+      SearchSourceField.noteSummary => SemanticHitField.summary,
+      SearchSourceField.noteBody => SemanticHitField.noteBody,
+      SearchSourceField.secretTags ||
+      SearchSourceField.noteTags => SemanticHitField.tags,
+      SearchSourceField.secretPassword => SemanticHitField.secretNote,
+    };
   }
 
-  int _semanticFieldQualityTier(SemanticHitField field) {
-    switch (field) {
-      case SemanticHitField.title:
-      case SemanticHitField.username:
-      case SemanticHitField.summary:
-        return 1;
-      case SemanticHitField.url:
-      case SemanticHitField.secretNote:
-      case SemanticHitField.tags:
-      case SemanticHitField.noteBody:
-        return 0;
+  DatabaseSessionKeyStore get _keys {
+    final store = _sessionKeyStore;
+    if (store == null) {
+      throw StateError('Search index session keys are unavailable.');
     }
+    return store;
   }
 }
 
-class _ChunkMatch {
-  const _ChunkMatch({
-    required this.score,
-    required this.summary,
-    required this.field,
-  });
+class _EvaluatedGeneration {
+  const _EvaluatedGeneration.result(this.result) : corrupt = false;
 
-  final double score;
-  final String summary;
-  final SemanticHitField field;
-}
+  const _EvaluatedGeneration.empty() : result = null, corrupt = false;
 
-class _ChunkDescriptor {
-  const _ChunkDescriptor({required this.summary, required this.field});
+  const _EvaluatedGeneration.corrupt() : result = null, corrupt = true;
 
-  final String summary;
-  final SemanticHitField field;
+  final SemanticSearchResult? result;
+  final bool corrupt;
 }

@@ -72,6 +72,16 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       final embeddingEngine = _ReadyEmbeddingEngine();
       final llmEngine = _ReadyLlmEngine();
       final searchRepository = _SearchRepository();
+      final searchIndexKeyStore = DatabaseSessionKeyStore()
+        ..replace(
+          DatabaseSessionKeys(
+            databaseKey: Uint8List(32),
+            fieldKey: Uint8List(32),
+            keyId: 'test-key',
+            searchIndexFingerprintKey: Uint8List(32),
+          ),
+        );
+      addTearDown(searchIndexKeyStore.clear);
       final semanticService = _SensitiveSemanticSearchService(
         repository: searchRepository,
         embeddingEngine: embeddingEngine,
@@ -102,12 +112,19 @@ void registerSensitiveStateInvalidatorPurgeTests() {
           searchScopeConfigProvider.overrideWith(
             (ref) async => const SearchScopeConfig.defaults(),
           ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider.overrideWith(
+            (ref, model) async => 'a' * 64,
+          ),
           semanticSearchServiceProvider.overrideWithValue(semanticService),
           searchIndexServiceProvider.overrideWithValue(
             SearchIndexService(
               repository: searchRepository,
               cryptoService: _plaintextCryptoService,
               embeddingEngine: embeddingEngine,
+              sessionKeyStore: searchIndexKeyStore,
             ),
           ),
         ],

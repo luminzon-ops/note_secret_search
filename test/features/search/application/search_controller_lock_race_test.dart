@@ -19,9 +19,7 @@ import 'package:note_secret_search/features/search/domain/embedding_index_set.da
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
-import 'package:note_secret_search/features/search/domain/search_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
-import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 
 class _FakeCryptoService implements CryptoService {
@@ -44,34 +42,7 @@ class _FakeCryptoService implements CryptoService {
   }
 }
 
-class _FakeSearchRepository
-    implements SearchRepository, EmbeddingIndexRepository {
-  @override
-  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
-    String sourceId,
-    SearchSourceType sourceType,
-    String modelId,
-  ) async {
-    return const <LegacyEmbeddingChunk>[];
-  }
-
-  @override
-  Future<SearchScopeConfig> loadScopeConfig() async {
-    return const SearchScopeConfig.defaults();
-  }
-
-  @override
-  Future<void> removeChunksBySource(
-    String sourceId,
-    SearchSourceType sourceType,
-  ) async {}
-
-  @override
-  Future<void> saveScopeConfig(SearchScopeConfig config) async {}
-
-  @override
-  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) async {}
-
+class _FakeEmbeddingIndexRepository implements EmbeddingIndexRepository {
   @override
   Future<EmbeddingIndexSet?> getIndexSetBySource(
     SearchSourceKey sourceKey,
@@ -106,7 +77,7 @@ class _FakeEmbeddingEngine implements EmbeddingEngine {
 class _ControlledSearchIndexService extends SearchIndexService {
   _ControlledSearchIndexService(this._onIndex)
     : super(
-        repository: _FakeSearchRepository(),
+        repository: _FakeEmbeddingIndexRepository(),
         cryptoService: const _FakeCryptoService(),
         embeddingEngine: const _FakeEmbeddingEngine(),
       );

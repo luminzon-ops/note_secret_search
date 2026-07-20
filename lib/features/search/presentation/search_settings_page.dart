@@ -31,22 +31,23 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
         return;
       }
       setState(() => _showPostSaveReindexActions = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
     } catch (_) {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('索引触发失败，请稍后重试。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
   void _returnToSearch(BuildContext context) {
-    ref.read(searchPendingReindexHandoffProvider.notifier).state =
-        const SearchPendingReindexHandoffState(
+    ref
+        .read(searchPendingReindexHandoffProvider.notifier)
+        .state = const SearchPendingReindexHandoffState(
           visible: true,
           message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
         );
@@ -76,14 +77,16 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
       _draftIndexSettings = savedIndexSettings;
     }
 
-    final alignedSummary = semanticReadinessAsync.hasValue && indexStatusAsync.hasValue
+    final alignedSummary =
+        semanticReadinessAsync.hasValue && indexStatusAsync.hasValue
         ? buildSearchStatusSummary(
             readiness: semanticReadinessAsync.requireValue,
             status: indexStatusAsync.requireValue,
           )
         : null;
 
-    final impactPreview = savedScope != null &&
+    final impactPreview =
+        savedScope != null &&
             savedIndexSettings != null &&
             _draftScope != null &&
             _draftIndexSettings != null &&
@@ -99,7 +102,8 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('搜索与索引设置')),
-      bottomNavigationBar: _showPostSaveReindexActions && !refreshSession.refreshing
+      bottomNavigationBar:
+          _showPostSaveReindexActions && !refreshSession.refreshing
           ? SafeArea(
               top: false,
               child: Padding(
@@ -140,7 +144,9 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (semanticReadinessAsync.hasValue && scopeAsync.hasValue && indexStatusAsync.hasValue)
+          if (semanticReadinessAsync.hasValue &&
+              scopeAsync.hasValue &&
+              indexStatusAsync.hasValue)
             _SemanticReadinessCard(
               readiness: semanticReadinessAsync.requireValue,
               scope: scopeAsync.requireValue,
@@ -189,7 +195,8 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
                 if (draft == null) {
                   return;
                 }
-                final needsReindex = savedScopeSnapshot != null &&
+                final needsReindex =
+                    savedScopeSnapshot != null &&
                     savedSettingsSnapshot != null &&
                     indexStatusSnapshot != null &&
                     buildSearchSettingsImpactPreview(
@@ -199,7 +206,9 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
                           draftIndexSettings: draft,
                           indexStatus: indexStatusSnapshot,
                         ).reindexItems.isNotEmpty;
-                await ref.read(searchIndexSettingsControllerProvider).update(draft);
+                await ref
+                    .read(searchIndexSettingsControllerProvider)
+                    .update(draft);
                 if (!mounted) {
                   return;
                 }
@@ -228,14 +237,16 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
                 if (draft == null) {
                   return;
                 }
-                final needsReindex = savedScopeSnapshot != null &&
+                final needsReindex =
+                    savedScopeSnapshot != null &&
                     savedSettingsSnapshot != null &&
                     indexStatusSnapshot != null &&
                     buildSearchSettingsImpactPreview(
                           savedScope: savedScopeSnapshot,
                           draftScope: draft,
                           savedIndexSettings: savedSettingsSnapshot,
-                          draftIndexSettings: _draftIndexSettings ?? savedSettingsSnapshot,
+                      draftIndexSettings:
+                          _draftIndexSettings ?? savedSettingsSnapshot,
                           indexStatus: indexStatusSnapshot,
                         ).reindexItems.isNotEmpty;
                 await ref.read(searchScopeControllerProvider).update(draft);
@@ -261,7 +272,11 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
 }
 
 class _IndexSettingsCard extends ConsumerWidget {
-  const _IndexSettingsCard({required this.settings, required this.onChanged, required this.onSave});
+  const _IndexSettingsCard({
+    required this.settings,
+    required this.onChanged,
+    required this.onSave,
+  });
 
   final SearchIndexSettings settings;
   final ValueChanged<SearchIndexSettings> onChanged;
@@ -286,19 +301,8 @@ class _IndexSettingsCard extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               value: settings.autoIndexEnabled,
               title: const Text('保存后自动索引'),
-              onChanged: (value) => onChanged(settings.copyWith(autoIndexEnabled: value)),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: settings.includeSecretNotes,
-              title: const Text('索引密码附注'),
-              onChanged: (value) => onChanged(settings.copyWith(includeSecretNotes: value)),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: settings.includeNoteBody,
-              title: const Text('索引笔记正文'),
-              onChanged: (value) => onChanged(settings.copyWith(includeNoteBody: value)),
+              onChanged: (value) =>
+                  onChanged(settings.copyWith(autoIndexEnabled: value)),
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -347,9 +351,9 @@ class _IndexStatusCard extends ConsumerWidget {
 
   Future<void> _handleIndexAction(BuildContext context, WidgetRef ref) async {
     if (status.pendingItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('当前没有待索引内容，无需手动触发构建。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前没有待索引内容，无需手动触发构建。')));
       return;
     }
 
@@ -358,16 +362,16 @@ class _IndexStatusCard extends ConsumerWidget {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
     } catch (_) {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('索引触发失败，请稍后重试。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -401,7 +405,9 @@ class _IndexStatusCard extends ConsumerWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.history_outlined),
                 title: Text('最近索引：${status.taskState.lastIndexedCount} 项'),
-                subtitle: Text(status.taskState.lastCompletedAt!.toLocal().toString()),
+                subtitle: Text(
+                  status.taskState.lastCompletedAt!.toLocal().toString(),
+                ),
                  trailing: status.taskState.lastError == null
                      ? const Text('成功')
                      : const Text('有错误'),
@@ -429,7 +435,8 @@ class _IndexStatusCard extends ConsumerWidget {
               const SizedBox(height: 4),
               Text(lastRunSummary),
             ],
-            if (refreshSession.refreshing && refreshSession.message != null) ...[
+            if (refreshSession.refreshing &&
+                refreshSession.message != null) ...[
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -475,11 +482,14 @@ class _IndexStatusCard extends ConsumerWidget {
                   subtitle: Text(item.updatedAt.toLocal().toString()),
                 ),
             ],
-            if (summary.primaryAction == SearchStatusPrimaryAction.triggerIndex &&
+            if (summary.primaryAction ==
+                    SearchStatusPrimaryAction.triggerIndex &&
                 summary.primaryActionLabel != null) ...[
               const SizedBox(height: 12),
               FilledButton.tonalIcon(
-                onPressed: refreshSession.refreshing ? null : () => _handleIndexAction(context, ref),
+                onPressed: refreshSession.refreshing
+                    ? null
+                    : () => _handleIndexAction(context, ref),
                 icon: refreshSession.refreshing
                     ? const SizedBox(
                         width: 16,
@@ -557,16 +567,16 @@ class _SemanticReadinessCard extends ConsumerWidget {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
     } catch (_) {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('索引触发失败，请稍后重试。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -577,7 +587,9 @@ class _SemanticReadinessCard extends ConsumerWidget {
     final guidanceItems = _blockedGuidanceItems();
 
     return Card(
-      color: isReady ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest,
+      color: isReady
+          ? colorScheme.primaryContainer
+          : colorScheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -595,7 +607,8 @@ class _SemanticReadinessCard extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
             Text(summary.description),
-            if (refreshSession.refreshing && refreshSession.message != null) ...[
+            if (refreshSession.refreshing &&
+                refreshSession.message != null) ...[
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -634,12 +647,16 @@ class _SemanticReadinessCard extends ConsumerWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      formatModelCapabilitySummary(readiness.activeEmbeddingModel!),
+                      formatModelCapabilitySummary(
+                        readiness.activeEmbeddingModel!,
+                      ),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      formatSearchSettingsDeploymentStatus(readiness.activeEmbeddingModel!),
+                      formatSearchSettingsDeploymentStatus(
+                        readiness.activeEmbeddingModel!,
+                      ),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 6),
@@ -648,7 +665,8 @@ class _SemanticReadinessCard extends ConsumerWidget {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
-                  if (readiness.activeEmbeddingModel != null) const SizedBox(height: 12),
+                  if (readiness.activeEmbeddingModel != null)
+                    const SizedBox(height: 12),
                   Text(
                      '本地语义链路阶段概览',
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
@@ -679,7 +697,8 @@ class _SemanticReadinessCard extends ConsumerWidget {
                       runSpacing: 8,
                       children: [
                         for (final item in guidanceItems)
-                          if (item.route != null || item.action == _GuidanceAction.indexPending)
+                          if (item.route != null ||
+                              item.action == _GuidanceAction.indexPending)
                             ActionChip(
                               label: Text(item.label),
                               onPressed: () {
@@ -688,7 +707,8 @@ class _SemanticReadinessCard extends ConsumerWidget {
                                    return;
                                  }
 
-                                 if (item.action == _GuidanceAction.indexPending) {
+                                if (item.action ==
+                                    _GuidanceAction.indexPending) {
                                    _handleIndexAction(context, ref);
                                  }
                                },
@@ -732,7 +752,9 @@ class _SemanticReadinessCard extends ConsumerWidget {
     if (indexStatus.readyForIndexing && indexStatus.pendingItems.isNotEmpty) {
       items.add(
         _GuidanceItem(
-          label: indexStatus.taskState.lastCompletedAt == null ? '立即构建索引' : '刷新索引',
+          label: indexStatus.taskState.lastCompletedAt == null
+              ? '立即构建索引'
+              : '刷新索引',
           action: _GuidanceAction.indexPending,
         ),
       );
@@ -753,7 +775,11 @@ class _GuidanceItem {
 }
 
 class _SearchScopeCard extends ConsumerWidget {
-  const _SearchScopeCard({required this.scope, required this.onChanged, required this.onSave});
+  const _SearchScopeCard({
+    required this.scope,
+    required this.onChanged,
+    required this.onSave,
+  });
 
   final SearchScopeConfig scope;
   final ValueChanged<SearchScopeConfig> onChanged;
@@ -778,65 +804,75 @@ class _SearchScopeCard extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               value: scope.includeTitle,
               title: const Text('检索标题'),
-              onChanged: (value) => onChanged(scope.copyWith(includeTitle: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeTitle: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includeUsername,
               title: const Text('账号字段'),
-              onChanged: (value) => onChanged(scope.copyWith(includeUsername: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeUsername: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includePasswordField,
               title: const Text('密码字段'),
-              onChanged: (value) => onChanged(scope.copyWith(includePasswordField: value)),
+              subtitle: const Text('仅用于关键词检索，不进入语义索引或 AI 自动上下文。'),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includePasswordField: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includeUrl,
               title: const Text('网址字段'),
-              onChanged: (value) => onChanged(scope.copyWith(includeUrl: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeUrl: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includeSecretNote,
               title: const Text('密码附注'),
-              onChanged: (value) => onChanged(scope.copyWith(includeSecretNote: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeSecretNote: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includeTags,
               title: const Text('标签'),
-              onChanged: (value) => onChanged(scope.copyWith(includeTags: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeTags: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.includeNoteBody,
-              title: const Text('笔记正文'),
-              onChanged: (value) => onChanged(scope.copyWith(includeNoteBody: value)),
+              title: const Text('笔记摘要与正文'),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(includeNoteBody: value)),
             ),
             const Divider(height: 24),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.allowLocalEmbedding,
               title: const Text('允许本地语义检索'),
-              subtitle: const Text('当前版本仍为占位 embedding 引擎，仅先打通搜索流程。'),
-              onChanged: (value) => onChanged(scope.copyWith(allowLocalEmbedding: value)),
+              subtitle: const Text('关闭后语义检索与 AI 自动上下文停用，并清理本地派生索引。'),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(allowLocalEmbedding: value)),
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               value: scope.allowExternalProviderAccess,
               title: const Text('允许外部模型访问'),
               subtitle: const Text('关闭时，后续外部 Provider 不得读取当前查询与内容。'),
-              onChanged: (value) => onChanged(scope.copyWith(allowExternalProviderAccess: value)),
+              onChanged: (value) =>
+                  onChanged(scope.copyWith(allowExternalProviderAccess: value)),
             ),
             if (scope.allowExternalProviderAccess) ...[
               const SizedBox(height: 8),
               DecoratedBox(
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -877,7 +913,10 @@ class _SearchSettingsImpactPreviewCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(preview.headline, style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              preview.headline,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(preview.description),
             if (preview.immediateItems.isNotEmpty) ...[

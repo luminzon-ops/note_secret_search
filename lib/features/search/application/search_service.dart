@@ -1,7 +1,9 @@
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
-import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 class SearchService {
@@ -12,7 +14,7 @@ class SearchService {
 
   List<SearchResultItem> search({
     required String query,
-    required SearchScopeConfig scope,
+    required SearchConfiguration configuration,
     required List<SecretItem> secrets,
     required List<NoteItem> notes,
   }) {
@@ -20,134 +22,192 @@ class SearchService {
     if (normalizedQuery.isEmpty) {
       return const <SearchResultItem>[];
     }
-
+    final policy = EffectiveSearchPolicy(configuration);
     final results = <SearchResultItem>[
-      ..._searchSecrets(normalizedQuery, scope, secrets),
-      ..._searchNotes(normalizedQuery, scope, notes),
+      ..._searchSecrets(normalizedQuery, policy, secrets),
+      ..._searchNotes(normalizedQuery, policy, notes),
     ];
-
-    results.sort((a, b) {
-      final favoriteSort = (b.favorite ? 1 : 0).compareTo(a.favorite ? 1 : 0);
-      if (favoriteSort != 0) {
-        return favoriteSort;
-      }
-      return b.updatedAt.compareTo(a.updatedAt);
-    });
-
-    return results;
+    results.sort(_compareResults);
+    return List<SearchResultItem>.unmodifiable(results.take(200));
   }
 
   List<SearchResultItem> _searchSecrets(
     String query,
-    SearchScopeConfig scope,
+    EffectiveSearchPolicy policy,
     List<SecretItem> secrets,
   ) {
     final results = <SearchResultItem>[];
     for (final item in secrets) {
+      final hits = <SearchSourceField>[];
       final title = item.title;
-      final username = scope.includeUsername
-          ? _cryptoService.decryptField(
-              item.usernameCiphertext,
-              field: EncryptedDatabaseField.secretUsername,
-              rowId: item.id,
-            )
-          : '';
-      final website = scope.includeUrl
-          ? _cryptoService.decryptField(
-              item.websiteUrlCiphertext,
-              field: EncryptedDatabaseField.secretWebsiteUrl,
-              rowId: item.id,
-            )
-          : '';
-      final note = scope.includeSecretNote
-          ? _cryptoService.decryptField(
-              item.noteCiphertext,
-              field: EncryptedDatabaseField.secretNote,
-              rowId: item.id,
-            )
-          : '';
-      final password = scope.includePasswordField
-          ? _cryptoService.decryptField(
-              item.passwordCiphertext,
-              field: EncryptedDatabaseField.secretPassword,
-              rowId: item.id,
-            )
-          : '';
-
-      final haystacks = <String>[
-        if (scope.includeTitle) title,
-        if (scope.includeUsername) username,
-        if (scope.includeUrl) website,
-        if (scope.includeSecretNote) note,
-        if (scope.includePasswordField) password,
-        if (scope.includeTags) item.tags.join(' '),
-      ];
-
-      if (_matches(query, haystacks)) {
-        results.add(
-          SearchResultItem(
-            id: item.id,
-            type: SearchResultType.secret,
-            title: title,
-            preview: username.isNotEmpty ? username : note,
-            tags: item.tags,
-            favorite: item.favorite,
-            updatedAt: item.updatedAt,
-          ),
-        );
+      if (_fieldMatches(query, title, policy, SearchSourceField.secretTitle)) {
+        hits.add(SearchSourceField.secretTitle);
       }
+      final username = _decryptIfAllowed(
+        item.usernameCiphertext,
+        item.id,
+        EncryptedDatabaseField.secretUsername,
+        SearchSourceField.secretUsername,
+        policy,
+      );
+      if (_matches(query, username)) {
+        hits.add(SearchSourceField.secretUsername);
+      }
+      final website = _decryptIfAllowed(
+        item.websiteUrlCiphertext,
+        item.id,
+        EncryptedDatabaseField.secretWebsiteUrl,
+        SearchSourceField.secretWebsiteUrl,
+        policy,
+      );
+      if (_matches(query, website)) {
+        hits.add(SearchSourceField.secretWebsiteUrl);
+      }
+      final note = _decryptIfAllowed(
+        item.noteCiphertext,
+        item.id,
+        EncryptedDatabaseField.secretNote,
+        SearchSourceField.secretNote,
+        policy,
+      );
+      if (_matches(query, note)) {
+        hits.add(SearchSourceField.secretNote);
+      }
+      final password = _decryptIfAllowed(
+        item.passwordCiphertext,
+        item.id,
+        EncryptedDatabaseField.secretPassword,
+        SearchSourceField.secretPassword,
+        policy,
+      );
+      if (_matches(query, password)) {
+        hits.add(SearchSourceField.secretPassword);
+      }
+      if (_fieldMatches(
+        query,
+        item.tags.join(' '),
+        policy,
+        SearchSourceField.secretTags,
+      )) {
+        hits.add(SearchSourceField.secretTags);
+      }
+      if (hits.isEmpty) {
+        continue;
+      }
+      results.add(
+        SearchResultItem(
+          id: item.id,
+          type: SearchResultType.secret,
+          title: title,
+          preview: username.isNotEmpty ? username : note,
+          tags: item.tags,
+          favorite: item.favorite,
+          updatedAt: item.updatedAt,
+          keywordHitFields: List<SearchSourceField>.unmodifiable(hits),
+        ),
+      );
     }
     return results;
   }
 
   List<SearchResultItem> _searchNotes(
     String query,
-    SearchScopeConfig scope,
+    EffectiveSearchPolicy policy,
     List<NoteItem> notes,
   ) {
     final results = <SearchResultItem>[];
     for (final item in notes) {
-      final title = item.title;
-      final summary = scope.includeNoteBody
-          ? _cryptoService.decryptField(
-              item.summaryCacheCiphertext,
-              field: EncryptedDatabaseField.noteSummary,
-              rowId: item.id,
-            )
-          : '';
-      final content = scope.includeNoteBody
-          ? _cryptoService.decryptField(
-              item.contentCiphertext,
-              field: EncryptedDatabaseField.noteContent,
-              rowId: item.id,
-            )
-          : '';
-
-      final haystacks = <String>[
-        if (scope.includeTitle) title,
-        if (scope.includeNoteBody) content,
-        if (scope.includeNoteBody) summary,
-        if (scope.includeTags) item.tags.join(' '),
-      ];
-
-      if (_matches(query, haystacks)) {
-        results.add(
-          SearchResultItem(
-            id: item.id,
-            type: SearchResultType.note,
-            title: title,
-            preview: summary.isNotEmpty ? summary : content,
-            tags: item.tags,
-            favorite: item.favorite,
-            updatedAt: item.updatedAt,
-          ),
-        );
+      final hits = <SearchSourceField>[];
+      if (_fieldMatches(
+        query,
+        item.title,
+        policy,
+        SearchSourceField.noteTitle,
+      )) {
+        hits.add(SearchSourceField.noteTitle);
       }
+      final summary = _decryptIfAllowed(
+        item.summaryCacheCiphertext,
+        item.id,
+        EncryptedDatabaseField.noteSummary,
+        SearchSourceField.noteSummary,
+        policy,
+      );
+      if (_matches(query, summary)) {
+        hits.add(SearchSourceField.noteSummary);
+      }
+      final body = _decryptIfAllowed(
+        item.contentCiphertext,
+        item.id,
+        EncryptedDatabaseField.noteContent,
+        SearchSourceField.noteBody,
+        policy,
+      );
+      if (_matches(query, body)) {
+        hits.add(SearchSourceField.noteBody);
+      }
+      if (_fieldMatches(
+        query,
+        item.tags.join(' '),
+        policy,
+        SearchSourceField.noteTags,
+      )) {
+        hits.add(SearchSourceField.noteTags);
+      }
+      if (hits.isEmpty) {
+        continue;
+      }
+      results.add(
+        SearchResultItem(
+          id: item.id,
+          type: SearchResultType.note,
+          title: item.title,
+          preview: summary.isNotEmpty ? summary : body,
+          tags: item.tags,
+          favorite: item.favorite,
+          updatedAt: item.updatedAt,
+          keywordHitFields: List<SearchSourceField>.unmodifiable(hits),
+        ),
+      );
     }
     return results;
   }
 
-  bool _matches(String query, List<String> haystacks) {
-    return haystacks.any((value) => value.toLowerCase().contains(query));
+  String _decryptIfAllowed(
+    List<int>? ciphertext,
+    String rowId,
+    EncryptedDatabaseField encryptedField,
+    SearchSourceField sourceField,
+    EffectiveSearchPolicy policy,
+  ) {
+    if (!policy.allows(sourceField, SearchOperation.keyword)) {
+      return '';
+    }
+    return _cryptoService.decryptField(
+      ciphertext,
+      field: encryptedField,
+      rowId: rowId,
+    );
+  }
+
+  bool _fieldMatches(
+    String query,
+    String value,
+    EffectiveSearchPolicy policy,
+    SearchSourceField field,
+  ) {
+    return policy.allows(field, SearchOperation.keyword) &&
+        _matches(query, value);
+  }
+
+  bool _matches(String query, String value) {
+    return value.isNotEmpty && value.toLowerCase().contains(query);
+  }
+
+  int _compareResults(SearchResultItem left, SearchResultItem right) {
+    var result = (right.favorite ? 1 : 0).compareTo(left.favorite ? 1 : 0);
+    result = result != 0 ? result : right.updatedAt.compareTo(left.updatedAt);
+    result = result != 0 ? result : left.type.index.compareTo(right.type.index);
+    return result != 0 ? result : left.id.compareTo(right.id);
   }
 }

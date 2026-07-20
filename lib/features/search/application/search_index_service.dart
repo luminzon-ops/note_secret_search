@@ -23,12 +23,18 @@ import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 class SearchIndexService {
   SearchIndexService({
     required EmbeddingIndexRepository repository,
+    EmbeddingIndexCorpusRepository? corpusRepository,
     required CryptoService cryptoService,
     required EmbeddingEngine embeddingEngine,
     DatabaseSessionKeyStore? sessionKeyStore,
     SearchIndexChunker chunker = const SearchIndexChunker(),
     DateTime Function()? clock,
   }) : _repository = repository,
+       _corpusRepository =
+           corpusRepository ??
+           (repository is EmbeddingIndexCorpusRepository
+               ? repository as EmbeddingIndexCorpusRepository
+               : null),
        _projector = SearchIndexProjector(cryptoService: cryptoService),
        _embeddingEngine = embeddingEngine,
        _sessionKeyStore = sessionKeyStore,
@@ -36,6 +42,7 @@ class SearchIndexService {
        _clock = clock ?? DateTime.now;
 
   final EmbeddingIndexRepository _repository;
+  final EmbeddingIndexCorpusRepository? _corpusRepository;
   final SearchIndexProjector _projector;
   final EmbeddingEngine _embeddingEngine;
   final DatabaseSessionKeyStore? _sessionKeyStore;
@@ -60,6 +67,7 @@ class SearchIndexService {
 
     final engineState = await _embeddingEngine.getState(activeEmbeddingModel);
     if (!configuration.allowLocalEmbedding) {
+      await _purgeAllIndexSets();
       return SearchIndexStatus(
         engineReady: engineState.ready,
         engineReason: engineState.reason,
@@ -69,7 +77,7 @@ class SearchIndexService {
     }
 
     final policy = EffectiveSearchPolicy(configuration);
-    final configHash = _configurationHash(configuration);
+    final configHash = searchIndexConfigurationHash(configuration);
     final pending = <SearchIndexPendingItem>[];
     for (final secret in secrets) {
       final document = _projector.projectSecret(secret, policy);
@@ -176,7 +184,7 @@ class SearchIndexService {
           fingerprintVersion: searchIndexFingerprintVersion,
           indexConfigVersion: searchIndexConfigurationVersion,
           indexConfigEpoch: configuration.configurationEpoch,
-          indexConfigHash: _configurationHash(configuration),
+          indexConfigHash: searchIndexConfigurationHash(configuration),
           chunkSchemaVersion: 1,
           vectorFormatVersion: float32VectorFormatVersion,
           vectorDimension: vectorDimension ?? 0,
@@ -252,16 +260,13 @@ class SearchIndexService {
     return store;
   }
 
-  String _configurationHash(SearchConfiguration configuration) {
-    return sha256
-        .convert(utf8.encode(jsonEncode(configuration.indexProjectionJson())))
-        .toString();
-  }
-
   String _setId(SearchSourceKey key, String modelId) {
     final digest = sha256
         .convert(
-          utf8.encode(jsonEncode(<String>[key.type.name, key.id, modelId])),
+          utf8.encode(
+            '${key.type.name.length}:${key.type.name}'
+            '${key.id.length}:${key.id}${modelId.length}:$modelId',
+          ),
         )
         .toString();
     return 'embedding-set-$digest';
@@ -281,5 +286,13 @@ class SearchIndexService {
       }
     }
     return true;
+  }
+
+  Future<void> _purgeAllIndexSets() async {
+    final repository = _corpusRepository;
+    if (repository == null) {
+      return;
+    }
+    while (await repository.purgeAllIndexSets(batchSize: 100) == 100) {}
   }
 }

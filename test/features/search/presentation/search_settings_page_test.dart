@@ -36,7 +36,8 @@ class _RecordingSearchIndexController extends SearchIndexController {
   }
 }
 
-class _RecordingSearchIndexSettingsController extends SearchIndexSettingsController {
+class _RecordingSearchIndexSettingsController
+    extends SearchIndexSettingsController {
   _RecordingSearchIndexSettingsController({required super.ref});
 
   SearchIndexSettings? lastSaved;
@@ -58,14 +59,23 @@ class _RecordingSearchScopeController extends SearchScopeController {
   }
 }
 
+Future<void> _selectChunkLength(WidgetTester tester, int value) async {
+  await tester.tap(find.byType(DropdownButton<int>));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('$value').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
-  testWidgets('SearchSettingsPage shows search scope, semantic status, and index settings sections', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows search scope, semantic status, and index settings sections',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -111,10 +121,15 @@ void main() {
     expect(find.text('当前语义链路能力'), findsOneWidget);
     expect(find.text('MiniLM Embedding'), findsOneWidget);
     expect(
-      find.text('builtin · embedding · Q8 · 版本 1.0 · 0.0 MB · RAM ≥ 512MB · 推荐档位 mvp'),
+        find.text(
+          'builtin · embedding · Q8 · 版本 1.0 · 0.0 MB · RAM ≥ 512MB · 推荐档位 mvp',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('已启用本地 embedding 召回链路，可继续用于占位语义检索与索引构建。'),
       findsOneWidget,
     );
-    expect(find.text('已启用本地 embedding 召回链路，可继续用于占位语义检索与索引构建。'), findsOneWidget);
     expect(find.text('本地语义链路阶段概览'), findsOneWidget);
     expect(find.text('已完成 · 模型选择：已完成'), findsOneWidget);
     expect(find.text('已完成 · 检索范围：已启用本地语义检索'), findsOneWidget);
@@ -138,11 +153,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('检索范围控制'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows blocked state labels when semantic pipeline is incomplete', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows blocked state labels when semantic pipeline is incomplete',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -189,9 +205,12 @@ void main() {
     expect(find.text('下一步可执行操作'), findsOneWidget);
     expect(find.text('前往模型管理选择语义模型'), findsOneWidget);
     expect(find.text('启用检索范围中的本地语义检索'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows aligned initial-index status and trigger action', (tester) async {
+  testWidgets(
+    'SearchSettingsPage shows aligned initial-index status and trigger action',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -204,7 +223,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -219,7 +240,9 @@ void main() {
               pendingItems: [pendingItem],
             ),
           ),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
         ],
         child: const MaterialApp(home: SearchSettingsPage()),
       ),
@@ -229,9 +252,12 @@ void main() {
 
     expect(find.text('建议先构建本地索引'), findsOneWidget);
     expect(find.text('立即构建索引'), findsWidgets);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows aligned refresh status and action', (tester) async {
+  testWidgets('SearchSettingsPage shows aligned refresh status and action', (
+    tester,
+  ) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'note-1',
       sourceType: SearchSourceType.note,
@@ -244,7 +270,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+          searchScopeConfigProvider.overrideWith(
+            (ref) async => const SearchScopeConfig.defaults(),
+          ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -265,7 +293,9 @@ void main() {
               ),
             ),
           ),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
         ],
         child: const MaterialApp(home: SearchSettingsPage()),
       ),
@@ -277,11 +307,15 @@ void main() {
     expect(find.text('刷新索引'), findsWidgets);
   });
 
-  testWidgets('SearchSettingsPage shows aligned failure status and retry action', (tester) async {
+  testWidgets(
+    'SearchSettingsPage shows aligned failure status and retry action',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -302,7 +336,9 @@ void main() {
               ),
             ),
           ),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
         ],
         child: const MaterialApp(home: SearchSettingsPage()),
       ),
@@ -313,13 +349,18 @@ void main() {
     expect(find.text('最近一次索引失败'), findsOneWidget);
     expect(find.text('重试索引'), findsOneWidget);
     expect(find.text('磁盘空间不足'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows aligned ready state without build prompt', (tester) async {
+  testWidgets(
+    'SearchSettingsPage shows aligned ready state without build prompt',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -340,7 +381,9 @@ void main() {
               ),
             ),
           ),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
         ],
         child: const MaterialApp(home: SearchSettingsPage()),
       ),
@@ -351,7 +394,8 @@ void main() {
     expect(find.text('本地语义检索已可用'), findsOneWidget);
     expect(find.text('当前索引已最新，可以直接继续使用语义检索。'), findsOneWidget);
     expect(find.text('构建占位索引'), findsNothing);
-  });
+    },
+  );
 
   testWidgets(
     'SearchSettingsPage shows shared refresh hint and disables index actions while refresh session is active',
@@ -368,7 +412,9 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
             semanticSearchReadinessProvider.overrideWith(
               (ref) async => const SemanticSearchReadiness(
                 ready: true,
@@ -383,7 +429,9 @@ void main() {
                 pendingItems: [pendingItem],
               ),
             ),
-            searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
             searchRefreshSessionProvider.overrideWith(
               (ref) => const SearchRefreshSessionState(
                 refreshing: true,
@@ -398,12 +446,16 @@ void main() {
       await tester.pump();
 
       expect(find.text('正在刷新搜索状态与结果...'), findsWidgets);
-      final button = tester.widget<FilledButton>(find.byType(FilledButton).first);
+      final button = tester.widget<FilledButton>(
+        find.byType(FilledButton).first,
+      );
       expect(button.onPressed, isNull);
     },
   );
 
-  testWidgets('SearchSettingsPage index action uses combined refresh controller flow', (tester) async {
+  testWidgets(
+    'SearchSettingsPage index action uses combined refresh controller flow',
+    (tester) async {
     late _RecordingSearchIndexController controller;
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
@@ -417,7 +469,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -432,7 +486,9 @@ void main() {
               pendingItems: [pendingItem],
             ),
           ),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           searchIndexControllerProvider.overrideWith((ref) {
             controller = _RecordingSearchIndexController(ref: ref);
             return controller;
@@ -447,18 +503,24 @@ void main() {
     await tester.pump();
 
     expect(controller.refreshCalls, 1);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows default impact guidance when there are no draft changes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows default impact guidance when there are no draft changes',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -483,18 +545,24 @@ void main() {
 
     expect(find.text('这些设置会如何影响结果'), findsOneWidget);
     expect(find.text('检索范围类设置会立即影响结果；索引内容类设置在你下次重建索引后生效。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows immediate-impact guidance for scope draft changes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows immediate-impact guidance for scope draft changes',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -522,7 +590,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '检索标题'));
+      await tester.tap(find.widgetWithText(SwitchListTile, '密码字段'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('这些设置会如何影响结果'),
@@ -532,19 +600,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('你当前的草稿会立即影响搜索结果。保存后可以直接回到搜索页查看变化。'), findsOneWidget);
-    expect(find.text('• 标题检索范围'), findsOneWidget);
-  });
+      expect(find.text('• 密码字段检索范围'), findsOneWidget);
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows reindex guidance for index-content draft changes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows reindex guidance for index-content draft changes',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -566,7 +640,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '索引密码附注'));
+      await _selectChunkLength(tester, 160);
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('这些设置会如何影响结果'),
@@ -576,12 +650,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('你当前的草稿会影响语义索引内容。保存后需要重新索引，语义结果才会更新。'), findsOneWidget);
-    expect(find.text('• 索引密码附注'), findsOneWidget);
-  });
+      expect(find.text('• 单 chunk 最大长度'), findsOneWidget);
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows mixed guidance and pending-item recommendation', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows mixed guidance and pending-item recommendation',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -594,10 +669,15 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => SearchIndexStatus(
@@ -614,20 +694,6 @@ void main() {
 
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('语义索引设置'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '索引密码附注'));
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('这些设置会如何影响结果'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
       find.text('检索范围控制'),
       300,
       scrollable: find.byType(Scrollable).first,
@@ -642,22 +708,31 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('你当前的草稿包含两类影响：部分改动会立即影响结果，部分改动需要重新索引后生效。'), findsOneWidget);
+      expect(
+        find.text('你当前的草稿包含两类影响：部分改动会立即影响结果，部分改动需要重新索引后生效。'),
+        findsOneWidget,
+      );
     expect(find.text('当前已有待索引内容，建议保存后直接刷新索引。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows post-save reindex action bar after saving index changes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows post-save reindex action bar after saving index changes',
+    (tester) async {
     late _RecordingSearchIndexSettingsController settingsController;
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -668,7 +743,9 @@ void main() {
             ),
           ),
           searchIndexSettingsControllerProvider.overrideWith((ref) {
-            settingsController = _RecordingSearchIndexSettingsController(ref: ref);
+              settingsController = _RecordingSearchIndexSettingsController(
+                ref: ref,
+              );
             return settingsController;
           }),
         ],
@@ -683,30 +760,36 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '索引密码附注'));
+      await _selectChunkLength(tester, 160);
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存索引设置'));
     await tester.pumpAndSettle();
 
-    expect(settingsController.lastSaved?.includeSecretNotes, isFalse);
+      expect(settingsController.lastSaved?.maxChunkLength, 160);
     expect(find.text('设置已保存，语义结果需要刷新索引后更新。'), findsOneWidget);
     expect(find.text('立即刷新'), findsOneWidget);
     expect(find.text('返回搜索'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage post-save reindex action bar triggers refresh flow', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage post-save reindex action bar triggers refresh flow',
+    (tester) async {
     late _RecordingSearchIndexController indexController;
     late _RecordingSearchIndexSettingsController settingsController;
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -717,7 +800,9 @@ void main() {
             ),
           ),
           searchIndexSettingsControllerProvider.overrideWith((ref) {
-            settingsController = _RecordingSearchIndexSettingsController(ref: ref);
+              settingsController = _RecordingSearchIndexSettingsController(
+                ref: ref,
+              );
             return settingsController;
           }),
           searchIndexControllerProvider.overrideWith((ref) {
@@ -736,22 +821,29 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '索引密码附注'));
+      await _selectChunkLength(tester, 160);
     await tester.pumpAndSettle();
     await tester.tap(find.text('保存索引设置'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('立即刷新'));
     await tester.pump();
 
-    expect(settingsController.lastSaved?.includeSecretNotes, isFalse);
+      expect(settingsController.lastSaved?.maxChunkLength, 160);
     expect(indexController.refreshCalls, 1);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage post-save reindex action bar can return to search', (tester) async {
+  testWidgets(
+    'SearchSettingsPage post-save reindex action bar can return to search',
+    (tester) async {
     late _RecordingSearchIndexSettingsController settingsController;
     final router = GoRouter(
       routes: [
-        GoRoute(path: '/', builder: (context, state) => const Scaffold(body: Text('search page'))),
+          GoRoute(
+            path: '/',
+            builder: (context, state) =>
+                const Scaffold(body: Text('search page')),
+          ),
         GoRoute(
           path: '/settings',
           builder: (context, state) => const SearchSettingsPage(),
@@ -763,10 +855,15 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -777,7 +874,9 @@ void main() {
             ),
           ),
           searchIndexSettingsControllerProvider.overrideWith((ref) {
-            settingsController = _RecordingSearchIndexSettingsController(ref: ref);
+              settingsController = _RecordingSearchIndexSettingsController(
+                ref: ref,
+              );
             return settingsController;
           }),
         ],
@@ -792,7 +891,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '索引密码附注'));
+      await _selectChunkLength(tester, 160);
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('保存索引设置'),
@@ -805,22 +904,28 @@ void main() {
     await tester.tap(find.text('返回搜索'));
     await tester.pumpAndSettle();
 
-    expect(settingsController.lastSaved?.includeSecretNotes, isFalse);
+      expect(settingsController.lastSaved?.maxChunkLength, 160);
     expect(find.text('search page'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage does not show post-save reindex action bar for immediate-only changes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage does not show post-save reindex action bar for immediate-only changes',
+    (tester) async {
     late _RecordingSearchScopeController scopeController;
 
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
-          searchIndexSettingsProvider.overrideWith((ref) async => const SearchIndexSettings.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
+            searchIndexSettingsProvider.overrideWith(
+              (ref) async => const SearchIndexSettings.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
-            (ref) async => const SemanticSearchReadiness(ready: true, reason: 'ready'),
+              (ref) async =>
+                  const SemanticSearchReadiness(ready: true, reason: 'ready'),
           ),
           searchIndexStatusProvider.overrideWith(
             (ref) async => const SearchIndexStatus(
@@ -846,7 +951,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '检索标题'));
+      await tester.tap(find.widgetWithText(SwitchListTile, '密码字段'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('保存检索范围'),
@@ -857,21 +962,26 @@ void main() {
     await tester.tap(find.text('保存检索范围'));
     await tester.pumpAndSettle();
 
-    expect(scopeController.lastSaved?.includeTitle, isFalse);
+      expect(scopeController.lastSaved?.includePasswordField, isTrue);
     expect(find.text('设置已保存，语义结果需要刷新索引后更新。'), findsNothing);
     expect(find.text('立即刷新'), findsNothing);
     expect(find.text('返回搜索'), findsNothing);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage blocked guidance can navigate to model management', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage blocked guidance can navigate to model management',
+    (tester) async {
     final router = GoRouter(
       routes: [
-        GoRoute(path: '/', builder: (context, state) => const SearchSettingsPage()),
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const SearchSettingsPage(),
+          ),
         GoRoute(
           path: '/models',
-          builder: (context, state) => const Scaffold(body: Text('models page')),
+            builder: (context, state) =>
+                const Scaffold(body: Text('models page')),
         ),
       ],
     );
@@ -920,11 +1030,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('models page'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows build-index guidance when pending items are actionable', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows build-index guidance when pending items are actionable',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -937,7 +1048,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -983,11 +1096,12 @@ void main() {
     expect(find.text('下一步可执行操作'), findsOneWidget);
     expect(find.text('立即构建索引'), findsWidgets);
     expect(find.text('刷新本地索引'), findsNothing);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows mixed pending item summary for secrets and notes', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows mixed pending item summary for secrets and notes',
+    (tester) async {
     final secretPendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -1008,7 +1122,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1051,11 +1167,12 @@ void main() {
 
     expect(find.text('待索引摘要：密码 1 项，笔记 1 项'), findsOneWidget);
     expect(find.text('最近变更项'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows refresh-index guidance after a prior completed index run', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows refresh-index guidance after a prior completed index run',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'note-1',
       sourceType: SearchSourceType.note,
@@ -1068,7 +1185,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1117,15 +1236,18 @@ void main() {
 
     expect(find.text('刷新索引'), findsWidgets);
     expect(find.text('立即构建索引'), findsNothing);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage explains that index is up to date after a successful run with no pending items', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage explains that index is up to date after a successful run with no pending items',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1175,11 +1297,12 @@ void main() {
     expect(find.text('当前状态：本地语义检索已可用'), findsOneWidget);
     expect(find.text('当前索引已最新，可以直接继续使用语义检索。'), findsWidgets);
     expect(find.text('待索引摘要：暂无待处理项'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage explains that index refresh is needed when new pending items exist after a successful run', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage explains that index refresh is needed when new pending items exist after a successful run',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'note-1',
       sourceType: SearchSourceType.note,
@@ -1192,7 +1315,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1241,13 +1366,18 @@ void main() {
 
     expect(find.text('当前状态：索引需要刷新'), findsOneWidget);
     expect(find.text('索引已有新变更，建议刷新后再判断当前语义检索结果。'), findsWidgets);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage explains latest indexing failure when last run errored', (tester) async {
+  testWidgets(
+    'SearchSettingsPage explains latest indexing failure when last run errored',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1297,11 +1427,12 @@ void main() {
     expect(find.text('当前状态：最近一次索引失败'), findsOneWidget);
     expect(find.text('索引任务未成功完成，建议先重试索引再判断语义检索效果。'), findsWidgets);
     expect(find.text('磁盘空间不足'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage explains first-time index build when pending items exist but no run has completed', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage explains first-time index build when pending items exist but no run has completed',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -1314,7 +1445,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1357,15 +1490,18 @@ void main() {
 
     expect(find.text('当前状态：建议先构建本地索引'), findsOneWidget);
     expect(find.text('已有待索引内容，完成首次构建后再查看语义检索结果会更稳定。'), findsWidgets);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows running-state summary while indexing is in progress', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows running-state summary while indexing is in progress',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1415,15 +1551,18 @@ void main() {
     expect(find.text('自动索引中'), findsOneWidget);
     expect(find.text('当前状态：正在构建索引'), findsOneWidget);
     expect(find.text('系统正在处理待索引内容，完成后会自动刷新这里的摘要。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows latest run summary when a prior indexing run completed', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows latest run summary when a prior indexing run completed',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1472,11 +1611,12 @@ void main() {
 
     expect(find.text('最近结果摘要'), findsOneWidget);
     expect(find.text('最近一次完成 4 项，当前无错误。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage does not show index guidance when indexing is not actionable', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage does not show index guidance when indexing is not actionable',
+    (tester) async {
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
       sourceType: SearchSourceType.secret,
@@ -1489,7 +1629,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1532,15 +1674,18 @@ void main() {
 
     expect(find.text('立即构建索引'), findsNothing);
     expect(find.text('刷新已有本地索引'), findsNothing);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows detailed active model summary when capability metadata exists', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows detailed active model summary when capability metadata exists',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1586,15 +1731,18 @@ void main() {
     expect(find.textContaining('10.0 MB'), findsOneWidget);
     expect(find.textContaining('RAM ≥ 512MB'), findsOneWidget);
     expect(find.textContaining('推荐档位 mvp'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage omits absent model metadata from the active model summary', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage omits absent model metadata from the active model summary',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1639,15 +1787,18 @@ void main() {
     expect(find.textContaining('版本'), findsNothing);
     expect(find.textContaining('RAM ≥'), findsNothing);
     expect(find.textContaining('推荐档位'), findsNothing);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows ready deployment status for an installed active model', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows ready deployment status for an installed active model',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1689,15 +1840,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('部署状态：本地文件已就绪，可用于当前语义检索。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows degraded deployment status when the active model file is missing', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows degraded deployment status when the active model file is missing',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1739,9 +1893,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('部署状态：模型记录仍在，但本地文件缺失，需要重新下载或修复。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage index guidance triggers pending indexing', (tester) async {
+  testWidgets('SearchSettingsPage index guidance triggers pending indexing', (
+    tester,
+  ) async {
     late _RecordingSearchIndexController controller;
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
@@ -1755,7 +1912,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+          searchScopeConfigProvider.overrideWith(
+            (ref) async => const SearchScopeConfig.defaults(),
+          ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1805,7 +1964,9 @@ void main() {
     expect(controller.refreshCalls, 1);
   });
 
-  testWidgets('SearchSettingsPage shows success feedback after triggering index build', (tester) async {
+  testWidgets(
+    'SearchSettingsPage shows success feedback after triggering index build',
+    (tester) async {
     late _RecordingSearchIndexController controller;
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
@@ -1819,7 +1980,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1874,9 +2037,12 @@ void main() {
 
     expect(controller.refreshCalls, 1);
     expect(find.text('已开始处理待索引内容，请稍后查看最新结果。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows failure feedback after triggering index build', (tester) async {
+  testWidgets(
+    'SearchSettingsPage shows failure feedback after triggering index build',
+    (tester) async {
     late _RecordingSearchIndexController controller;
     final pendingItem = SearchIndexPendingItem(
       sourceId: 'secret-1',
@@ -1890,7 +2056,9 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: false,
@@ -1925,7 +2093,10 @@ void main() {
             (ref) async => const SearchIndexSettings.defaults(),
           ),
           searchIndexControllerProvider.overrideWith((ref) {
-            controller = _RecordingSearchIndexController(ref: ref, error: StateError('索引失败'));
+              controller = _RecordingSearchIndexController(
+                ref: ref,
+                error: StateError('索引失败'),
+              );
             return controller;
           }),
         ],
@@ -1945,15 +2116,18 @@ void main() {
 
     expect(controller.refreshCalls, 1);
     expect(find.text('索引触发失败，请稍后重试。'), findsOneWidget);
-  });
+    },
+  );
 
-  testWidgets('SearchSettingsPage shows no-pending feedback when index can run but nothing needs processing', (
-    tester,
-  ) async {
+  testWidgets(
+    'SearchSettingsPage shows no-pending feedback when index can run but nothing needs processing',
+    (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          searchScopeConfigProvider.overrideWith((ref) async => const SearchScopeConfig.defaults()),
+            searchScopeConfigProvider.overrideWith(
+              (ref) async => const SearchScopeConfig.defaults(),
+            ),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,
@@ -1995,5 +2169,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('当前索引已最新，可以直接继续使用语义检索。'), findsOneWidget);
-  });
+    },
+  );
 }

@@ -234,10 +234,16 @@ void main() {
     expect(restored?.title, original.title);
     expect(restored?.tags, original.tags);
     final embeddings = await database.run(
-      (db) => db.query(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[original.id, 'secret'],
+      (db) => db.rawQuery(
+        '''
+        SELECT chunk.id
+        FROM embedding_chunks chunk
+        JOIN embedding_index_sets index_set
+          ON index_set.id = chunk.index_set_id
+        WHERE index_set.source_id = ?
+          AND index_set.source_type = ?
+        ''',
+        <Object>[original.id, 'secret'],
       ),
     );
     expect(embeddings, hasLength(1));
@@ -422,15 +428,35 @@ Future<void> _insertEmbedding(
       'integrity_status': 'valid',
       'enabled': 0,
     });
+    await db.insert(DatabaseSchema.embeddingIndexSets, <String, Object?>{
+      'id': 'embedding-set-1',
+      'source_type': sourceType,
+      'source_id': sourceId,
+      'vault_id': 'vault-1',
+      'model_id': 'model-1',
+      'model_revision_hash': 'a' * 64,
+      'source_updated_at': 1,
+      'source_fingerprint': Uint8List(32),
+      'fingerprint_key_id': 'test-key',
+      'fingerprint_version': 1,
+      'index_config_version': 1,
+      'index_config_epoch': 1,
+      'index_config_hash': 'b' * 64,
+      'chunk_schema_version': 1,
+      'vector_format_version': 1,
+      'vector_dimension': 1,
+      'chunk_count': 1,
+      'created_at': 1,
+    });
     await db.insert(DatabaseSchema.embeddingChunks, <String, Object?>{
       'id': 'embedding-1',
-      'source_id': sourceId,
-      'source_type': sourceType,
-      'chunk_index': 0,
-      'plaintext_hash': 'hash',
-      'model_id': 'model-1',
+      'index_set_id': 'embedding-set-1',
+      'source_field': 'secret.title',
+      'field_chunk_index': 0,
+      'chunk_fingerprint': Uint8List(32),
+      'vector_blob': Uint8List(4),
+      'token_count': 1,
       'created_at': 1,
-      'updated_at': 1,
     });
   });
 }

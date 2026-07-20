@@ -12,6 +12,49 @@ abstract interface class EmbeddingIndexRepository {
   Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey);
 }
 
+class EmbeddingIndexCompatibility {
+  const EmbeddingIndexCompatibility({
+    required this.vaultId,
+    required this.modelId,
+    required this.modelRevisionHash,
+    required this.fingerprintKeyId,
+    required this.fingerprintVersion,
+    required this.indexConfigVersion,
+    required this.indexConfigEpoch,
+    required this.indexConfigHash,
+    required this.chunkSchemaVersion,
+    required this.vectorFormatVersion,
+  });
+
+  final String vaultId;
+  final String modelId;
+  final String modelRevisionHash;
+  final String fingerprintKeyId;
+  final int fingerprintVersion;
+  final int indexConfigVersion;
+  final int indexConfigEpoch;
+  final String indexConfigHash;
+  final int chunkSchemaVersion;
+  final int vectorFormatVersion;
+}
+
+abstract interface class EmbeddingIndexCorpusRepository {
+  Future<List<EmbeddingIndexSet>> getCompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  });
+
+  Future<int> purgeIncompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    int batchSize = 100,
+  });
+
+  Future<int> purgeIndexSetsByIds(Iterable<String> indexSetIds);
+
+  Future<int> purgeAllIndexSets({int batchSize = 100});
+}
+
 class EmbeddingIndexStaleWriteException implements Exception {
   const EmbeddingIndexStaleWriteException();
 }

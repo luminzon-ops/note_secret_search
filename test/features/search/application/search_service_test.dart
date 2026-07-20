@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
-import 'package:note_secret_search/features/search/domain/search_scope.dart';
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 void main() {
@@ -14,13 +15,20 @@ void main() {
 
     final results = service.search(
       query: 'vault',
-      scope: _scope(includeTitle: true),
+      configuration: _configuration(includeTitle: true),
       secrets: <SecretItem>[_secret(title: 'Vault login')],
       notes: <NoteItem>[_note(title: 'Vault notes')],
     );
 
     expect(results.map((item) => item.id), <String>['secret-1', 'note-1']);
     expect(results.map((item) => item.preview), everyElement(isEmpty));
+    expect(
+      results.map((item) => item.keywordHitFields).toList(),
+      const <List<SearchSourceField>>[
+        <SearchSourceField>[SearchSourceField.secretTitle],
+        <SearchSourceField>[SearchSourceField.noteTitle],
+      ],
+    );
     expect(crypto.decryptedContexts, isEmpty);
   });
 
@@ -34,13 +42,16 @@ void main() {
 
     final results = service.search(
       query: 'alice',
-      scope: _scope(includeUsername: true),
+      configuration: _configuration(includeUsername: true),
       secrets: <SecretItem>[_secret(title: 'Account')],
       notes: const <NoteItem>[],
     );
 
     expect(results.single.id, 'secret-1');
     expect(results.single.preview, 'alice');
+    expect(results.single.keywordHitFields, const <SearchSourceField>[
+      SearchSourceField.secretUsername,
+    ]);
     expect(
       crypto.decryptedContexts.map(
         (context) => '${context.table}/${context.rowId}/${context.column}',
@@ -84,7 +95,7 @@ class _RecordingCryptoService implements CryptoService {
   }
 }
 
-SearchScopeConfig _scope({
+SearchConfiguration _configuration({
   bool includeTitle = false,
   bool includeSecretNote = false,
   bool includePasswordField = false,
@@ -93,7 +104,7 @@ SearchScopeConfig _scope({
   bool includeTags = false,
   bool includeNoteBody = false,
 }) {
-  return SearchScopeConfig(
+  return SearchConfiguration.defaults().copyWith(
     includeTitle: includeTitle,
     includeSecretNote: includeSecretNote,
     includePasswordField: includePasswordField,
@@ -102,7 +113,6 @@ SearchScopeConfig _scope({
     includeTags: includeTags,
     includeNoteBody: includeNoteBody,
     allowLocalEmbedding: false,
-    allowExternalProviderAccess: false,
   );
 }
 

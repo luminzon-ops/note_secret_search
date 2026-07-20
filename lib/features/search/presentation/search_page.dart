@@ -35,7 +35,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     final indexStatusAsync = ref.watch(searchIndexStatusProvider);
     final refreshSession = ref.watch(searchRefreshSessionProvider);
     final refreshFeedback = ref.watch(searchRefreshFeedbackProvider);
-    final pendingReindexHandoff = ref.watch(searchPendingReindexHandoffProvider);
+    final pendingReindexHandoff = ref.watch(
+      searchPendingReindexHandoffProvider,
+    );
     final query = ref.watch(searchQueryProvider).trim();
 
     return Scaffold(
@@ -56,12 +58,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             controller: _controller,
             hintText: '搜索密码、标签、笔记或语义描述',
             leading: const Icon(Icons.search),
-            onChanged: (value) => ref.read(searchQueryProvider.notifier).state = value,
+            onChanged: (value) =>
+                ref.read(searchQueryProvider.notifier).state = value,
           ),
           const SizedBox(height: 16),
           Card(
             child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 8,
+              ),
               leading: const Icon(Icons.tune_outlined),
               title: const Text('搜索设置与索引'),
               subtitle: const Text('调整检索范围、语义索引策略与隐私控制'),
@@ -78,7 +84,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           readinessAsync.when(
             data: (readiness) => indexStatusAsync.when(
               data: (status) => _SearchStatusCard(
-                summary: buildSearchStatusSummary(readiness: readiness, status: status),
+                summary: buildSearchStatusSummary(
+                  readiness: readiness,
+                  status: status,
+                ),
                 refreshSession: refreshSession,
               ),
               loading: () => const SizedBox.shrink(),
@@ -152,7 +161,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 }
 
 class _SearchStatusCard extends ConsumerWidget {
-  const _SearchStatusCard({required this.summary, required this.refreshSession});
+  const _SearchStatusCard({
+    required this.summary,
+    required this.refreshSession,
+  });
 
   final SearchStatusSummary summary;
   final SearchRefreshSessionState refreshSession;
@@ -163,16 +175,16 @@ class _SearchStatusCard extends ConsumerWidget {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已开始构建索引，请稍后刷新搜索结果。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('已开始构建索引，请稍后刷新搜索结果。')));
     } catch (_) {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('索引触发失败，请稍后重试。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -184,7 +196,10 @@ class _SearchStatusCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(summary.headline, style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              summary.headline,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(summary.description),
             if (summary.pendingCount > 0) ...[
@@ -193,9 +208,13 @@ class _SearchStatusCard extends ConsumerWidget {
             ],
             if (summary.lastResultSummary != null) ...[
               const SizedBox(height: 8),
-              Text(summary.lastResultSummary!, style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                summary.lastResultSummary!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
-            if (refreshSession.refreshing && refreshSession.message != null) ...[
+            if (refreshSession.refreshing &&
+                refreshSession.message != null) ...[
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -211,7 +230,10 @@ class _SearchStatusCard extends ConsumerWidget {
             ],
             if (summary.errorText != null) ...[
               const SizedBox(height: 8),
-              Text(summary.errorText!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                summary.errorText!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
             if (summary.primaryAction != SearchStatusPrimaryAction.none &&
                 summary.primaryActionLabel != null) ...[
@@ -238,7 +260,8 @@ class _SearchStatusCard extends ConsumerWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Icon(
-                        summary.primaryAction == SearchStatusPrimaryAction.openModelManagement
+                        summary.primaryAction ==
+                                SearchStatusPrimaryAction.openModelManagement
                             ? Icons.memory_outlined
                             : Icons.auto_fix_high_outlined,
                       ),
@@ -321,9 +344,10 @@ class _SearchFeedbackCard extends StatelessWidget {
         '当前语义模型存在运行时异常，本次无法稳定参与语义检索，建议先前往模型管理排查。',
       EmbeddingRuntimeStatus.corrupted =>
         '当前语义模型文件校验失败或已损坏，本次无法参与语义检索，建议前往模型管理重新下载或修复。',
-      EmbeddingRuntimeStatus.missing || EmbeddingRuntimeStatus.notInstalled =>
-        '当前语义模型文件缺失或尚未安装，本次仅能依赖关键词检索。',
-      EmbeddingRuntimeStatus.ready || null => '本次未找到匹配结果，建议检查检索范围、查询词，或刷新索引后再试。',
+      EmbeddingRuntimeStatus.missing ||
+      EmbeddingRuntimeStatus.notInstalled => '当前语义模型文件缺失或尚未安装，本次仅能依赖关键词检索。',
+      EmbeddingRuntimeStatus.ready ||
+      null => '本次未找到匹配结果，建议检查检索范围、查询词，或刷新索引后再试。',
     };
   }
 
@@ -437,10 +461,12 @@ class _SearchObservabilitySummaryBlock extends StatefulWidget {
   final SearchObservabilitySummary summary;
 
   @override
-  State<_SearchObservabilitySummaryBlock> createState() => _SearchObservabilitySummaryBlockState();
+  State<_SearchObservabilitySummaryBlock> createState() =>
+      _SearchObservabilitySummaryBlockState();
 }
 
-class _SearchObservabilitySummaryBlockState extends State<_SearchObservabilitySummaryBlock> {
+class _SearchObservabilitySummaryBlockState
+    extends State<_SearchObservabilitySummaryBlock> {
   bool _expanded = false;
 
   @override
@@ -489,10 +515,15 @@ class _SearchObservabilitySummaryBlockState extends State<_SearchObservabilitySu
           const SizedBox(height: 6),
           TextButton(
             onPressed: () => setState(() => _expanded = !_expanded),
-            style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+            style: TextButton.styleFrom(
+              padding: EdgeInsets.zero,
+              minimumSize: const Size(0, 0),
+            ),
             child: Text(_expanded ? '收起观测详情' : '展开更多观测'),
           ),
-          if (_expanded && summary.dominantFieldHint == null && summary.semanticFieldBreakdown == null) ...[
+          if (_expanded &&
+              summary.dominantFieldHint == null &&
+              summary.semanticFieldBreakdown == null) ...[
             const SizedBox(height: 6),
             const SizedBox.shrink(),
           ],
@@ -503,7 +534,10 @@ class _SearchObservabilitySummaryBlockState extends State<_SearchObservabilitySu
 }
 
 class _SearchSemanticQualityHintBlock extends StatelessWidget {
-  const _SearchSemanticQualityHintBlock({required this.show, required this.qualityHint});
+  const _SearchSemanticQualityHintBlock({
+    required this.show,
+    required this.qualityHint,
+  });
 
   final bool show;
   final String qualityHint;
@@ -520,7 +554,10 @@ class _SearchSemanticQualityHintBlock extends StatelessWidget {
         const SizedBox(height: 8),
         Text(qualityHint, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 8),
-        Text('下方“占位语义匹配”区块展示的是当前语义召回明细。', style: Theme.of(context).textTheme.bodySmall),
+        Text(
+          '下方“占位语义匹配”区块展示的是当前语义召回明细。',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
       ],
     );
   }
@@ -533,7 +570,9 @@ class _SearchRefreshFeedbackCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final icon = feedback.changed == true ? Icons.check_circle_outline : Icons.info_outline;
+    final icon = feedback.changed == true
+        ? Icons.check_circle_outline
+        : Icons.info_outline;
 
     return Card(
       child: Padding(
@@ -548,7 +587,10 @@ class _SearchRefreshFeedbackCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (feedback.headline != null)
-                    Text(feedback.headline!, style: Theme.of(context).textTheme.titleMedium),
+                    Text(
+                      feedback.headline!,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   if (feedback.headline != null && feedback.message != null)
                     const SizedBox(height: 8),
                   if (feedback.message != null) Text(feedback.message!),
@@ -576,9 +618,9 @@ class _SearchPendingReindexHandoffCard extends ConsumerWidget {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('索引触发失败，请稍后重试。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -590,7 +632,10 @@ class _SearchPendingReindexHandoffCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('设置已保存，但语义结果还没刷新', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              '设置已保存，但语义结果还没刷新',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(handoff.message ?? '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。'),
             const SizedBox(height: 12),
@@ -623,10 +668,10 @@ class _SemanticSearchSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('占位语义匹配', style: Theme.of(context).textTheme.titleMedium),
+            Text('语义匹配', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              '当前基于占位 embedding 引擎和已构建 chunks 返回近似结果，仅用于打通流程，不代表真实语义质量。',
+              '结果已通过字段级相似度门槛，并按命中字段与排序分综合排列。',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
@@ -640,7 +685,9 @@ class _SemanticSearchSection extends StatelessWidget {
                 ),
                 title: Text(result.item.title),
                 subtitle: Text(
-                  '${result.item.preview.isEmpty ? '无预览内容' : result.item.preview}\n相似度 ${(result.score * 100).toStringAsFixed(1)}%',
+                  '${result.item.preview.isEmpty ? '无预览内容' : result.item.preview}\n'
+                  '相似度 ${((result.primaryRawSimilarity ?? 0).clamp(0, 1) * 100).toStringAsFixed(1)}%'
+                  ' · 排序分 ${result.score.toStringAsFixed(3)}',
                 ),
                 isThreeLine: true,
               ),
@@ -660,17 +707,16 @@ class _SearchResultSection extends StatelessWidget {
   Widget build(BuildContext context) {
     if (results.isEmpty) {
       return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('暂无搜索结果。'),
-        ),
+        child: Padding(padding: EdgeInsets.all(16), child: Text('暂无搜索结果。')),
       );
     }
 
     final secretResults = results
         .where((item) => item.type == SearchResultType.secret)
         .toList(growable: false);
-    final noteResults = results.where((item) => item.type == SearchResultType.note).toList(growable: false);
+    final noteResults = results
+        .where((item) => item.type == SearchResultType.note)
+        .toList(growable: false);
 
     return Card(
       child: Padding(
@@ -678,7 +724,9 @@ class _SearchResultSection extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('结果概览：共 ${results.length} 条，密码 ${secretResults.length} 条，笔记 ${noteResults.length} 条。'),
+            Text(
+              '结果概览：共 ${results.length} 条，密码 ${secretResults.length} 条，笔记 ${noteResults.length} 条。',
+            ),
             if (secretResults.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text('密码结果', style: Theme.of(context).textTheme.titleMedium),
@@ -702,7 +750,11 @@ class _SearchResultSection extends StatelessWidget {
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Icon(item.type == SearchResultType.secret ? Icons.lock_outline : Icons.note_outlined),
+      leading: Icon(
+        item.type == SearchResultType.secret
+            ? Icons.lock_outline
+            : Icons.note_outlined,
+      ),
       title: Text(item.title),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -723,11 +775,19 @@ class _SearchResultSection extends StatelessWidget {
                   visualDensity: VisualDensity.compact,
                   label: Text(_matchSourceLabel(source)),
                 ),
+              if (item.semanticRawSimilarity != null)
+                Chip(
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  label: Text(
+                    '相似度 ${(item.semanticRawSimilarity!.clamp(0, 1) * 100).toStringAsFixed(0)}%',
+                  ),
+                ),
               if (item.semanticScore != null)
                 Chip(
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
-                  label: Text('语义 ${(item.semanticScore! * 100).toStringAsFixed(0)}%'),
+                  label: Text('排序分 ${item.semanticScore!.toStringAsFixed(3)}'),
                 ),
               if (item.semanticHitField != null)
                 Chip(
@@ -745,10 +805,15 @@ class _SearchResultSection extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.45),
-                borderRadius: BorderRadius.circular(12),
+                color: Theme.of(
+                  context,
+                ).colorScheme.secondaryContainer.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(cardExplanation, style: Theme.of(context).textTheme.bodySmall),
+              child: Text(
+                cardExplanation,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
           ],
           if (_rankingReasonLines(item).isNotEmpty) ...[
@@ -757,7 +822,9 @@ class _SearchResultSection extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.55),
+                color: Theme.of(
+                  context,
+                ).colorScheme.primaryContainer.withValues(alpha: 0.55),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Column(
@@ -765,19 +832,25 @@ class _SearchResultSection extends StatelessWidget {
                 children: [
                   Text(
                     '排序依据',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   for (final line in _rankingReasonLines(item))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
-                      child: Text('• $line', style: Theme.of(context).textTheme.bodySmall),
+                      child: Text(
+                        '• $line',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                 ],
               ),
             ),
           ],
-          if (item.semanticHitSummary != null && item.semanticHitSummary!.isNotEmpty) ...[
+          if (item.semanticHitSummary != null &&
+              item.semanticHitSummary!.isNotEmpty) ...[
             const SizedBox(height: 6),
             Container(
               width: double.infinity,
@@ -791,13 +864,20 @@ class _SearchResultSection extends StatelessWidget {
                 children: [
                   Text(
                     '语义命中',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(height: 6),
-                  for (final line in _semanticExplanationLines(item.semanticHitSummary!))
+                  for (final line in _semanticExplanationLines(
+                    item.semanticHitSummary!,
+                  ))
                     Padding(
                       padding: const EdgeInsets.only(bottom: 2),
-                      child: Text('• $line', style: Theme.of(context).textTheme.bodySmall),
+                      child: Text(
+                        '• $line',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ),
                 ],
               ),
@@ -826,11 +906,17 @@ class _SearchResultSection extends StatelessWidget {
       onTap: () {
         final source = _searchSourceValue(item.matchSources);
         final query = Uri.encodeQueryComponent(item.title);
-        final contextValue = Uri.encodeQueryComponent(item.semanticHitSummary ?? item.preview);
+        final contextValue = Uri.encodeQueryComponent(
+          item.semanticHitSummary ?? item.preview,
+        );
         if (item.type == SearchResultType.secret) {
-          context.push('/vault/secret/${item.id}?query=$query&source=$source&context=$contextValue');
+          context.push(
+            '/vault/secret/${item.id}?query=$query&source=$source&context=$contextValue',
+          );
         } else {
-          context.push('/notes/item/${item.id}?query=$query&source=$source&context=$contextValue');
+          context.push(
+            '/notes/item/${item.id}?query=$query&source=$source&context=$contextValue',
+          );
         }
       },
     );
@@ -897,7 +983,9 @@ class _SearchResultSection extends StatelessWidget {
       lines.add('中信号：命中关键词检索');
     }
 
-    final semanticFieldReason = _semanticFieldPriorityReason(item.semanticHitField);
+    final semanticFieldReason = _semanticFieldPriorityReason(
+      item.semanticHitField,
+    );
     if (semanticFieldReason != null) {
       lines.add(semanticFieldReason);
     }

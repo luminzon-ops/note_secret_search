@@ -11,27 +11,16 @@ import 'package:note_secret_search/features/search/application/semantic_search_s
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
-import 'package:note_secret_search/features/search/domain/search_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
-import 'package:note_secret_search/features/search/infrastructure/shared_preferences_search_repository.dart';
 import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 
 final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((
   ref,
 ) {
   return SqliteEmbeddingRepository(database: ref.watch(appDatabaseProvider));
-});
-
-final searchRepositoryProvider = FutureProvider<SearchRepository>((ref) async {
-  final preferences = await ref.watch(sharedPreferencesProvider.future);
-  return SharedPreferencesSearchRepository(
-    preferences: preferences,
-    embeddingRepository: ref.watch(sqliteEmbeddingRepositoryProvider),
-  );
 });
 
 final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
@@ -70,9 +59,10 @@ final searchIndexServiceProvider = Provider<SearchIndexService>((ref) {
 
 final semanticSearchServiceProvider = Provider<SemanticSearchService>((ref) {
   return SemanticSearchService(
-    repository: ref.watch(searchRepositoryProvider).value!,
+    repository: ref.watch(sqliteEmbeddingRepositoryProvider),
     embeddingEngine: ref.watch(embeddingEngineProvider),
     cryptoService: ref.watch(cryptoServiceProvider),
+    sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
   );
 });
 
@@ -90,12 +80,17 @@ final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
         return const <SearchResultItem>[];
       }
 
-      final scope = await ref.watch(searchScopeConfigProvider.future);
+      final configuration = await ref.watch(searchConfigurationProvider.future);
       final secrets = await ref.watch(secretListProvider.future);
       final notes = await ref.watch(noteListProvider.future);
       return ref
           .watch(searchServiceProvider)
-          .search(query: query, scope: scope, secrets: secrets, notes: notes);
+          .search(
+            query: query,
+            configuration: configuration,
+            secrets: secrets,
+            notes: notes,
+          );
     },
   );
 });
@@ -158,14 +153,22 @@ final semanticSearchResultsProvider =
             return const <SemanticSearchResult>[];
           }
 
-          final scope = await ref.watch(searchScopeConfigProvider.future);
+          final configuration = await ref.watch(
+            searchConfigurationProvider.future,
+          );
           final secrets = await ref.watch(secretListProvider.future);
           final notes = await ref.watch(noteListProvider.future);
+          final modelRevisionHash = await ref.watch(
+            searchIndexModelRevisionProvider(
+              readiness.activeEmbeddingModel!,
+            ).future,
+          );
           return ref
               .watch(semanticSearchServiceProvider)
               .search(
                 query: query,
-                scope: scope,
+                configuration: configuration,
+                modelRevisionHash: modelRevisionHash,
                 activeEmbeddingModel: readiness.activeEmbeddingModel!,
                 secrets: secrets,
                 notes: notes,
@@ -192,6 +195,7 @@ final unifiedSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
           .fuse(
             keywordResults: keywordResults,
             semanticResults: semanticResults,
+            query: ref.watch(searchQueryProvider),
           );
     },
   );

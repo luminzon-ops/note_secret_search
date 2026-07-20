@@ -2,7 +2,6 @@ import 'package:note_secret_search/core/security/field_envelope.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.dart';
-import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
@@ -134,11 +133,6 @@ class SqliteSecretRepository implements SecretRepository {
         vaultId: item.vaultId,
         tags: item.tags,
       );
-      await executor.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[item.id, SearchSourceType.secret.name],
-      );
     });
   }
 
@@ -191,11 +185,6 @@ class SqliteSecretRepository implements SecretRepository {
         itemId: id,
         itemType: ItemTagType.secret,
         vaultId: vaultId,
-      );
-      await executor.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[id, SearchSourceType.secret.name],
       );
     });
   }

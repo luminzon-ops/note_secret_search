@@ -5,6 +5,7 @@ import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
+import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_corpus_repository.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 enum EmbeddingReplacementCheckpoint {
@@ -16,7 +17,8 @@ enum EmbeddingReplacementCheckpoint {
 typedef EmbeddingReplacementCheckpointCallback =
     FutureOr<void> Function(EmbeddingReplacementCheckpoint checkpoint);
 
-class SqliteEmbeddingRepository implements EmbeddingIndexRepository {
+class SqliteEmbeddingRepository
+    implements EmbeddingIndexRepository, EmbeddingIndexCorpusRepository {
   SqliteEmbeddingRepository({
     required AppDatabase database,
     EmbeddingReplacementCheckpointCallback? onReplacementCheckpoint,
@@ -25,6 +27,10 @@ class SqliteEmbeddingRepository implements EmbeddingIndexRepository {
 
   final AppDatabase _database;
   final EmbeddingReplacementCheckpointCallback? _onReplacementCheckpoint;
+
+  SqliteEmbeddingCorpusRepository get _corpus {
+    return SqliteEmbeddingCorpusRepository(database: _database);
+  }
 
   @override
   Future<EmbeddingIndexSet?> getIndexSetBySource(
@@ -51,11 +57,10 @@ class SqliteEmbeddingRepository implements EmbeddingIndexRepository {
 
       await database.delete(
         DatabaseSchema.embeddingIndexSets,
-        where: 'source_type = ? AND source_id = ? AND model_id = ?',
+        where: 'source_type = ? AND source_id = ?',
         whereArgs: <Object>[
           indexSet.sourceKey.type.name,
           indexSet.sourceKey.id,
-          indexSet.modelId,
         ],
       );
       await _checkpoint(EmbeddingReplacementCheckpoint.oldGenerationDeleted);
@@ -93,83 +98,38 @@ class SqliteEmbeddingRepository implements EmbeddingIndexRepository {
     });
   }
 
-  @Deprecated('Phase 4 migration bridge. Use getIndexSetBySource.')
-  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
-    String sourceId,
-    SearchSourceType sourceType,
-    String modelId,
-  ) {
-    return _database.run((db) async {
-      final rows = await db.query(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ? AND model_id = ?',
-        whereArgs: <Object>[sourceId, sourceType.name, modelId],
-        orderBy: 'chunk_index ASC',
-      );
-
-      return rows.map(_mapChunk).toList(growable: false);
-    });
-  }
-
-  @Deprecated('Phase 4 migration bridge. Use replaceIndexSet.')
-  Future<void> upsertEmbeddingChunks(List<LegacyEmbeddingChunk> chunks) {
-    if (chunks.isEmpty) {
-      return Future<void>.value();
-    }
-
-    return _database.run((db) async {
-      await db.transaction((txn) async {
-        for (final chunk in chunks) {
-          await txn.insert(
-            DatabaseSchema.embeddingChunks,
-            <String, Object?>{
-              'id': chunk.id,
-              'source_id': chunk.sourceId,
-              'source_type': chunk.sourceType.name,
-              'chunk_index': chunk.chunkIndex,
-              'plaintext_hash': chunk.plainTextHash,
-              'model_id': chunk.modelId,
-              'vector_blob': chunk.vectorBlob,
-              'token_count': chunk.tokenCount,
-              'created_at': chunk.createdAt.millisecondsSinceEpoch,
-              'updated_at': chunk.updatedAt.millisecondsSinceEpoch,
-            },
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-        }
-      });
-    });
-  }
-
-  @Deprecated('Phase 4 migration bridge. Use removeIndexSetsBySource.')
-  Future<void> removeChunksBySource(
-    String sourceId,
-    SearchSourceType sourceType,
-  ) {
-    return _database.run((db) async {
-      await db.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[sourceId, sourceType.name],
-      );
-    });
-  }
-
-  LegacyEmbeddingChunk _mapChunk(Map<String, Object?> row) {
-    return LegacyEmbeddingChunk(
-      id: row['id']! as String,
-      sourceType: SearchSourceType.values.firstWhere(
-        (value) => value.name == row['source_type']! as String,
-      ),
-      sourceId: row['source_id']! as String,
-      chunkIndex: row['chunk_index']! as int,
-      plainTextHash: row['plaintext_hash']! as String,
-      modelId: row['model_id']! as String,
-      vectorBlob: row['vector_blob'] as List<int>?,
-      tokenCount: row['token_count'] as int?,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at']! as int),
+  @override
+  Future<List<EmbeddingIndexSet>> getCompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  }) {
+    return _corpus.getCompatibleIndexSets(
+      compatibility,
+      afterId: afterId,
+      limit: limit,
     );
+  }
+
+  @override
+  Future<int> purgeIncompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    int batchSize = 100,
+  }) {
+    return _corpus.purgeIncompatibleIndexSets(
+      compatibility,
+      batchSize: batchSize,
+    );
+  }
+
+  @override
+  Future<int> purgeIndexSetsByIds(Iterable<String> indexSetIds) {
+    return _corpus.purgeIndexSetsByIds(indexSetIds);
+  }
+
+  @override
+  Future<int> purgeAllIndexSets({int batchSize = 100}) {
+    return _corpus.purgeAllIndexSets(batchSize: batchSize);
   }
 
   Future<EmbeddingIndexSet?> _loadIndexSet(

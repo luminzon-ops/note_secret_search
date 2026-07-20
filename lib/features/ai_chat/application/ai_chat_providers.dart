@@ -7,6 +7,7 @@ import 'package:note_secret_search/features/ai_providers/application/ai_provider
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
+import 'package:note_secret_search/features/ai_chat/domain/chat_context_policy.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_message.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
@@ -14,7 +15,10 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
@@ -66,33 +70,38 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     required String query,
     required ModelRegistryEntry embeddingModel,
   }) async {
-    final scope = await _ref.read(searchScopeConfigProvider.future);
+    final configuration = await _ref.read(searchConfigurationProvider.future);
     final secrets = await _ref.read(secretListProvider.future);
     final notes = await _ref.read(noteListProvider.future);
+    final modelRevisionHash = await _ref.read(
+      searchIndexModelRevisionProvider(embeddingModel).future,
+    );
     final results = await _ref
         .read(semanticSearchServiceProvider)
         .search(
           query: query,
-          scope: scope,
+          configuration: configuration,
+          modelRevisionHash: modelRevisionHash,
           activeEmbeddingModel: embeddingModel,
           secrets: secrets,
           notes: notes,
+          operation: SearchOperation.aiAutoContext,
         );
 
-    return results
-        .map(
-          (result) => ChatContextItem(
-            id: result.item.id,
-            type: result.item.type == SearchResultType.secret
-                ? ChatContextItemType.secret
-                : ChatContextItemType.note,
-            title: result.item.title,
-            preview: result.item.preview,
-            summary: result.hitSummary,
-            semanticHitField: result.hitField,
-          ),
-        )
-        .toList(growable: false);
+    return normalizeChatContextItems(
+      results.map(
+        (result) => ChatContextItem(
+          id: result.item.id,
+          type: result.item.type == SearchResultType.secret
+              ? ChatContextItemType.secret
+              : ChatContextItemType.note,
+          title: result.item.title,
+          preview: result.item.preview,
+          summary: result.hitSummary,
+          semanticHitField: result.hitField,
+        ),
+      ),
+    );
   }
 }
 
@@ -238,7 +247,7 @@ class AiChatOrchestrator {
     required _ResolvedChatBackend backend,
   }) async {
     final manualItems = request.allowPrivateContext
-        ? _dedupeContextItems(request.manualItems)
+        ? normalizeChatContextItems(request.manualItems)
         : const <ChatContextItem>[];
     var autoItems = const <ChatContextItem>[];
 
@@ -257,7 +266,10 @@ class AiChatOrchestrator {
       }
     }
 
-    final contextItems = _dedupeContextItems([...autoItems, ...manualItems]);
+    final contextItems = normalizeChatContextItems([
+      ...autoItems,
+      ...manualItems,
+    ]);
     final usedPrivateContext = contextItems.isNotEmpty;
     _validateExternalPrivateContext(
       backend: backend,
@@ -362,17 +374,6 @@ class AiChatOrchestrator {
       return ChatContextSource.manuallySelected;
     }
     return ChatContextSource.none;
-  }
-
-  List<ChatContextItem> _dedupeContextItems(List<ChatContextItem> items) {
-    final deduped = <ChatContextItem>[];
-    final seen = <String>{};
-    for (final item in items) {
-      if (seen.add(item.id)) {
-        deduped.add(item);
-      }
-    }
-    return deduped;
   }
 }
 

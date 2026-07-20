@@ -1,6 +1,16 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 const int searchConfigurationFormatVersion = 1;
 const int searchIndexConfigurationVersion = 1;
 const Set<int> supportedSearchChunkLengths = <int>{160, 280, 400};
+
+String searchIndexConfigurationHash(SearchConfiguration configuration) {
+  return sha256
+      .convert(utf8.encode(jsonEncode(configuration.indexProjectionJson())))
+      .toString();
+}
 
 class SearchConfiguration {
   SearchConfiguration({

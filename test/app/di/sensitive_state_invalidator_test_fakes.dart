@@ -292,23 +292,9 @@ class _ReadyLlmEngine implements LlmEngine {
   Future<void> releaseModel(String modelId) async {}
 }
 
-class _SearchRepository implements SearchRepository, EmbeddingIndexRepository {
+class _SearchRepository
+    implements EmbeddingIndexRepository, EmbeddingIndexCorpusRepository {
   var chunkReads = 0;
-
-  @override
-  Future<List<LegacyEmbeddingChunk>> getChunksBySource(
-    String sourceId,
-    SearchSourceType sourceType,
-    String modelId,
-  ) async {
-    chunkReads++;
-    return const [];
-  }
-
-  @override
-  Future<SearchScopeConfig> loadScopeConfig() async {
-    return const SearchScopeConfig.defaults();
-  }
 
   @override
   Future<EmbeddingIndexSet?> getIndexSetBySource(
@@ -321,6 +307,28 @@ class _SearchRepository implements SearchRepository, EmbeddingIndexRepository {
 
   @override
   Future<bool> replaceIndexSet(EmbeddingIndexSet indexSet) async => true;
+
+  @override
+  Future<List<EmbeddingIndexSet>> getCompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  }) async {
+    chunkReads++;
+    return const <EmbeddingIndexSet>[];
+  }
+
+  @override
+  Future<int> purgeIncompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    int batchSize = 100,
+  }) async => 0;
+
+  @override
+  Future<int> purgeIndexSetsByIds(Iterable<String> indexSetIds) async => 0;
+
+  @override
+  Future<int> purgeAllIndexSets({int batchSize = 100}) async => 0;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -337,10 +345,12 @@ class _SensitiveSemanticSearchService extends SemanticSearchService {
   @override
   Future<List<SemanticSearchResult>> search({
     required String query,
-    required SearchScopeConfig scope,
+    required SearchConfiguration configuration,
+    required String modelRevisionHash,
     required ModelRegistryEntry activeEmbeddingModel,
     required List<SecretItem> secrets,
     required List<NoteItem> notes,
+    SearchOperation operation = SearchOperation.semanticSearch,
   }) async {
     searchReads++;
     return [

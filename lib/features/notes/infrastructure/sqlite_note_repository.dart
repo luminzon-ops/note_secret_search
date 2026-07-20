@@ -4,7 +4,6 @@ import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/core/storage/database/sqlite_item_tag_store.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
-import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 class SqliteNoteRepository implements NoteRepository {
@@ -125,11 +124,6 @@ class SqliteNoteRepository implements NoteRepository {
         vaultId: item.vaultId,
         tags: item.tags,
       );
-      await executor.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[item.id, SearchSourceType.note.name],
-      );
     });
   }
 
@@ -182,11 +176,6 @@ class SqliteNoteRepository implements NoteRepository {
         itemId: id,
         itemType: ItemTagType.note,
         vaultId: vaultId,
-      );
-      await executor.delete(
-        DatabaseSchema.embeddingChunks,
-        where: 'source_id = ? AND source_type = ?',
-        whereArgs: <Object>[id, SearchSourceType.note.name],
       );
     });
   }

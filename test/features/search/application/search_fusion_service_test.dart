@@ -5,12 +5,13 @@ import 'package:note_secret_search/features/search/domain/semantic_search_result
 
 SearchResultItem _keywordItem(
   String id, {
+  SearchResultType type = SearchResultType.secret,
   bool favorite = false,
   DateTime? updatedAt,
 }) {
   return SearchResultItem(
     id: id,
-    type: SearchResultType.secret,
+    type: type,
     title: 'Title $id',
     preview: 'Preview $id',
     tags: const <String>[],
@@ -22,6 +23,7 @@ SearchResultItem _keywordItem(
 
 SemanticSearchResult _semanticResult(
   String id, {
+  SearchResultType type = SearchResultType.secret,
   required double score,
   required SemanticHitField hitField,
   bool favorite = false,
@@ -30,7 +32,7 @@ SemanticSearchResult _semanticResult(
   return SemanticSearchResult(
     item: SearchResultItem(
       id: id,
-      type: SearchResultType.secret,
+      type: type,
       title: 'Title $id',
       preview: 'Preview $id',
       tags: const <String>[],
@@ -40,88 +42,182 @@ SemanticSearchResult _semanticResult(
     score: score,
     hitSummary: '${hitField.name}: $id',
     hitField: hitField,
+    primaryRawSimilarity: 0.88,
   );
 }
 
 void main() {
   const service = SearchFusionService();
 
-  test('ranks dual-hit high-quality result above semantic-only assist result even with lower score', () {
-    final results = service.fuse(
-      keywordResults: [_keywordItem('dual')],
-      semanticResults: [
-        _semanticResult('dual', score: 0.72, hitField: SemanticHitField.title),
-        _semanticResult('assist', score: 0.95, hitField: SemanticHitField.tags),
-      ],
-    );
+  test(
+    'ranks dual-hit high-quality result above semantic-only assist result even with lower score',
+    () {
+      final results = service.fuse(
+        keywordResults: [_keywordItem('dual')],
+        semanticResults: [
+          _semanticResult(
+            'dual',
+            score: 0.72,
+            hitField: SemanticHitField.title,
+          ),
+          _semanticResult(
+            'assist',
+            score: 0.95,
+            hitField: SemanticHitField.tags,
+          ),
+        ],
+      );
 
-    expect(results.map((item) => item.id).toList(), ['dual', 'assist']);
-  });
+      expect(results.map((item) => item.id).toList(), ['dual', 'assist']);
+    },
+  );
 
-  test('ranks semantic-only high-quality result above semantic-only assist result', () {
-    final results = service.fuse(
-      keywordResults: const <SearchResultItem>[],
-      semanticResults: [
-        _semanticResult('assist', score: 0.95, hitField: SemanticHitField.noteBody),
-        _semanticResult('high', score: 0.70, hitField: SemanticHitField.summary),
-      ],
-    );
+  test(
+    'ranks semantic-only high-quality result above semantic-only assist result',
+    () {
+      final results = service.fuse(
+        keywordResults: const <SearchResultItem>[],
+        semanticResults: [
+          _semanticResult(
+            'assist',
+            score: 0.95,
+            hitField: SemanticHitField.noteBody,
+          ),
+          _semanticResult(
+            'high',
+            score: 0.70,
+            hitField: SemanticHitField.summary,
+          ),
+        ],
+      );
 
-    expect(results.map((item) => item.id).toList(), ['high', 'assist']);
-  });
+      expect(results.map((item) => item.id).toList(), ['high', 'assist']);
+    },
+  );
 
   test('ranks dual-hit assist result above keyword-only result', () {
     final results = service.fuse(
       keywordResults: [_keywordItem('dual'), _keywordItem('keyword-only')],
-      semanticResults: [_semanticResult('dual', score: 0.68, hitField: SemanticHitField.tags)],
+      semanticResults: [
+        _semanticResult('dual', score: 0.68, hitField: SemanticHitField.tags),
+      ],
     );
 
     expect(results.map((item) => item.id).toList(), ['dual', 'keyword-only']);
   });
 
-  test('keeps higher semantic score first when results share the same quality tier', () {
-    final results = service.fuse(
-      keywordResults: const <SearchResultItem>[],
-      semanticResults: [
-        _semanticResult('lower', score: 0.78, hitField: SemanticHitField.summary),
-        _semanticResult('higher', score: 0.91, hitField: SemanticHitField.title),
-      ],
-    );
+  test(
+    'keeps higher semantic score first when results share the same quality tier',
+    () {
+      final results = service.fuse(
+        keywordResults: const <SearchResultItem>[],
+        semanticResults: [
+          _semanticResult(
+            'lower',
+            score: 0.78,
+            hitField: SemanticHitField.summary,
+          ),
+          _semanticResult(
+            'higher',
+            score: 0.91,
+            hitField: SemanticHitField.title,
+          ),
+        ],
+      );
 
-    expect(results.map((item) => item.id).toList(), ['higher', 'lower']);
-  });
+      expect(results.map((item) => item.id).toList(), ['higher', 'lower']);
+    },
+  );
 
   test('filters weak semantic-only assist results from unified search', () {
     final results = service.fuse(
       keywordResults: const <SearchResultItem>[],
       semanticResults: [
         _semanticResult('assist', score: 0.89, hitField: SemanticHitField.tags),
-        _semanticResult('high', score: 0.74, hitField: SemanticHitField.summary),
+        _semanticResult(
+          'high',
+          score: 0.74,
+          hitField: SemanticHitField.summary,
+        ),
       ],
     );
 
     expect(results.map((item) => item.id).toList(), ['high']);
   });
 
-  test('keeps very high-score semantic-only assist results in unified search', () {
-    final results = service.fuse(
-      keywordResults: const <SearchResultItem>[],
-      semanticResults: [
-        _semanticResult('assist', score: 0.90, hitField: SemanticHitField.tags),
-        _semanticResult('high', score: 0.74, hitField: SemanticHitField.summary),
-      ],
-    );
+  test(
+    'keeps very high-score semantic-only assist results in unified search',
+    () {
+      final results = service.fuse(
+        keywordResults: const <SearchResultItem>[],
+        semanticResults: [
+          _semanticResult(
+            'assist',
+            score: 0.90,
+            hitField: SemanticHitField.tags,
+          ),
+          _semanticResult(
+            'high',
+            score: 0.74,
+            hitField: SemanticHitField.summary,
+          ),
+        ],
+      );
 
-    expect(results.map((item) => item.id).toList(), ['high', 'assist']);
-  });
+      expect(results.map((item) => item.id).toList(), ['high', 'assist']);
+    },
+  );
 
   test('keeps dual-hit assist results even when assist field is weak', () {
     final results = service.fuse(
       keywordResults: [_keywordItem('dual')],
-      semanticResults: [_semanticResult('dual', score: 0.89, hitField: SemanticHitField.tags)],
+      semanticResults: [
+        _semanticResult('dual', score: 0.89, hitField: SemanticHitField.tags),
+      ],
     );
 
     expect(results.map((item) => item.id).toList(), ['dual']);
-    expect(results.first.matchSources, containsAll(<SearchMatchSource>{SearchMatchSource.keyword, SearchMatchSource.semantic}));
+    expect(
+      results.first.matchSources,
+      containsAll(<SearchMatchSource>{
+        SearchMatchSource.keyword,
+        SearchMatchSource.semantic,
+      }),
+    );
+  });
+
+  test('typed dedupe preserves a Secret and Note with the same id', () {
+    final results = service.fuse(
+      keywordResults: <SearchResultItem>[
+        _keywordItem('same', type: SearchResultType.secret),
+        _keywordItem('same', type: SearchResultType.note),
+      ],
+      semanticResults: const <SemanticSearchResult>[],
+    );
+
+    expect(results, hasLength(2));
+    expect(
+      results.map((item) => (item.type, item.id)),
+      const <(SearchResultType, String)>[
+        (SearchResultType.secret, 'same'),
+        (SearchResultType.note, 'same'),
+      ],
+    );
+  });
+
+  test('fusion carries raw similarity separately from ranking score', () {
+    final results = service.fuse(
+      keywordResults: const <SearchResultItem>[],
+      semanticResults: <SemanticSearchResult>[
+        _semanticResult(
+          'semantic',
+          score: 1.03,
+          hitField: SemanticHitField.title,
+        ),
+      ],
+    );
+
+    expect(results.single.semanticScore, 1.03);
+    expect(results.single.semanticRawSimilarity, 0.88);
   });
 }
