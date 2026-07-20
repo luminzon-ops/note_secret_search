@@ -87,10 +87,11 @@ class SemanticSearchService {
         modelRevisionHash: modelRevisionHash,
         configuration: configuration,
       );
-      await _repository.purgeIncompatibleIndexSets(
-        compatibility,
-        batchSize: 100,
-      );
+      while (await _repository.purgeIncompatibleIndexSets(
+            compatibility,
+            batchSize: 100,
+          ) ==
+          100) {}
       String? afterId;
       while (true) {
         final page = await _repository.getCompatibleIndexSets(
