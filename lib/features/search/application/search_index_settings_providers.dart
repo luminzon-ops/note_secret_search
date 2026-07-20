@@ -47,8 +47,6 @@ final searchIndexSettingsProvider = FutureProvider<SearchIndexSettings>((
   final configuration = await ref.watch(searchConfigurationProvider.future);
   return SearchIndexSettings(
     autoIndexEnabled: configuration.autoIndexEnabled,
-    includeSecretNotes: configuration.includeSecretNote,
-    includeNoteBody: configuration.includeNoteBody,
     maxChunkLength: configuration.maxChunkLength,
   );
 });
@@ -71,8 +69,6 @@ class SearchIndexSettingsController {
     await repository.save(
       current.copyWith(
         autoIndexEnabled: settings.autoIndexEnabled,
-        includeSecretNote: settings.includeSecretNotes,
-        includeNoteBody: settings.includeNoteBody,
         maxChunkLength: settings.maxChunkLength,
       ),
     );
