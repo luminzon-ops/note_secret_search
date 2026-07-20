@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
@@ -79,22 +81,48 @@ void main() {
           }),
     );
     await repository.save(entry);
-    await database.run(
-      (executor) =>
-          executor.insert(DatabaseSchema.embeddingChunks, <String, Object?>{
-            'id': 'embedding-1',
-            'source_id': 'secret-1',
+      await database.run((executor) async {
+        await executor.insert(
+          DatabaseSchema.embeddingIndexSets,
+          <String, Object?>{
+            'id': 'embedding-set-1',
             'source_type': 'secret',
-            'chunk_index': 0,
-            'plaintext_hash': 'hash',
+            'source_id': 'secret-1',
+            'vault_id': 'default',
             'model_id': entry.id,
+            'model_revision_hash': 'a' * 64,
+            'source_updated_at': 1,
+            'source_fingerprint': Uint8List(32),
+            'fingerprint_key_id': 'test-key',
+            'fingerprint_version': 1,
+            'index_config_version': 1,
+            'index_config_epoch': 1,
+            'index_config_hash': 'b' * 64,
+            'chunk_schema_version': 1,
+            'vector_format_version': 1,
+            'vector_dimension': 1,
+            'chunk_count': 1,
             'created_at': 1,
-            'updated_at': 1,
-          }),
-    );
+          },
+        );
+        await executor.insert(DatabaseSchema.embeddingChunks, <String, Object?>{
+          'id': 'embedding-chunk-1',
+          'index_set_id': 'embedding-set-1',
+          'source_field': 'secret.title',
+          'field_chunk_index': 0,
+          'chunk_fingerprint': Uint8List(32),
+          'vector_blob': Uint8List(4),
+          'token_count': 1,
+          'created_at': 1,
+        });
+      });
 
     await repository.save(entry.copyWith(name: 'Updated'));
 
+    final indexSets = await database.run(
+      (executor) => executor.query(DatabaseSchema.embeddingIndexSets),
+    );
+    expect(indexSets, hasLength(1));
     final embeddings = await database.run(
       (executor) => executor.query(DatabaseSchema.embeddingChunks),
     );

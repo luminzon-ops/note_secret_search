@@ -65,7 +65,6 @@ Future<void> _expectPhase2State(
 ) async {
   expect(await phase3PragmaInt(database, 'user_version'), 4);
   expect(await database.query('embedding_chunks'), isEmpty);
-  expect(await database.query('embedding_index_sets'), isEmpty);
   expect(await database.query('download_tasks'), isEmpty);
   expect(await database.query('model_catalog_entries'), isEmpty);
   expect(
@@ -154,6 +153,7 @@ Future<void> _expectBusinessData(
   await _expectTimestamps(database);
   await _expectProtectedPlaintext(database, fixture);
 
+  expect(await database.query('embedding_index_sets'), isEmpty);
   expect(await database.query('embedding_chunks'), isEmpty);
   expect(await database.query('download_tasks'), isEmpty);
   expect(await database.query('model_catalog_entries'), isEmpty);
