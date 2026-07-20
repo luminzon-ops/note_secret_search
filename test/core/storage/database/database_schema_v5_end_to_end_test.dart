@@ -9,13 +9,14 @@ import '../../../support/historical_database_schema.dart';
 import '../../../support/phase3_database_gate_expectations.dart';
 import '../../../support/phase3_database_migration_fixture.dart';
 import '../../../support/phase3_database_snapshot.dart';
+import '../../../support/phase4_database_gate_expectations.dart';
 
 void main() {
   setUpAll(sqfliteFfiInit);
 
   for (final testCase in _migrationCases) {
     test(
-      '${testCase.name} upgrades through frozen v4 into validated v5',
+      '${testCase.name} upgrades through frozen v4 into validated v6',
       () async {
         final fixture = await createPhase3DatabaseMigrationFixture(
           testCase.version,
@@ -41,18 +42,18 @@ void main() {
         final manager = DatabaseSchemaManager(
           nowMilliseconds: () => 1_800_000_000_000,
         );
-        final v5 = await _openManagedDatabase(fixture.databasePath, manager);
-        addTearDown(v5.close);
+        final v6 = await _openManagedDatabase(fixture.databasePath, manager);
+        addTearDown(v6.close);
 
-        await manager.validate(v5);
+        await manager.validate(v6);
         await _expectBusinessData(
-          v5,
+          v6,
           fixture: fixture,
           testCase: testCase,
           protectedBytes: protectedBytes,
           canonicalDigest: canonicalDigest,
         );
-        await _expectSchemaGate(v5, manager);
+        await _expectSchemaGate(v6, manager);
       },
     );
   }
@@ -64,6 +65,7 @@ Future<void> _expectPhase2State(
 ) async {
   expect(await phase3PragmaInt(database, 'user_version'), 4);
   expect(await database.query('embedding_chunks'), isEmpty);
+  expect(await database.query('embedding_index_sets'), isEmpty);
   expect(await database.query('download_tasks'), isEmpty);
   expect(await database.query('model_catalog_entries'), isEmpty);
   expect(
@@ -322,23 +324,37 @@ Future<void> _expectSchemaGate(
   Database database,
   DatabaseSchemaManager manager,
 ) async {
-  expect(await phase3PragmaInt(database, 'user_version'), 5);
+  expect(await phase3PragmaInt(database, 'user_version'), 6);
   expect(await phase3PragmaInt(database, 'foreign_keys'), 1);
   expect(
     (await database.rawQuery('PRAGMA quick_check')).single.values.single,
     'ok',
   );
   expect(await database.rawQuery('PRAGMA foreign_key_check'), isEmpty);
-  expect(await phase3ObjectNames(database, 'table'), phase3V5Tables);
-  expect(await phase3ObjectNames(database, 'index'), phase3V5Indexes);
-  expect(await phase3ObjectNames(database, 'trigger'), phase3V5Triggers);
-  expect(await manager.fingerprint(database), phase3ExpectedSchemaFingerprint);
-  expect((await database.query('schema_migrations')).single, <String, Object?>{
-    'version': 5,
-    'name': phase3ExpectedMigrationName,
-    'checksum': phase3ExpectedMigrationChecksum,
-    'applied_at': 1_800_000_000_000,
-  });
+  expect(await phase3ObjectNames(database, 'table'), phase4V6Tables);
+  expect(await phase3ObjectNames(database, 'index'), phase4V6Indexes);
+  expect(await phase3ObjectNames(database, 'trigger'), phase4V6Triggers);
+  expect(
+    await manager.fingerprint(database),
+    DatabaseSchemaManager.expectedFingerprint,
+  );
+  expect(
+    await database.query('schema_migrations', orderBy: 'version ASC'),
+    <Map<String, Object?>>[
+      <String, Object?>{
+        'version': 5,
+        'name': phase3ExpectedMigrationName,
+        'checksum': phase3ExpectedMigrationChecksum,
+        'applied_at': 1_800_000_000_000,
+      },
+      <String, Object?>{
+        'version': 6,
+        'name': DatabaseSchemaManager.v6MigrationName,
+        'checksum': DatabaseSchemaManager.v6MigrationChecksum,
+        'applied_at': 1_800_000_000_000,
+      },
+    ],
+  );
   for (final queryCase in phase3QueryPlanCases) {
     final details = await phase3QueryPlanDetails(
       database,

@@ -5,6 +5,7 @@ abstract final class DatabaseSchema {
   static const String tags = 'tags';
   static const String itemTags = 'item_tags';
   static const String categories = 'categories';
+  static const String embeddingIndexSets = 'embedding_index_sets';
   static const String embeddingChunks = 'embedding_chunks';
   static const String modelRegistry = 'model_registry';
   static const String modelCatalogEntries = 'model_catalog_entries';

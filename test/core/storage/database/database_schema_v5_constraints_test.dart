@@ -8,8 +8,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  test('fresh v5 installs the ownership constraint inventory', () async {
-    final database = await _openFreshV5();
+  test('fresh v6 installs the ownership constraint inventory', () async {
+    final database = await _openFreshV6();
     addTearDown(database.close);
 
     expect(
@@ -31,19 +31,26 @@ void main() {
       const <String, String>{'tag_id': 'tags:CASCADE'},
     );
     expect(
+      await _foreignKeyTargets(database, 'embedding_index_sets'),
+      const <String, String>{
+        'model_id': 'model_registry:CASCADE',
+        'vault_id': 'vaults:CASCADE',
+      },
+    );
+    expect(
       await _foreignKeyTargets(database, 'embedding_chunks'),
-      const <String, String>{'model_id': 'model_registry:CASCADE'},
+      const <String, String>{'index_set_id': 'embedding_index_sets:CASCADE'},
     );
     expect(
       await _foreignKeyTargets(database, 'chat_messages'),
       const <String, String>{'session_id': 'chat_sessions:CASCADE'},
     );
-    expect(await _objectNames(database, 'index'), _requiredV5Indexes);
-    expect(await _objectNames(database, 'trigger'), _requiredV5Triggers);
+    expect(await _objectNames(database, 'index'), _requiredV6Indexes);
+    expect(await _objectNames(database, 'trigger'), _requiredV6Triggers);
   });
 
-  test('v5 checks and business uniqueness reject invalid rows', () async {
-    final database = await _openFreshV5();
+  test('v6 checks and business uniqueness reject invalid rows', () async {
+    final database = await _openFreshV6();
     addTearDown(database.close);
 
     await expectLater(
@@ -130,9 +137,9 @@ void main() {
   });
 
   test(
-    'v5 triggers preserve Vault ownership from every write direction',
+    'v6 triggers preserve Vault ownership from every write direction',
     () async {
-      final database = await _openFreshV5();
+      final database = await _openFreshV6();
       addTearDown(database.close);
       await _insertOwnershipRows(database);
 
@@ -165,15 +172,25 @@ void main() {
         throwsA(isA<DatabaseException>()),
       );
       await expectLater(
-        database.insert('embedding_chunks', <String, Object?>{
-          'id': 'missing-source',
-          'source_id': 'missing',
+        database.insert('embedding_index_sets', <String, Object?>{
+          'id': 'missing-source-set',
           'source_type': 'secret',
-          'chunk_index': 0,
-          'plaintext_hash': 'hash',
+          'source_id': 'missing',
+          'vault_id': 'default',
           'model_id': 'model-1',
+          'model_revision_hash': 'a' * 64,
+          'source_updated_at': 1,
+          'source_fingerprint': Uint8List(32),
+          'fingerprint_key_id': 'key-1',
+          'fingerprint_version': 1,
+          'index_config_version': 1,
+          'index_config_epoch': 0,
+          'index_config_hash': 'b' * 64,
+          'chunk_schema_version': 1,
+          'vector_format_version': 1,
+          'vector_dimension': 0,
+          'chunk_count': 0,
           'created_at': 1,
-          'updated_at': 1,
         }),
         throwsA(isA<DatabaseException>()),
       );
@@ -208,9 +225,9 @@ void main() {
   );
 }
 
-Future<Database> _openFreshV5() async {
+Future<Database> _openFreshV6() async {
   final directory = await Directory.systemTemp.createTemp(
-    'note_secret_search_fresh_v5_',
+    'note_secret_search_fresh_v6_',
   );
   addTearDown(() => directory.delete(recursive: true));
   final manager = DatabaseSchemaManager();
@@ -313,11 +330,11 @@ Future<Set<String>> _objectNames(Database database, String type) async {
   return rows.map((row) => row['name']! as String).toSet();
 }
 
-const _requiredV5Indexes = <String>{
+const _requiredV6Indexes = <String>{
   'uq_vaults_single_default',
   'uq_categories_vault_name_nocase',
   'uq_tags_vault_name_nocase',
-  'uq_embedding_chunks_source_model_chunk',
+  'uq_embedding_index_sets_source_model',
   'uq_provider_configs_enabled_type',
   'idx_secret_items_active_vault_updated',
   'idx_secret_items_vault',
@@ -326,8 +343,8 @@ const _requiredV5Indexes = <String>{
   'idx_note_items_vault',
   'idx_note_items_category',
   'idx_item_tags_tag_item',
-  'idx_embedding_chunks_source',
-  'idx_embedding_chunks_model',
+  'idx_embedding_index_sets_scope',
+  'idx_embedding_chunks_set_field',
   'idx_download_tasks_model_updated',
   'idx_download_tasks_model_source_updated',
   'idx_download_tasks_updated',
@@ -338,15 +355,24 @@ const _requiredV5Indexes = <String>{
   'idx_chat_messages_session_created',
 };
 
-const _requiredV5Triggers = <String>{
+const _requiredV6Triggers = <String>{
   'trg_secret_category_owner_insert',
   'trg_secret_category_owner_update',
   'trg_note_category_owner_insert',
   'trg_note_category_owner_update',
   'trg_item_tags_owner_insert',
   'trg_item_tags_owner_update',
-  'trg_embedding_chunks_source_insert',
-  'trg_embedding_chunks_source_update',
+  'trg_embedding_index_sets_source_insert',
+  'trg_embedding_index_sets_source_update',
+  'trg_embedding_chunks_metadata_insert',
+  'trg_embedding_chunks_metadata_update',
+  'trg_secret_embedding_index_invalidate',
+  'trg_note_embedding_index_invalidate',
+  'trg_item_tags_embedding_index_invalidate',
+  'trg_item_tags_embedding_index_delete',
+  'trg_item_tags_embedding_index_update',
+  'trg_tags_embedding_index_invalidate',
+  'trg_model_embedding_index_invalidate',
   'trg_categories_vault_owner_update',
   'trg_tags_vault_owner_update',
   'trg_secret_vault_tag_owner_update',

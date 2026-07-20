@@ -8,9 +8,9 @@ void main() {
   setUpAll(sqfliteFfiInit);
 
   test(
-    'v5 production queries use target indexes without temporary sorting',
+    'v6 production queries use target indexes without temporary sorting',
     () async {
-      final database = await _openFreshV5();
+      final database = await _openFreshV6();
       addTearDown(database.close);
 
       for (final queryCase in _queryPlanCases) {
@@ -34,9 +34,9 @@ void main() {
   );
 }
 
-Future<Database> _openFreshV5() async {
+Future<Database> _openFreshV6() async {
   final directory = await Directory.systemTemp.createTemp(
-    'note_secret_search_query_plan_v5_',
+    'note_secret_search_query_plan_v6_',
   );
   addTearDown(() => directory.delete(recursive: true));
   final manager = DatabaseSchemaManager();
@@ -104,12 +104,21 @@ const _queryPlanCases = <_QueryPlanCase>[
   ),
   _QueryPlanCase(
     sql: '''
-      SELECT * FROM embedding_chunks
-      WHERE source_type = ? AND source_id = ? AND model_id = ?
-      ORDER BY chunk_index ASC
+      SELECT * FROM embedding_index_sets
+      WHERE vault_id = ? AND model_id = ? AND source_type = ?
+      ORDER BY source_id ASC
       ''',
-    arguments: <Object?>['secret', 'secret', 'model'],
-    indexName: 'idx_embedding_chunks_source',
+    arguments: <Object?>['default', 'model', 'secret'],
+    indexName: 'idx_embedding_index_sets_scope',
+  ),
+  _QueryPlanCase(
+    sql: '''
+      SELECT * FROM embedding_chunks
+      WHERE index_set_id = ?
+      ORDER BY source_field ASC, field_chunk_index ASC
+      ''',
+    arguments: <Object?>['set'],
+    indexName: 'idx_embedding_chunks_set_field',
   ),
   _QueryPlanCase(
     sql: '''
