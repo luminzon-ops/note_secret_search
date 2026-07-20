@@ -73,12 +73,15 @@ class SqliteEmbeddingCorpusRepository
   }) {
     _validateBatchSize(batchSize);
     return _database.transaction((database) async {
-      final predicate = _compatibilityPredicate(compatibility);
+      final predicate = _versionCompatibilityPredicate(compatibility);
       final rows = await database.query(
         DatabaseSchema.embeddingIndexSets,
         columns: const <String>['id'],
-        where: 'NOT (${predicate.sql})',
-        whereArgs: predicate.arguments,
+        where: 'vault_id = ? AND NOT (${predicate.sql})',
+        whereArgs: <Object>[
+          compatibility.vaultId,
+          ...predicate.arguments,
+        ],
         orderBy: 'id ASC',
         limit: batchSize,
       );
@@ -126,6 +129,32 @@ AND vector_format_version = ?
           .trim(),
       <Object>[
         compatibility.vaultId,
+        compatibility.modelId,
+        compatibility.modelRevisionHash,
+        compatibility.fingerprintKeyId,
+        compatibility.fingerprintVersion,
+        compatibility.indexConfigVersion,
+        compatibility.indexConfigEpoch,
+        compatibility.indexConfigHash,
+        compatibility.chunkSchemaVersion,
+        compatibility.vectorFormatVersion,
+      ],
+    );
+  }
+
+  _SqlPredicate _versionCompatibilityPredicate(
+    EmbeddingIndexCompatibility compatibility,
+  ) {
+    return _SqlPredicate(
+      '''
+model_id = ? AND model_revision_hash = ?
+AND fingerprint_key_id = ? AND fingerprint_version = ?
+AND index_config_version = ? AND index_config_epoch = ?
+AND index_config_hash = ? AND chunk_schema_version = ?
+AND vector_format_version = ?
+'''
+          .trim(),
+      <Object>[
         compatibility.modelId,
         compatibility.modelRevisionHash,
         compatibility.fingerprintKeyId,

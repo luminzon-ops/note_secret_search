@@ -312,6 +312,48 @@ void main() {
     );
   });
 
+  test('stale purge is scoped to the compatibility vault', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    await _insertOwners(database, includeSecondVault: true);
+    final repository = SqliteEmbeddingRepository(database: database);
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-default-stale',
+        indexConfigEpoch: 2,
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+    await repository.replaceIndexSet(
+      _generation(
+        id: 'set-other-vault',
+        sourceId: 'secret-vault-2',
+        vaultId: 'vault-2',
+        fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+      ),
+    );
+
+    expect(
+      await repository.purgeIncompatibleIndexSets(
+        _compatibility(indexConfigEpoch: 1),
+        batchSize: 100,
+      ),
+      1,
+    );
+    expect(
+      await database.run(
+        (db) => db.query(
+          DatabaseSchema.embeddingIndexSets,
+          columns: const <String>['id'],
+          orderBy: 'id ASC',
+        ),
+      ),
+      const <Map<String, Object?>>[
+        <String, Object?>{'id': 'set-other-vault'},
+      ],
+    );
+  });
+
   test('full purge deletes derived index data in bounded batches', () async {
     final database = await openTestAppDatabase();
     addTearDown(database.close);
@@ -329,8 +371,22 @@ void main() {
   });
 }
 
-Future<void> _insertOwners(TestAppDatabase database) {
+Future<void> _insertOwners(
+  TestAppDatabase database, {
+  bool includeSecondVault = false,
+}) {
   return database.run((db) async {
+    if (includeSecondVault) {
+      await db.insert('vaults', <String, Object?>{
+        'id': 'vault-2',
+        'name': 'Second vault',
+        'description': null,
+        'is_default': 0,
+        'encryption_version': 1,
+        'created_at': 1,
+        'updated_at': 1,
+      });
+    }
     await db.insert('secret_items', <String, Object?>{
       'id': 'secret-1',
       'vault_id': 'default',
@@ -339,6 +395,16 @@ Future<void> _insertOwners(TestAppDatabase database) {
       'created_at': 1,
       'updated_at': 1,
     });
+    if (includeSecondVault) {
+      await db.insert('secret_items', <String, Object?>{
+        'id': 'secret-vault-2',
+        'vault_id': 'vault-2',
+        'title': 'Second vault secret',
+        'favorite': 0,
+        'created_at': 1,
+        'updated_at': 1,
+      });
+    }
     await db.insert('secret_items', <String, Object?>{
       'id': 'secret-2',
       'vault_id': 'default',
@@ -362,6 +428,7 @@ EmbeddingIndexSet _generation({
   required String id,
   String sourceId = 'secret-1',
   String modelId = 'model-1',
+  String vaultId = 'default',
   int indexConfigEpoch = 1,
   required List<SearchSourceField> fields,
 }) {
@@ -369,7 +436,7 @@ EmbeddingIndexSet _generation({
   return EmbeddingIndexSet(
     id: id,
     sourceKey: SearchSourceKey.secret(sourceId),
-    vaultId: 'default',
+    vaultId: vaultId,
     modelId: modelId,
     modelRevisionHash: 'a' * 64,
     sourceUpdatedAt: DateTime.fromMillisecondsSinceEpoch(1),
