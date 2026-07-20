@@ -19,46 +19,50 @@ class SqliteEmbeddingCorpusRepository
     int limit = 100,
   }) {
     _validateBatchSize(limit);
-    return _database.run((database) async {
+    return _database.transaction((database) async {
       final predicate = _compatibilityPredicate(compatibility);
-      final rows = await database.query(
-        DatabaseSchema.embeddingIndexSets,
-        where: afterId == null ? predicate.sql : '${predicate.sql} AND id > ?',
-        whereArgs: <Object>[
-          ...predicate.arguments,
-          if (afterId != null) afterId,
-        ],
-        orderBy: 'id ASC',
-        limit: limit,
-      );
-      if (rows.isEmpty) {
-        return const <EmbeddingIndexSet>[];
-      }
+      final compatible = <EmbeddingIndexSet>[];
+      var cursor = afterId;
+      while (compatible.length < limit) {
+        final rows = await database.query(
+          DatabaseSchema.embeddingIndexSets,
+          where: cursor == null ? predicate.sql : '${predicate.sql} AND id > ?',
+          whereArgs: <Object>[
+            ...predicate.arguments,
+            if (cursor != null) cursor,
+          ],
+          orderBy: 'id ASC',
+          limit: limit,
+        );
+        if (rows.isEmpty) {
+          break;
+        }
 
-      final ids = rows
-          .map((row) => row['id']! as String)
-          .toList(growable: false);
-      final chunkRows = await database.query(
-        DatabaseSchema.embeddingChunks,
-        where: 'index_set_id IN (${List.filled(ids.length, '?').join(',')})',
-        whereArgs: ids,
-        orderBy: 'index_set_id ASC, source_field ASC, field_chunk_index ASC',
-      );
-      final chunksBySet = <String, List<EmbeddingChunk>>{};
-      for (final row in chunkRows) {
-        final setId = row['index_set_id']! as String;
-        chunksBySet
-            .putIfAbsent(setId, () => <EmbeddingChunk>[])
-            .add(_mapChunk(row));
+        final ids = rows
+            .map((row) => row['id']! as String)
+            .toList(growable: false);
+        final corruptIds = <String>{};
+        final chunksBySet = await _loadChunksBySet(database, ids, corruptIds);
+        for (final row in rows) {
+          final id = row['id']! as String;
+          if (corruptIds.contains(id)) {
+            continue;
+          }
+          try {
+            compatible.add(
+              _mapSet(row, chunksBySet[id] ?? const <EmbeddingChunk>[]),
+            );
+          } on Object {
+            corruptIds.add(id);
+          }
+        }
+        await _deleteIds(database, corruptIds);
+        cursor = ids.last;
+        if (rows.length < limit) {
+          break;
+        }
       }
-      return rows
-          .map(
-            (row) => _mapSet(
-              row,
-              chunksBySet[row['id']! as String] ?? const <EmbeddingChunk>[],
-            ),
-          )
-          .toList(growable: false);
+      return List<EmbeddingIndexSet>.unmodifiable(compatible.take(limit));
     });
   }
 
@@ -179,6 +183,32 @@ AND vector_format_version = ?
       tokenCount: row['token_count'] as int?,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
     );
+  }
+
+  Future<Map<String, List<EmbeddingChunk>>> _loadChunksBySet(
+    DatabaseExecutor database,
+    List<String> indexSetIds,
+    Set<String> corruptIds,
+  ) async {
+    final rows = await database.query(
+      DatabaseSchema.embeddingChunks,
+      where:
+          'index_set_id IN (${List.filled(indexSetIds.length, '?').join(',')})',
+      whereArgs: indexSetIds,
+      orderBy: 'index_set_id ASC, source_field ASC, field_chunk_index ASC',
+    );
+    final chunksBySet = <String, List<EmbeddingChunk>>{};
+    for (final row in rows) {
+      final setId = row['index_set_id']! as String;
+      try {
+        chunksBySet
+            .putIfAbsent(setId, () => <EmbeddingChunk>[])
+            .add(_mapChunk(row));
+      } on Object {
+        corruptIds.add(setId);
+      }
+    }
+    return chunksBySet;
   }
 
   Future<int> _deleteIds(

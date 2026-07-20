@@ -159,6 +159,51 @@ void main() {
   });
 
   test(
+    'non-index source timestamp changes keep a compatible generation visible',
+    () async {
+      final repository = _CorpusRepository(<EmbeddingIndexSet>[
+        _set(
+          sourceKey: const SearchSourceKey.secret('secret-1'),
+          chunks: <({SearchSourceField field, List<double> vector})>[
+            (
+              field: SearchSourceField.secretTitle,
+              vector: const <double>[1, 0],
+            ),
+          ],
+        ),
+      ]);
+      final service = _service(repository);
+      final source = _secret('secret-1');
+      final timestampOnlyUpdate = SecretItem(
+        id: source.id,
+        vaultId: source.vaultId,
+        title: source.title,
+        usernameCiphertext: source.usernameCiphertext,
+        passwordCiphertext: source.passwordCiphertext,
+        websiteUrlCiphertext: source.websiteUrlCiphertext,
+        noteCiphertext: source.noteCiphertext,
+        tags: source.tags,
+        categoryId: 'category-only-change',
+        favorite: true,
+        createdAt: source.createdAt,
+        updatedAt: source.updatedAt.add(const Duration(seconds: 1)),
+      );
+
+      final results = await service.search(
+        query: 'query',
+        configuration: SearchConfiguration.defaults(),
+        modelRevisionHash: 'a' * 64,
+        activeEmbeddingModel: _model,
+        secrets: <SecretItem>[timestampOnlyUpdate],
+        notes: const <NoteItem>[],
+      );
+
+      expect(results.map((result) => result.item.id), const ['secret-1']);
+      expect(repository.purgedIds, isEmpty);
+    },
+  );
+
+  test(
     'semantic results are deterministically capped at one hundred',
     () async {
       final sets = <EmbeddingIndexSet>[

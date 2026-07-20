@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
@@ -231,6 +232,57 @@ void main() {
     },
   );
 
+  test(
+    'compatible reader isolates and purges one structurally corrupt generation',
+    () async {
+      final database = await openTestAppDatabase();
+      addTearDown(database.close);
+      await _insertOwners(database);
+      final repository = SqliteEmbeddingRepository(database: database);
+      await repository.replaceIndexSet(
+        _generation(
+          id: 'set-corrupt',
+          sourceId: 'secret-1',
+          fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+        ),
+      );
+      await repository.replaceIndexSet(
+        _generation(
+          id: 'set-valid',
+          sourceId: 'secret-2',
+          fields: const <SearchSourceField>[SearchSourceField.secretTitle],
+        ),
+      );
+      await database.run(
+        (db) => db.update(
+          DatabaseSchema.embeddingIndexSets,
+          const <String, Object?>{'chunk_count': 2},
+          where: 'id = ?',
+          whereArgs: const <Object>['set-corrupt'],
+        ),
+      );
+
+      final compatible = await repository.getCompatibleIndexSets(
+        _compatibility(),
+        limit: 100,
+      );
+
+      expect(compatible.map((set) => set.id), const <String>['set-valid']);
+      expect(
+        await database.run(
+          (db) => db.query(
+            DatabaseSchema.embeddingIndexSets,
+            columns: const <String>['id'],
+            orderBy: 'id ASC',
+          ),
+        ),
+        const <Map<String, Object?>>[
+          <String, Object?>{'id': 'set-valid'},
+        ],
+      );
+    },
+  );
+
   test('stale purge deletes at most one bounded batch', () async {
     final database = await openTestAppDatabase();
     addTearDown(database.close);
@@ -287,6 +339,14 @@ Future<void> _insertOwners(TestAppDatabase database) {
       'created_at': 1,
       'updated_at': 1,
     });
+    await db.insert('secret_items', <String, Object?>{
+      'id': 'secret-2',
+      'vault_id': 'default',
+      'title': 'Second secret',
+      'favorite': 0,
+      'created_at': 1,
+      'updated_at': 1,
+    });
     await db.insert('model_registry', <String, Object?>{
       'id': 'model-1',
       'type': 'embedding',
@@ -300,6 +360,7 @@ Future<void> _insertOwners(TestAppDatabase database) {
 
 EmbeddingIndexSet _generation({
   required String id,
+  String sourceId = 'secret-1',
   String modelId = 'model-1',
   int indexConfigEpoch = 1,
   required List<SearchSourceField> fields,
@@ -307,7 +368,7 @@ EmbeddingIndexSet _generation({
   final dimension = fields.isEmpty ? 0 : 2;
   return EmbeddingIndexSet(
     id: id,
-    sourceKey: const SearchSourceKey.secret('secret-1'),
+    sourceKey: SearchSourceKey.secret(sourceId),
     vaultId: 'default',
     modelId: modelId,
     modelRevisionHash: 'a' * 64,

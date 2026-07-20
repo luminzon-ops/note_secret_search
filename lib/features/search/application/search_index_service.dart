@@ -211,7 +211,6 @@ class SearchIndexService {
     if (current != null &&
         current.vaultId == document.vaultId &&
         current.modelRevisionHash == modelRevisionHash &&
-        current.sourceUpdatedAt == document.updatedAt &&
         _bytesEqual(current.sourceFingerprint, sourceFingerprint) &&
         current.fingerprintKeyId == keyId &&
         current.fingerprintVersion == searchIndexFingerprintVersion &&

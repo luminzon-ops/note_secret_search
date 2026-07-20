@@ -151,10 +151,7 @@ class SemanticSearchService {
     required NoteItem? note,
   }) {
     final sourceVaultId = secret?.vaultId ?? note?.vaultId;
-    final sourceUpdatedAt = secret?.updatedAt ?? note?.updatedAt;
-    if (sourceVaultId == null ||
-        sourceVaultId != indexSet.vaultId ||
-        sourceUpdatedAt != indexSet.sourceUpdatedAt) {
+    if (sourceVaultId == null || sourceVaultId != indexSet.vaultId) {
       return const _EvaluatedGeneration.corrupt();
     }
     if (indexSet.chunks.isEmpty) {

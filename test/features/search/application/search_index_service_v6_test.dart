@@ -107,6 +107,71 @@ void main() {
       expect(fresh.pendingItems, isEmpty);
     },
   );
+
+  test(
+    'non-index source timestamp changes do not invalidate matching content',
+    () async {
+      final repository = _RecordingEmbeddingIndexRepository();
+      final keyStore = DatabaseSessionKeyStore()
+        ..replace(
+          DatabaseSessionKeys(
+            databaseKey: Uint8List(32),
+            fieldKey: Uint8List(32),
+            keyId: 'root-key-1',
+            searchIndexFingerprintKey: Uint8List.fromList(
+              List<int>.generate(32, (index) => index),
+            ),
+          ),
+        );
+      addTearDown(keyStore.clear);
+      final service = SearchIndexService(
+        repository: repository,
+        cryptoService: _SearchIndexCryptoService(),
+        embeddingEngine: _RecordingEmbeddingEngine(),
+        sessionKeyStore: keyStore,
+      );
+      final configuration = SearchConfiguration.defaults();
+      final original = _secret();
+      final initial = await service.buildStatus(
+        secrets: <SecretItem>[original],
+        notes: const [],
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+      await service.indexPendingItems(
+        items: initial.pendingItems,
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+
+      final timestampOnlyUpdate = SecretItem(
+        id: original.id,
+        vaultId: original.vaultId,
+        title: original.title,
+        usernameCiphertext: original.usernameCiphertext,
+        passwordCiphertext: original.passwordCiphertext,
+        websiteUrlCiphertext: original.websiteUrlCiphertext,
+        noteCiphertext: original.noteCiphertext,
+        tags: original.tags,
+        categoryId: 'category-only-change',
+        favorite: true,
+        createdAt: original.createdAt,
+        updatedAt: original.updatedAt.add(const Duration(seconds: 1)),
+      );
+
+      final status = await service.buildStatus(
+        secrets: <SecretItem>[timestampOnlyUpdate],
+        notes: const [],
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+
+      expect(status.pendingItems, isEmpty);
+    },
+  );
 }
 
 class _RecordingEmbeddingIndexRepository implements EmbeddingIndexRepository {
