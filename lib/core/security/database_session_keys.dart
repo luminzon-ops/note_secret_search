@@ -41,9 +41,10 @@ class DatabaseSessionKeys {
     }
     _databaseKey.fillRange(0, _databaseKey.length, 0);
     _fieldKey.fillRange(0, _fieldKey.length, 0);
-    _searchIndexFingerprintKey?.fillRange(
+    final searchIndexFingerprintKey = _searchIndexFingerprintKey;
+    searchIndexFingerprintKey?.fillRange(
       0,
-      _searchIndexFingerprintKey!.length,
+      searchIndexFingerprintKey.length,
       0,
     );
     _isCleared = true;
