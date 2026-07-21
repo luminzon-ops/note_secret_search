@@ -1,12 +1,23 @@
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_manager.dart';
+import 'package:sqflite_common/sqflite_logger.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-Future<TestAppDatabase> openTestAppDatabase() async {
+Future<TestAppDatabase> openTestAppDatabase({
+  void Function(SqfliteLoggerEvent event)? onDatabaseEvent,
+}) async {
   sqfliteFfiInit();
   final manager = DatabaseSchemaManager();
-  final database = await databaseFactoryFfi.openDatabase(
+  final factory = onDatabaseEvent == null
+      ? databaseFactoryFfi
+      // The logger wrapper is experimental but is the package's public test API.
+      // ignore: experimental_member_use
+      : SqfliteDatabaseFactoryLogger(
+          databaseFactoryFfi,
+          options: SqfliteLoggerOptions(log: onDatabaseEvent),
+        );
+  final database = await factory.openDatabase(
     inMemoryDatabasePath,
     options: OpenDatabaseOptions(
       version: manager.version,

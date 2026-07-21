@@ -30,15 +30,18 @@ extension _SemanticSearchPaging on SemanticSearchService {
     final corruptSetIds = <String>{};
     String? afterId;
     while (true) {
-      final page = await _repository.getCompatibleIndexSets(
+      final pageResult = await _loadIndexSetPage(
         compatibility,
         afterId: afterId,
         limit: 100,
       );
-      if (page.isEmpty) {
-        break;
-      }
-      final sources = await hydrate(page);
+      final page = pageResult.sets;
+      final sources = page.isEmpty
+          ? const _SemanticSourceMaps(
+              secretById: <String, SecretItem>{},
+              noteById: <String, NoteItem>{},
+            )
+          : await hydrate(page);
       for (final indexSet in page) {
         if (indexSet.vaultId != activeVaultId) {
           continue;
@@ -66,12 +69,18 @@ extension _SemanticSearchPaging on SemanticSearchService {
       if (candidates.length > 100) {
         candidates.removeRange(100, candidates.length);
       }
-      final nextId = page.last.id;
+      final nextId = pageResult.nextAfterId;
+      if (nextId == null) {
+        if (!pageResult.reachedEnd) {
+          throw StateError('Embedding corpus page did not provide a cursor.');
+        }
+        break;
+      }
       if (afterId != null && nextId.compareTo(afterId) <= 0) {
         throw StateError('Embedding corpus page cursor did not advance.');
       }
       afterId = nextId;
-      if (page.length < 100) {
+      if (pageResult.reachedEnd) {
         break;
       }
     }
@@ -83,5 +92,31 @@ extension _SemanticSearchPaging on SemanticSearchService {
     }
     candidates.sort(_compareCandidates);
     return List<SemanticSearchResult>.unmodifiable(candidates.take(100));
+  }
+
+  Future<EmbeddingIndexSetPage> _loadIndexSetPage(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  }) async {
+    final repository = _repository;
+    if (repository is PagedEmbeddingIndexCorpusRepository) {
+      final pagedRepository = repository as PagedEmbeddingIndexCorpusRepository;
+      return pagedRepository.getCompatibleIndexSetPage(
+        compatibility,
+        afterId: afterId,
+        limit: limit,
+      );
+    }
+    final sets = await repository.getCompatibleIndexSets(
+      compatibility,
+      afterId: afterId,
+      limit: limit,
+    );
+    return EmbeddingIndexSetPage(
+      sets: sets,
+      nextAfterId: sets.isEmpty ? null : sets.last.id,
+      reachedEnd: sets.length < limit,
+    );
   }
 }

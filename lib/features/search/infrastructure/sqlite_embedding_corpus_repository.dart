@@ -6,14 +6,16 @@ import 'package:note_secret_search/features/search/domain/embedding_index_set.da
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 class SqliteEmbeddingCorpusRepository
-    implements EmbeddingIndexCorpusRepository {
+    implements
+        EmbeddingIndexCorpusRepository,
+        PagedEmbeddingIndexCorpusRepository {
   const SqliteEmbeddingCorpusRepository({required AppDatabase database})
     : _database = database;
 
   final AppDatabase _database;
 
   @override
-  Future<List<EmbeddingIndexSet>> getCompatibleIndexSets(
+  Future<EmbeddingIndexSetPage> getCompatibleIndexSetPage(
     EmbeddingIndexCompatibility compatibility, {
     String? afterId,
     int limit = 100,
@@ -21,49 +23,63 @@ class SqliteEmbeddingCorpusRepository
     _validateBatchSize(limit);
     return _database.transaction((database) async {
       final predicate = _compatibilityPredicate(compatibility);
-      final compatible = <EmbeddingIndexSet>[];
-      var cursor = afterId;
-      while (compatible.length < limit) {
-        final rows = await database.query(
-          DatabaseSchema.embeddingIndexSets,
-          where: cursor == null ? predicate.sql : '${predicate.sql} AND id > ?',
-          whereArgs: <Object>[
-            ...predicate.arguments,
-            if (cursor != null) cursor,
-          ],
-          orderBy: 'id ASC',
-          limit: limit,
+      final rows = await database.query(
+        DatabaseSchema.embeddingIndexSets,
+        where: afterId == null ? predicate.sql : '${predicate.sql} AND id > ?',
+        whereArgs: <Object>[
+          ...predicate.arguments,
+          if (afterId != null) afterId,
+        ],
+        orderBy: 'id ASC',
+        limit: limit,
+      );
+      if (rows.isEmpty) {
+        return const EmbeddingIndexSetPage(
+          sets: <EmbeddingIndexSet>[],
+          nextAfterId: null,
+          reachedEnd: true,
         );
-        if (rows.isEmpty) {
-          break;
-        }
+      }
 
-        final ids = rows
-            .map((row) => row['id']! as String)
-            .toList(growable: false);
-        final corruptIds = <String>{};
-        final chunksBySet = await _loadChunksBySet(database, ids, corruptIds);
-        for (final row in rows) {
-          final id = row['id']! as String;
-          if (corruptIds.contains(id)) {
-            continue;
-          }
-          try {
-            compatible.add(
-              _mapSet(row, chunksBySet[id] ?? const <EmbeddingChunk>[]),
-            );
-          } on Object {
-            corruptIds.add(id);
-          }
+      final ids = rows
+          .map((row) => row['id']! as String)
+          .toList(growable: false);
+      final corruptIds = <String>{};
+      final chunksBySet = await _loadChunksBySet(database, ids, corruptIds);
+      final compatible = <EmbeddingIndexSet>[];
+      for (final row in rows) {
+        final id = row['id']! as String;
+        if (corruptIds.contains(id)) {
+          continue;
         }
-        await _deleteIds(database, corruptIds);
-        cursor = ids.last;
-        if (rows.length < limit) {
-          break;
+        try {
+          compatible.add(
+            _mapSet(row, chunksBySet[id] ?? const <EmbeddingChunk>[]),
+          );
+        } on Object {
+          corruptIds.add(id);
         }
       }
-      return List<EmbeddingIndexSet>.unmodifiable(compatible.take(limit));
+      await _deleteIds(database, corruptIds);
+      return EmbeddingIndexSetPage(
+        sets: List<EmbeddingIndexSet>.unmodifiable(compatible),
+        nextAfterId: ids.last,
+        reachedEnd: rows.length < limit,
+      );
     });
+  }
+
+  @override
+  Future<List<EmbeddingIndexSet>> getCompatibleIndexSets(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  }) {
+    return getCompatibleIndexSetPage(
+      compatibility,
+      afterId: afterId,
+      limit: limit,
+    ).then((page) => page.sets);
   }
 
   @override

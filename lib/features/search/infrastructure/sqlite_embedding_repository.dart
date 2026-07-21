@@ -22,7 +22,8 @@ class SqliteEmbeddingRepository
         EmbeddingIndexRepository,
         GuardedEmbeddingIndexRepository,
         EmbeddingIndexHeaderRepository,
-        EmbeddingIndexCorpusRepository {
+        EmbeddingIndexCorpusRepository,
+        PagedEmbeddingIndexCorpusRepository {
   SqliteEmbeddingRepository({
     required AppDatabase database,
     EmbeddingReplacementCheckpointCallback? onReplacementCheckpoint,
@@ -188,6 +189,19 @@ class SqliteEmbeddingRepository
     int limit = 100,
   }) {
     return _corpus.getCompatibleIndexSets(
+      compatibility,
+      afterId: afterId,
+      limit: limit,
+    );
+  }
+
+  @override
+  Future<EmbeddingIndexSetPage> getCompatibleIndexSetPage(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  }) {
+    return _corpus.getCompatibleIndexSetPage(
       compatibility,
       afterId: afterId,
       limit: limit,

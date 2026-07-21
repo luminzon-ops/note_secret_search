@@ -74,6 +74,26 @@ abstract interface class EmbeddingIndexCorpusRepository {
   Future<int> purgeAllIndexSets({int batchSize = 100});
 }
 
+class EmbeddingIndexSetPage {
+  const EmbeddingIndexSetPage({
+    required this.sets,
+    required this.nextAfterId,
+    required this.reachedEnd,
+  });
+
+  final List<EmbeddingIndexSet> sets;
+  final String? nextAfterId;
+  final bool reachedEnd;
+}
+
+abstract interface class PagedEmbeddingIndexCorpusRepository {
+  Future<EmbeddingIndexSetPage> getCompatibleIndexSetPage(
+    EmbeddingIndexCompatibility compatibility, {
+    String? afterId,
+    int limit = 100,
+  });
+}
+
 class EmbeddingIndexStaleWriteException implements Exception {
   const EmbeddingIndexStaleWriteException();
 }
