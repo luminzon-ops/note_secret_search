@@ -528,6 +528,10 @@ class _SearchObservabilitySummaryBlockState
               const SizedBox(height: 6),
               Text(summary.semanticFieldBreakdown!),
             ],
+            if (summary.semanticVersionBreakdown != null) ...[
+              const SizedBox(height: 6),
+              Text(summary.semanticVersionBreakdown!),
+            ],
             if (summary.dominantFieldHint != null) ...[
               const SizedBox(height: 6),
               Text(summary.dominantFieldHint!),

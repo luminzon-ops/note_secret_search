@@ -1,6 +1,7 @@
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 
 enum SearchResultHitLabel { dual, keywordPrimary, semanticAssist }
 
@@ -24,6 +25,7 @@ class SearchObservabilitySummary {
     required this.semanticTierBreakdown,
     required this.dominantSignalHint,
     this.semanticFieldBreakdown,
+    this.semanticVersionBreakdown,
     this.semanticOnlyFilteringBreakdown,
     this.semanticOnlyFilteringReason,
     this.dominantFieldHint,
@@ -34,6 +36,7 @@ class SearchObservabilitySummary {
   final String semanticTierBreakdown;
   final String dominantSignalHint;
   final String? semanticFieldBreakdown;
+  final String? semanticVersionBreakdown;
   final String? semanticOnlyFilteringBreakdown;
   final String? semanticOnlyFilteringReason;
   final String? dominantFieldHint;
@@ -283,6 +286,7 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
   var semanticAssistCount = 0;
 
   final fieldCounts = <SemanticHitField, int>{};
+  final semanticEvidence = <SearchEvidence>[];
 
   for (final item in unifiedResults) {
     switch (classifySearchResultHit(item)) {
@@ -297,10 +301,19 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
         break;
     }
 
-    final field = item.semanticHitField;
-    if (field != null &&
-        item.matchSources.contains(SearchMatchSource.semantic)) {
-      fieldCounts.update(field, (count) => count + 1, ifAbsent: () => 1);
+    if (item.matchSources.contains(SearchMatchSource.semantic)) {
+      final evidence = item.evidence
+          .where((item) => item.kind == SearchEvidenceKind.semantic)
+          .toList(growable: false);
+      if (evidence.isNotEmpty) {
+        semanticEvidence.addAll(evidence);
+        for (final item in evidence) {
+          final field = _semanticHitField(item.sourceField);
+          fieldCounts.update(field, (count) => count + 1, ifAbsent: () => 1);
+        }
+      } else if (item.semanticHitField case final field?) {
+        fieldCounts.update(field, (count) => count + 1, ifAbsent: () => 1);
+      }
     }
   }
 
@@ -324,6 +337,9 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
   final semanticFieldBreakdown = fieldCounts.isEmpty
       ? null
       : '字段分布：${fieldCounts.entries.map((entry) => '${_semanticFieldObservabilityLabel(entry.key)} ${entry.value} 条').join('，')}。';
+  final semanticVersionBreakdown = _buildSemanticVersionBreakdown(
+    semanticEvidence,
+  );
   final diagnostics =
       fusionDiagnostics ??
       const SearchFusionService().diagnoseFinalResults(
@@ -354,6 +370,7 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
       },
     ),
     semanticFieldBreakdown: semanticFieldBreakdown,
+    semanticVersionBreakdown: semanticVersionBreakdown,
     semanticOnlyFilteringBreakdown: semanticOnlyFilteringBreakdown,
     semanticOnlyFilteringReason: semanticOnlyFilteringReason,
     dominantFieldHint: dominantField == null
@@ -361,6 +378,62 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
         : _buildDominantFieldHint(dominantField, fieldCounts[dominantField]!),
     reminderHint: reminderHint,
   );
+}
+
+String? _buildSemanticVersionBreakdown(List<SearchEvidence> evidence) {
+  final versions =
+      <
+        ({int fingerprint, int configuration, int epoch, int chunk, int vector})
+      >{};
+  final modelRevisions = <String>{};
+  for (final item in evidence) {
+    final fingerprint = item.fingerprintVersion;
+    final configuration = item.indexConfigVersion;
+    final epoch = item.indexConfigEpoch;
+    final chunk = item.chunkSchemaVersion;
+    final vector = item.vectorFormatVersion;
+    if (fingerprint != null &&
+        configuration != null &&
+        epoch != null &&
+        chunk != null &&
+        vector != null) {
+      versions.add((
+        fingerprint: fingerprint,
+        configuration: configuration,
+        epoch: epoch,
+        chunk: chunk,
+        vector: vector,
+      ));
+    }
+    if (item.modelRevisionHash case final revision? when revision.isNotEmpty) {
+      modelRevisions.add(revision);
+    }
+  }
+  if (versions.isEmpty) {
+    return null;
+  }
+
+  final ordered = versions.toList(growable: false)
+    ..sort(
+      (left, right) =>
+          '${left.fingerprint}:${left.configuration}:${left.epoch}:'
+                  '${left.chunk}:${left.vector}'
+              .compareTo(
+                '${right.fingerprint}:${right.configuration}:${right.epoch}:'
+                '${right.chunk}:${right.vector}',
+              ),
+    );
+  final versionText = ordered
+      .map(
+        (item) =>
+            '指纹 v${item.fingerprint}，配置 v${item.configuration}/e${item.epoch}，'
+            '分块 v${item.chunk}，向量 v${item.vector}',
+      )
+      .join('；');
+  final revisionText = modelRevisions.isEmpty
+      ? ''
+      : '；模型修订 ${modelRevisions.length} 组';
+  return '索引版本：$versionText$revisionText。';
 }
 
 String? _buildSemanticOnlyFilteringBreakdown(
@@ -545,4 +618,19 @@ String _semanticFieldObservabilityLabel(SemanticHitField field) {
     case SemanticHitField.tags:
       return '标签';
   }
+}
+
+SemanticHitField _semanticHitField(SearchSourceField field) {
+  return switch (field) {
+    SearchSourceField.secretTitle ||
+    SearchSourceField.noteTitle => SemanticHitField.title,
+    SearchSourceField.secretUsername => SemanticHitField.username,
+    SearchSourceField.secretWebsiteUrl => SemanticHitField.url,
+    SearchSourceField.secretNote => SemanticHitField.secretNote,
+    SearchSourceField.noteSummary => SemanticHitField.summary,
+    SearchSourceField.noteBody => SemanticHitField.noteBody,
+    SearchSourceField.secretTags ||
+    SearchSourceField.noteTags => SemanticHitField.tags,
+    SearchSourceField.secretPassword => SemanticHitField.secretNote,
+  };
 }

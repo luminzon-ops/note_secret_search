@@ -1223,6 +1223,24 @@ void main() {
                   semanticScore: 0.72,
                   semanticHitField: SemanticHitField.tags,
                   semanticHitSummary: '标签：backup',
+                  evidence: [
+                    SearchEvidence(
+                      kind: SearchEvidenceKind.semantic,
+                      sourceField: SearchSourceField.noteTags,
+                      fieldChunkIndex: 0,
+                      summary: '标签：backup',
+                      rawSimilarity: 0.93,
+                      weight: 0.96,
+                      rankingScore: 0.8928,
+                      threshold: 0.90,
+                      modelRevisionHash: 'a' * 64,
+                      fingerprintVersion: 1,
+                      indexConfigVersion: 2,
+                      indexConfigEpoch: 7,
+                      chunkSchemaVersion: 1,
+                      vectorFormatVersion: 1,
+                    ),
+                  ],
                 ),
                 SearchResultItem(
                   id: 'note-2',
@@ -1236,6 +1254,24 @@ void main() {
                   semanticScore: 0.71,
                   semanticHitField: SemanticHitField.noteBody,
                   semanticHitSummary: '正文：codes',
+                  evidence: [
+                    SearchEvidence(
+                      kind: SearchEvidenceKind.semantic,
+                      sourceField: SearchSourceField.noteBody,
+                      fieldChunkIndex: 0,
+                      summary: '正文：codes',
+                      rawSimilarity: 0.91,
+                      weight: 0.92,
+                      rankingScore: 0.8372,
+                      threshold: 0.90,
+                      modelRevisionHash: 'a' * 64,
+                      fingerprintVersion: 1,
+                      indexConfigVersion: 2,
+                      indexConfigEpoch: 7,
+                      chunkSchemaVersion: 1,
+                      vectorFormatVersion: 1,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1251,6 +1287,10 @@ void main() {
 
       expect(find.text('语义分层：重点 0 条，补充线索 2 条。'), findsNothing);
       expect(find.text('字段分布：标签 1 条，正文 1 条。'), findsNothing);
+      expect(
+        find.text('索引版本：指纹 v1，配置 v2/e7，分块 v1，向量 v1；模型修订 1 组。'),
+        findsNothing,
+      );
       expect(find.text('当前语义命中主要集中在正文字段（1 条）。'), findsNothing);
 
       await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
@@ -1259,6 +1299,11 @@ void main() {
       expect(find.text('收起观测详情'), findsOneWidget);
       expect(find.text('语义分层：重点 0 条，补充线索 2 条。'), findsOneWidget);
       expect(find.text('字段分布：标签 1 条，正文 1 条。'), findsOneWidget);
+      expect(
+        find.text('索引版本：指纹 v1，配置 v2/e7，分块 v1，向量 v1；模型修订 1 组。'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('a' * 64), findsNothing);
       expect(find.text('当前语义命中主要集中在正文字段（1 条）。'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(TextButton, '收起观测详情'));
@@ -1267,6 +1312,10 @@ void main() {
       expect(find.text('展开更多观测'), findsOneWidget);
       expect(find.text('语义分层：重点 0 条，补充线索 2 条。'), findsNothing);
       expect(find.text('字段分布：标签 1 条，正文 1 条。'), findsNothing);
+      expect(
+        find.text('索引版本：指纹 v1，配置 v2/e7，分块 v1，向量 v1；模型修订 1 组。'),
+        findsNothing,
+      );
       expect(find.text('当前语义命中主要集中在正文字段（1 条）。'), findsNothing);
     },
   );

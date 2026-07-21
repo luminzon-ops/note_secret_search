@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/presentation/search_result_explanation.dart';
@@ -185,6 +186,65 @@ void main() {
       expect(summary.dominantSignalHint, '当前结果主要由双命中主导（1 条）。');
       expect(summary.dominantFieldHint, '当前语义命中主要集中在标题字段（1 条）。');
     });
+
+    test(
+      'uses every semantic evidence field and exposes non-sensitive index versions',
+      () {
+        final summary = buildSearchObservabilitySummary([
+          SearchResultItem(
+            id: 'secret-1',
+            type: SearchResultType.secret,
+            title: 'Bank Account',
+            preview: 'alice@example.com',
+            tags: const ['finance'],
+            favorite: false,
+            updatedAt: DateTime(2026, 1, 2),
+            matchSources: const {SearchMatchSource.semantic},
+            semanticHitField: SemanticHitField.title,
+            evidence: [
+              SearchEvidence(
+                kind: SearchEvidenceKind.semantic,
+                sourceField: SearchSourceField.secretTitle,
+                fieldChunkIndex: 0,
+                summary: '标题：Bank Account',
+                rawSimilarity: 0.94,
+                weight: 1.16,
+                rankingScore: 1.0904,
+                threshold: 0.82,
+                modelRevisionHash: 'a' * 64,
+                fingerprintVersion: 1,
+                indexConfigVersion: 2,
+                indexConfigEpoch: 7,
+                chunkSchemaVersion: 1,
+                vectorFormatVersion: 1,
+              ),
+              SearchEvidence(
+                kind: SearchEvidenceKind.semantic,
+                sourceField: SearchSourceField.secretNote,
+                fieldChunkIndex: 1,
+                summary: '附注：backup',
+                rawSimilarity: 0.91,
+                weight: 1.04,
+                rankingScore: 0.9464,
+                threshold: 0.87,
+                modelRevisionHash: 'a' * 64,
+                fingerprintVersion: 1,
+                indexConfigVersion: 2,
+                indexConfigEpoch: 7,
+                chunkSchemaVersion: 1,
+                vectorFormatVersion: 1,
+              ),
+            ],
+          ),
+        ]);
+
+        expect(summary.semanticFieldBreakdown, '字段分布：标题 1 条，附注 1 条。');
+        expect(
+          summary.semanticVersionBreakdown,
+          '索引版本：指纹 v1，配置 v2/e7，分块 v1，向量 v1；模型修订 1 组。',
+        );
+      },
+    );
 
     test('ignores semantic hit field when semantic source is absent', () {
       final summary = buildSearchObservabilitySummary([
