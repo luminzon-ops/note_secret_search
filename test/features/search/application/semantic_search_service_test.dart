@@ -41,6 +41,7 @@ void main() {
     final service = _service(repository);
 
     final results = await service.search(
+      activeVaultId: 'vault-1',
       query: 'query',
       configuration: SearchConfiguration.defaults(),
       modelRevisionHash: 'a' * 64,
@@ -84,6 +85,7 @@ void main() {
       final service = _service(repository);
 
       final results = await service.search(
+        activeVaultId: 'vault-1',
         query: 'alice@example.test',
         configuration: SearchConfiguration.defaults(),
         modelRevisionHash: 'a' * 64,
@@ -118,6 +120,7 @@ void main() {
     final service = _service(repository);
 
     final results = await service.search(
+      activeVaultId: 'vault-1',
       query: 'query',
       configuration: SearchConfiguration.defaults().copyWith(
         maxChunkLength: 160,
@@ -155,6 +158,7 @@ void main() {
     final service = _service(repository);
 
     final results = await service.search(
+      activeVaultId: 'vault-1',
       query: 'query',
       configuration: SearchConfiguration.defaults(),
       modelRevisionHash: 'a' * 64,
@@ -179,6 +183,7 @@ void main() {
     final service = _service(repository);
 
     final results = await service.search(
+      activeVaultId: 'vault-1',
       query: 'query',
       configuration: SearchConfiguration.defaults().copyWith(
         includeNoteBody: false,
@@ -224,6 +229,7 @@ void main() {
       );
 
       final results = await service.search(
+        activeVaultId: 'vault-1',
         query: 'query',
         configuration: SearchConfiguration.defaults(),
         modelRevisionHash: 'a' * 64,
@@ -258,6 +264,7 @@ void main() {
       final service = _service(repository);
 
       final results = await service.search(
+        activeVaultId: 'vault-1',
         query: 'query',
         configuration: SearchConfiguration.defaults(),
         modelRevisionHash: 'a' * 64,
@@ -272,6 +279,59 @@ void main() {
       expect(results, hasLength(100));
       expect(results.first.item.id, 'secret-000');
       expect(results.last.item.id, 'secret-099');
+    },
+  );
+
+  test(
+    'semantic search rejects deleted and other-vault sources at the service boundary',
+    () async {
+      final repository = _CorpusRepository(<EmbeddingIndexSet>[
+        _set(
+          sourceKey: const SearchSourceKey.secret('active'),
+          chunks: <({SearchSourceField field, List<double> vector})>[
+            (
+              field: SearchSourceField.secretTitle,
+              vector: const <double>[1, 0],
+            ),
+          ],
+        ),
+        _set(
+          sourceKey: const SearchSourceKey.secret('other'),
+          vaultId: 'vault-2',
+          chunks: <({SearchSourceField field, List<double> vector})>[
+            (
+              field: SearchSourceField.secretTitle,
+              vector: const <double>[1, 0],
+            ),
+          ],
+        ),
+        _set(
+          sourceKey: const SearchSourceKey.secret('deleted'),
+          chunks: <({SearchSourceField field, List<double> vector})>[
+            (
+              field: SearchSourceField.secretTitle,
+              vector: const <double>[1, 0],
+            ),
+          ],
+        ),
+      ]);
+      final service = _service(repository);
+
+      final results = await service.search(
+        activeVaultId: 'vault-1',
+        query: 'query',
+        configuration: SearchConfiguration.defaults(),
+        modelRevisionHash: 'a' * 64,
+        activeEmbeddingModel: _model,
+        secrets: <SecretItem>[
+          _secret('active'),
+          _secret('other', vaultId: 'vault-2'),
+          _secret('deleted', deletedAt: DateTime(2026, 7, 20)),
+        ],
+        notes: const <NoteItem>[],
+      );
+
+      expect(results.map((result) => result.item.id), const <String>['active']);
     },
   );
 }
@@ -373,6 +433,7 @@ EmbeddingIndexSet _set({
   required SearchSourceKey sourceKey,
   required List<({SearchSourceField field, List<double> vector})> chunks,
   Uint8List? overrideBlob,
+  String vaultId = 'vault-1',
 }) {
   final id = 'set-${sourceKey.type.name}-${sourceKey.id}';
   final fieldCounts = <SearchSourceField, int>{};
@@ -401,7 +462,7 @@ EmbeddingIndexSet _set({
   return EmbeddingIndexSet(
     id: id,
     sourceKey: sourceKey,
-    vaultId: 'vault-1',
+    vaultId: vaultId,
     modelId: _model.id,
     modelRevisionHash: 'a' * 64,
     sourceUpdatedAt: DateTime.fromMillisecondsSinceEpoch(1),
@@ -430,11 +491,15 @@ Uint8List _nanVectorBlob() {
   return data.buffer.asUint8List();
 }
 
-SecretItem _secret(String id) {
+SecretItem _secret(
+  String id, {
+  String vaultId = 'vault-1',
+  DateTime? deletedAt,
+}) {
   final now = DateTime.fromMillisecondsSinceEpoch(1);
   return SecretItem(
     id: id,
-    vaultId: 'vault-1',
+    vaultId: vaultId,
     title: 'Title $id',
     usernameCiphertext: 'alice@example.test'.codeUnits,
     passwordCiphertext: 'password'.codeUnits,
@@ -445,6 +510,7 @@ SecretItem _secret(String id) {
     favorite: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: deletedAt,
   );
 }
 

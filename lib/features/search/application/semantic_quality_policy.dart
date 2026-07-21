@@ -49,5 +49,12 @@ class SemanticQualityPolicy {
     };
   }
 
+  bool admitsSemanticOnly({
+    required int fieldQualityTier,
+    required double aggregateRankingScore,
+  }) {
+    return fieldQualityTier >= 2 || aggregateRankingScore >= 0.90;
+  }
+
   String get searchPageQualityHint => '当前语义结果仅展示通过最低质量门槛的命中。';
 }

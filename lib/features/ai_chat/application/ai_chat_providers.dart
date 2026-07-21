@@ -18,8 +18,11 @@ import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
+import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
@@ -61,9 +64,15 @@ abstract interface class AiChatContextRetriever {
 }
 
 class SemanticAiChatContextRetriever implements AiChatContextRetriever {
-  const SemanticAiChatContextRetriever({required Ref ref}) : _ref = ref;
+  const SemanticAiChatContextRetriever({
+    required Ref ref,
+    SemanticQualityPolicy qualityPolicy =
+        const SemanticQualityPolicy.conservativeMvp(),
+  }) : _ref = ref,
+       _qualityPolicy = qualityPolicy;
 
   final Ref _ref;
+  final SemanticQualityPolicy _qualityPolicy;
 
   @override
   Future<List<ChatContextItem>> retrieve({
@@ -71,6 +80,10 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     required ModelRegistryEntry embeddingModel,
   }) async {
     final configuration = await _ref.read(searchConfigurationProvider.future);
+    final vault = await _ref.read(defaultVaultProvider.future);
+    if (vault == null) {
+      return const <ChatContextItem>[];
+    }
     final secrets = await _ref.read(secretListProvider.future);
     final notes = await _ref.read(noteListProvider.future);
     final modelRevisionHash = await _ref.read(
@@ -79,6 +92,7 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     final results = await _ref
         .read(semanticSearchServiceProvider)
         .search(
+          activeVaultId: vault.id,
           query: query,
           configuration: configuration,
           modelRevisionHash: modelRevisionHash,
@@ -89,18 +103,27 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
         );
 
     return normalizeChatContextItems(
-      results.map(
-        (result) => ChatContextItem(
-          id: result.item.id,
-          type: result.item.type == SearchResultType.secret
-              ? ChatContextItemType.secret
-              : ChatContextItemType.note,
-          title: result.item.title,
-          preview: result.item.preview,
-          summary: result.hitSummary,
-          semanticHitField: result.hitField,
-        ),
-      ),
+      results
+          .where(_admitsAutoContext)
+          .map(
+            (result) => ChatContextItem(
+              id: result.item.id,
+              type: result.item.type == SearchResultType.secret
+                  ? ChatContextItemType.secret
+                  : ChatContextItemType.note,
+              title: result.item.title,
+              preview: result.item.preview,
+              summary: result.hitSummary,
+              semanticHitField: result.hitField,
+            ),
+          ),
+    );
+  }
+
+  bool _admitsAutoContext(SemanticSearchResult result) {
+    return _qualityPolicy.admitsSemanticOnly(
+      fieldQualityTier: result.fieldQualityTier,
+      aggregateRankingScore: result.score,
     );
   }
 }

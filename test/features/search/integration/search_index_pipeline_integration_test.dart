@@ -123,7 +123,7 @@ void main() {
       final secrets = await container.read(secretListProvider.future);
       final notes = await container.read(noteListProvider.future);
       expect(secrets, hasLength(1));
-      expect(notes, hasLength(5));
+      expect(notes, hasLength(6));
 
       final indexService = container.read(searchIndexServiceProvider);
       final status = await indexService.buildStatus(
@@ -133,7 +133,7 @@ void main() {
         modelRevisionHash: _modelRevision,
         configuration: configuration,
       );
-      expect(status.pendingItems, hasLength(6));
+      expect(status.pendingItems, hasLength(7));
 
       await indexService.indexPendingItems(
         items: status.pendingItems,
@@ -269,6 +269,14 @@ void main() {
       );
       expect(context.map((item) => item.id), isNot(contains('candidate-4')));
 
+      final weakAssistContext = await container
+          .read(aiChatContextRetrieverProvider)
+          .retrieve(
+            query: 'weak-assist-query',
+            embeddingModel: _embeddingModel,
+          );
+      expect(weakAssistContext, isEmpty);
+
       container.read(searchQueryProvider.notifier).state =
           'password-only-value';
       final passwordResults = await container.read(
@@ -341,6 +349,15 @@ List<NoteItem> _notes(CryptoService crypto) {
         tag: 'Candidate',
         updatedAt: 2000 - index,
       ),
+    _note(
+      crypto,
+      id: 'weak-assist',
+      title: 'Weak assist',
+      summary: 'No strong semantic evidence',
+      body: 'No strong body evidence',
+      tag: 'weak-assist-tag',
+      updatedAt: 1900,
+    ),
   ];
 }
 
@@ -436,26 +453,32 @@ class _DeterministicEmbeddingEngine implements EmbeddingEngine {
   @override
   Future<EmbeddingVector> embed(EmbeddingRequest request) async {
     final text = request.text;
-    final similarity = switch (text) {
-      'alice@example.test' => 1.0,
-      'Recovery mailbox instructions' => 0.98,
-      'Candidate summary 1' => 0.96,
-      'Candidate summary 2' => 0.94,
-      'Candidate summary 3' => 0.92,
-      'Candidate summary 4' => 0.90,
-      'password-only-value' => -1.0,
-      _ => 0.0,
+    final values = switch (text) {
+      'alice@example.test' => const <double>[1, 0],
+      'Recovery mailbox instructions' => _vectorFromXAxisCosine(0.98),
+      'Candidate summary 1' => _vectorFromXAxisCosine(0.96),
+      'Candidate summary 2' => _vectorFromXAxisCosine(0.94),
+      'Candidate summary 3' => _vectorFromXAxisCosine(0.92),
+      'Candidate summary 4' => _vectorFromXAxisCosine(0.90),
+      'weak-assist-query' => const <double>[0, 1],
+      'weak-assist-tag' => _vectorFromYAxisCosine(0.91),
+      'password-only-value' => const <double>[-1, 0],
+      _ => const <double>[0, -1],
     };
     if (text != 'alice@example.test' && text != 'password-only-value') {
       indexedTexts.add(text);
     } else if (text == 'alice@example.test' && !indexedTexts.contains(text)) {
       indexedTexts.add(text);
     }
-    final perpendicular = math.sqrt((1 - similarity * similarity).abs());
-    return EmbeddingVector(
-      values: <double>[similarity, perpendicular],
-      tokenCount: 1,
-    );
+    return EmbeddingVector(values: values, tokenCount: 1);
+  }
+
+  List<double> _vectorFromXAxisCosine(double cosine) {
+    return <double>[cosine, math.sqrt((1 - cosine * cosine).abs())];
+  }
+
+  List<double> _vectorFromYAxisCosine(double cosine) {
+    return <double>[math.sqrt((1 - cosine * cosine).abs()), cosine];
   }
 
   @override

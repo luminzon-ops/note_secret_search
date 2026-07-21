@@ -16,6 +16,7 @@ import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((
   ref,
@@ -81,11 +82,16 @@ final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
       }
 
       final configuration = await ref.watch(searchConfigurationProvider.future);
+      final vault = await ref.watch(defaultVaultProvider.future);
+      if (vault == null) {
+        return const <SearchResultItem>[];
+      }
       final secrets = await ref.watch(secretListProvider.future);
       final notes = await ref.watch(noteListProvider.future);
       return ref
           .watch(searchServiceProvider)
           .search(
+            activeVaultId: vault.id,
             query: query,
             configuration: configuration,
             secrets: secrets,
@@ -156,6 +162,10 @@ final semanticSearchResultsProvider =
           final configuration = await ref.watch(
             searchConfigurationProvider.future,
           );
+          final vault = await ref.watch(defaultVaultProvider.future);
+          if (vault == null) {
+            return const <SemanticSearchResult>[];
+          }
           final secrets = await ref.watch(secretListProvider.future);
           final notes = await ref.watch(noteListProvider.future);
           final modelRevisionHash = await ref.watch(
@@ -166,6 +176,7 @@ final semanticSearchResultsProvider =
           return ref
               .watch(semanticSearchServiceProvider)
               .search(
+                activeVaultId: vault.id,
                 query: query,
                 configuration: configuration,
                 modelRevisionHash: modelRevisionHash,

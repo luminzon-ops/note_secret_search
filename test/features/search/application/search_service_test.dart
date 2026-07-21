@@ -15,6 +15,7 @@ void main() {
     final service = SearchService(cryptoService: crypto);
 
     final results = service.search(
+      activeVaultId: 'default',
       query: 'vault',
       configuration: _configuration(includeTitle: true),
       secrets: <SecretItem>[_secret(title: 'Vault login')],
@@ -56,6 +57,7 @@ void main() {
     final service = SearchService(cryptoService: crypto);
 
     final results = service.search(
+      activeVaultId: 'default',
       query: 'alice',
       configuration: _configuration(includeUsername: true),
       secrets: <SecretItem>[_secret(title: 'Account')],
@@ -74,6 +76,33 @@ void main() {
       <String>['secret_items/secret-1/username_ciphertext'],
     );
   });
+
+  test(
+    'keyword search rejects deleted and other-vault sources at the service boundary',
+    () {
+      final crypto = _RecordingCryptoService();
+      final service = SearchService(cryptoService: crypto);
+
+      final results = service.search(
+        activeVaultId: 'default',
+        query: 'vault',
+        configuration: _configuration(includeTitle: true),
+        secrets: <SecretItem>[
+          _secret(title: 'Vault live', id: 'live', vaultId: 'default'),
+          _secret(title: 'Vault other', id: 'other', vaultId: 'other-vault'),
+          _secret(
+            title: 'Vault deleted',
+            id: 'deleted',
+            vaultId: 'default',
+            deletedAt: DateTime(2026, 7, 20),
+          ),
+        ],
+        notes: const <NoteItem>[],
+      );
+
+      expect(results.map((item) => item.id), const <String>['live']);
+    },
+  );
 }
 
 class _RecordingCryptoService implements CryptoService {
@@ -131,11 +160,16 @@ SearchConfiguration _configuration({
   );
 }
 
-SecretItem _secret({required String title}) {
+SecretItem _secret({
+  required String title,
+  String id = 'secret-1',
+  String vaultId = 'default',
+  DateTime? deletedAt,
+}) {
   final now = DateTime(2026, 7, 16);
   return SecretItem(
-    id: 'secret-1',
-    vaultId: 'default',
+    id: id,
+    vaultId: vaultId,
     title: title,
     usernameCiphertext: const <int>[1],
     passwordCiphertext: const <int>[2],
@@ -146,6 +180,7 @@ SecretItem _secret({required String title}) {
     favorite: false,
     createdAt: now,
     updatedAt: now,
+    deletedAt: deletedAt,
   );
 }
 

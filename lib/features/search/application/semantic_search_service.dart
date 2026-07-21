@@ -43,6 +43,7 @@ class SemanticSearchService {
   final SemanticQualityPolicy _qualityPolicy;
 
   Future<List<SemanticSearchResult>> search({
+    required String activeVaultId,
     required String query,
     required SearchConfiguration configuration,
     required String modelRevisionHash,
@@ -69,72 +70,75 @@ class SemanticSearchService {
       return const <SemanticSearchResult>[];
     }
 
+    final scopedSecrets = secrets.where(
+      (secret) => secret.vaultId == activeVaultId && secret.deletedAt == null,
+    );
+    final scopedNotes = notes.where(
+      (note) => note.vaultId == activeVaultId && note.deletedAt == null,
+    );
     final secretById = <String, SecretItem>{
-      for (final secret in secrets) secret.id: secret,
+      for (final secret in scopedSecrets) secret.id: secret,
     };
     final noteById = <String, NoteItem>{
-      for (final note in notes) note.id: note,
+      for (final note in scopedNotes) note.id: note,
     };
-    final vaultIds = <String>{
-      ...secrets.map((secret) => secret.vaultId),
-      ...notes.map((note) => note.vaultId),
-    };
-    if (vaultIds.isEmpty) {
+    if (secretById.isEmpty && noteById.isEmpty) {
       return const <SemanticSearchResult>[];
     }
 
     final candidates = <SemanticSearchResult>[];
     final corruptSetIds = <String>{};
-    for (final vaultId in vaultIds) {
-      final compatibility = _compatibility(
-        vaultId: vaultId,
-        model: activeEmbeddingModel,
-        modelRevisionHash: modelRevisionHash,
-        configuration: configuration,
-      );
-      while (await _repository.purgeIncompatibleIndexSets(
-            compatibility,
-            batchSize: 100,
-          ) ==
-          100) {}
-      String? afterId;
-      while (true) {
-        final page = await _repository.getCompatibleIndexSets(
+    final compatibility = _compatibility(
+      vaultId: activeVaultId,
+      model: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
+    while (await _repository.purgeIncompatibleIndexSets(
           compatibility,
-          afterId: afterId,
-          limit: 100,
+          batchSize: 100,
+        ) ==
+        100) {}
+    String? afterId;
+    while (true) {
+      final page = await _repository.getCompatibleIndexSets(
+        compatibility,
+        afterId: afterId,
+        limit: 100,
+      );
+      if (page.isEmpty) {
+        break;
+      }
+      for (final indexSet in page) {
+        if (indexSet.vaultId != activeVaultId) {
+          continue;
+        }
+        final evaluated = _evaluateGeneration(
+          query: normalizedQuery,
+          queryVector: queryVector.values,
+          indexSet: indexSet,
+          policy: policy,
+          operation: operation,
+          secret: indexSet.sourceKey.type == SearchSourceType.secret
+              ? secretById[indexSet.sourceKey.id]
+              : null,
+          note: indexSet.sourceKey.type == SearchSourceType.note
+              ? noteById[indexSet.sourceKey.id]
+              : null,
         );
-        if (page.isEmpty) {
-          break;
+        if (evaluated.corrupt) {
+          corruptSetIds.add(indexSet.id);
+        } else if (evaluated.result != null) {
+          candidates.add(evaluated.result!);
         }
-        for (final indexSet in page) {
-          final evaluated = _evaluateGeneration(
-            query: normalizedQuery,
-            queryVector: queryVector.values,
-            indexSet: indexSet,
-            policy: policy,
-            operation: operation,
-            secret: indexSet.sourceKey.type == SearchSourceType.secret
-                ? secretById[indexSet.sourceKey.id]
-                : null,
-            note: indexSet.sourceKey.type == SearchSourceType.note
-                ? noteById[indexSet.sourceKey.id]
-                : null,
-          );
-          if (evaluated.corrupt) {
-            corruptSetIds.add(indexSet.id);
-          } else if (evaluated.result != null) {
-            candidates.add(evaluated.result!);
-          }
-        }
-        candidates.sort(_compareCandidates);
-        if (candidates.length > 100) {
-          candidates.removeRange(100, candidates.length);
-        }
-        afterId = page.last.id;
-        if (page.length < 100) {
-          break;
-        }
+      }
+      candidates.sort(_compareCandidates);
+      if (candidates.length > 100) {
+        candidates.removeRange(100, candidates.length);
+      }
+      afterId = page.last.id;
+      if (page.length < 100) {
+        break;
       }
     }
 

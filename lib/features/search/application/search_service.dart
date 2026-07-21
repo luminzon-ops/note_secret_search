@@ -14,6 +14,7 @@ class SearchService {
   final CryptoService _cryptoService;
 
   List<SearchResultItem> search({
+    required String activeVaultId,
     required String query,
     required SearchConfiguration configuration,
     required List<SecretItem> secrets,
@@ -25,8 +26,20 @@ class SearchService {
     }
     final policy = EffectiveSearchPolicy(configuration);
     final results = <SearchResultItem>[
-      ..._searchSecrets(normalizedQuery, policy, secrets),
-      ..._searchNotes(normalizedQuery, policy, notes),
+      ..._searchSecrets(
+        normalizedQuery,
+        policy,
+        secrets.where(
+          (item) => item.vaultId == activeVaultId && item.deletedAt == null,
+        ),
+      ),
+      ..._searchNotes(
+        normalizedQuery,
+        policy,
+        notes.where(
+          (item) => item.vaultId == activeVaultId && item.deletedAt == null,
+        ),
+      ),
     ];
     results.sort(_compareResults);
     return List<SearchResultItem>.unmodifiable(results.take(200));
@@ -35,7 +48,7 @@ class SearchService {
   List<SearchResultItem> _searchSecrets(
     String query,
     EffectiveSearchPolicy policy,
-    List<SecretItem> secrets,
+    Iterable<SecretItem> secrets,
   ) {
     final results = <SearchResultItem>[];
     for (final item in secrets) {
@@ -115,7 +128,7 @@ class SearchService {
   List<SearchResultItem> _searchNotes(
     String query,
     EffectiveSearchPolicy policy,
-    List<NoteItem> notes,
+    Iterable<NoteItem> notes,
   ) {
     final results = <SearchResultItem>[];
     for (final item in notes) {

@@ -2,9 +2,15 @@ import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
+import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 
 class SearchFusionService {
-  const SearchFusionService();
+  const SearchFusionService({
+    SemanticQualityPolicy qualityPolicy =
+        const SemanticQualityPolicy.conservativeMvp(),
+  }) : _qualityPolicy = qualityPolicy;
+
+  final SemanticQualityPolicy _qualityPolicy;
 
   List<SearchResultItem> fuse({
     required List<SearchResultItem> keywordResults,
@@ -157,7 +163,10 @@ class SearchFusionService {
     if (!semanticOnly || _qualityTier(item) >= 2) {
       return true;
     }
-    return (item.semanticScore ?? 0) >= 0.90;
+    return _qualityPolicy.admitsSemanticOnly(
+      fieldQualityTier: _qualityTier(item),
+      aggregateRankingScore: item.semanticScore ?? 0,
+    );
   }
 
   int _sourcePriority(Set<SearchMatchSource> sources) {
