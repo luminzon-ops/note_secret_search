@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
@@ -175,6 +176,110 @@ void main() {
     },
   );
 
+  test(
+    'fingerprint key rotation during embedding rejects the stale generation',
+    () async {
+      final repository = _RecordingEmbeddingIndexRepository();
+      final keyStore = DatabaseSessionKeyStore()
+        ..replace(
+          DatabaseSessionKeys(
+            databaseKey: Uint8List(32),
+            fieldKey: Uint8List(32),
+            keyId: 'root-key-1',
+            searchIndexFingerprintKey: Uint8List.fromList(
+              List<int>.filled(32, 1),
+            ),
+          ),
+        );
+      addTearDown(keyStore.clear);
+      final engine = _CallbackEmbeddingEngine(
+        onFirstEmbed: () {
+          keyStore.replace(
+            DatabaseSessionKeys(
+              databaseKey: Uint8List(32),
+              fieldKey: Uint8List(32),
+              keyId: 'root-key-2',
+              searchIndexFingerprintKey: Uint8List.fromList(
+                List<int>.filled(32, 2),
+              ),
+            ),
+          );
+        },
+      );
+      final service = SearchIndexService(
+        repository: repository,
+        cryptoService: _SearchIndexCryptoService(),
+        embeddingEngine: engine,
+        sessionKeyStore: keyStore,
+      );
+      final configuration = SearchConfiguration.defaults();
+      final status = await service.buildStatus(
+        secrets: <SecretItem>[_secret()],
+        notes: const <NoteItem>[],
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+
+      await expectLater(
+        service.indexPendingItems(
+          items: status.pendingItems,
+          activeEmbeddingModel: _model,
+          modelRevisionHash: 'a' * 64,
+          configuration: configuration,
+        ),
+        throwsA(isA<EmbeddingIndexStaleWriteException>()),
+      );
+      expect(repository.replacements, isEmpty);
+    },
+  );
+
+  test(
+    'configuration or model fence invalidation rejects an in-flight generation',
+    () async {
+      final repository = _RecordingEmbeddingIndexRepository();
+      final keyStore = DatabaseSessionKeyStore()
+        ..replace(
+          DatabaseSessionKeys(
+            databaseKey: Uint8List(32),
+            fieldKey: Uint8List(32),
+            keyId: 'root-key-1',
+            searchIndexFingerprintKey: Uint8List(32),
+          ),
+        );
+      addTearDown(keyStore.clear);
+      final writeFence = SearchIndexWriteFence();
+      final service = SearchIndexService(
+        repository: repository,
+        cryptoService: _SearchIndexCryptoService(),
+        embeddingEngine: _CallbackEmbeddingEngine(
+          onFirstEmbed: writeFence.invalidate,
+        ),
+        sessionKeyStore: keyStore,
+        writeFence: writeFence,
+      );
+      final configuration = SearchConfiguration.defaults();
+      final status = await service.buildStatus(
+        secrets: <SecretItem>[_secret()],
+        notes: const <NoteItem>[],
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+
+      await expectLater(
+        service.indexPendingItems(
+          items: status.pendingItems,
+          activeEmbeddingModel: _model,
+          modelRevisionHash: 'a' * 64,
+          configuration: configuration,
+        ),
+        throwsA(isA<EmbeddingIndexStaleWriteException>()),
+      );
+      expect(repository.replacements, isEmpty);
+    },
+  );
+
   test('index status reads generation headers in 200-source batches', () async {
     final repository = _BatchHeaderRepository();
     final keyStore = DatabaseSessionKeyStore()
@@ -279,6 +384,32 @@ class _RecordingEmbeddingEngine implements EmbeddingEngine {
   @override
   Future<EmbeddingVector> embed(EmbeddingRequest request) async {
     texts.add(request.text);
+    return const EmbeddingVector(values: <double>[1, 0], tokenCount: 1);
+  }
+
+  @override
+  Future<EmbeddingEngineState> getState(ModelRegistryEntry model) async {
+    return const EmbeddingEngineState(
+      ready: true,
+      reason: 'ready',
+      status: EmbeddingRuntimeStatus.ready,
+      vectorDimension: 2,
+    );
+  }
+}
+
+class _CallbackEmbeddingEngine implements EmbeddingEngine {
+  _CallbackEmbeddingEngine({required this.onFirstEmbed});
+
+  final void Function() onFirstEmbed;
+  var _called = false;
+
+  @override
+  Future<EmbeddingVector> embed(EmbeddingRequest request) async {
+    if (!_called) {
+      _called = true;
+      onFirstEmbed();
+    }
     return const EmbeddingVector(values: <double>[1, 0], tokenCount: 1);
   }
 

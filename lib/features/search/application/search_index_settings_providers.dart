@@ -3,6 +3,7 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/storage/database/sqlite_protected_configuration_repository.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration_repository.dart';
@@ -62,6 +63,7 @@ class SearchIndexSettingsController {
   final Ref _ref;
 
   Future<void> update(SearchIndexSettings settings) async {
+    _ref.read(searchIndexWriteFenceProvider).invalidate();
     final current = await _ref.read(searchConfigurationProvider.future);
     final repository = await _ref.read(
       searchConfigurationRepositoryProvider.future,

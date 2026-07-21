@@ -22,12 +22,15 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
   SqliteModelLifecycleStore({
     required AppDatabase database,
     ModelLifecycleCheckpointCallback? checkpoint,
+    void Function()? beforeMutation,
   }) : _database = database,
        _checkpoint = checkpoint,
+       _beforeMutation = beforeMutation,
        _registryRepository = SqliteModelRegistryRepository(database: database);
 
   final AppDatabase _database;
   final ModelLifecycleCheckpointCallback? _checkpoint;
+  final void Function()? _beforeMutation;
   final SqliteModelRegistryRepository _registryRepository;
 
   @override
@@ -36,6 +39,7 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
     required List<ModelDownloadTask> completedTasks,
   }) {
     _validateInstallation(registryEntry, completedTasks);
+    _beforeMutation?.call();
     return _database.transaction((executor) async {
       await _upsertRegistry(executor, registryEntry);
       await _notify(ModelLifecycleCheckpoint.registryWritten);
@@ -55,6 +59,7 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
   @override
   Future<void> purgeModelData(String modelId) {
     _validateModelId(modelId);
+    _beforeMutation?.call();
     return _database.transaction((executor) async {
       await executor.delete(
         DatabaseSchema.embeddingIndexSets,

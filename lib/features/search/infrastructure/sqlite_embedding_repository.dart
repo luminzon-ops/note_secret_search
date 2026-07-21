@@ -20,6 +20,7 @@ typedef EmbeddingReplacementCheckpointCallback =
 class SqliteEmbeddingRepository
     implements
         EmbeddingIndexRepository,
+        GuardedEmbeddingIndexRepository,
         EmbeddingIndexHeaderRepository,
         EmbeddingIndexCorpusRepository {
   SqliteEmbeddingRepository({
@@ -103,17 +104,36 @@ class SqliteEmbeddingRepository
 
   @override
   Future<bool> replaceIndexSet(EmbeddingIndexSet indexSet) {
+    return _replaceIndexSet(indexSet);
+  }
+
+  @override
+  Future<bool> replaceIndexSetGuarded(
+    EmbeddingIndexSet indexSet, {
+    required EmbeddingIndexWriteValidator validate,
+  }) {
+    return _replaceIndexSet(indexSet, validate: validate);
+  }
+
+  Future<bool> _replaceIndexSet(
+    EmbeddingIndexSet indexSet, {
+    EmbeddingIndexWriteValidator? validate,
+  }) {
     return _database.transaction((database) async {
+      validate?.call();
       await _validateOwners(database, indexSet);
+      validate?.call();
       final existing = await _loadIndexSet(
         database,
         indexSet.sourceKey,
         indexSet.modelId,
       );
       if (existing != null && _sameGeneration(existing, indexSet)) {
+        validate?.call();
         return false;
       }
 
+      validate?.call();
       await database.delete(
         DatabaseSchema.embeddingIndexSets,
         where: 'source_type = ? AND source_id = ?',
@@ -123,16 +143,19 @@ class SqliteEmbeddingRepository
         ],
       );
       await _checkpoint(EmbeddingReplacementCheckpoint.oldGenerationDeleted);
+      validate?.call();
       await database.insert(
         DatabaseSchema.embeddingIndexSets,
         _indexSetRow(indexSet),
       );
       await _checkpoint(EmbeddingReplacementCheckpoint.indexSetInserted);
+      validate?.call();
 
       for (final chunk in indexSet.chunks) {
         await database.insert(DatabaseSchema.embeddingChunks, _chunkRow(chunk));
       }
       await _checkpoint(EmbeddingReplacementCheckpoint.chunksInserted);
+      validate?.call();
 
       final count = await database.rawQuery(
         'SELECT COUNT(*) AS count FROM ${DatabaseSchema.embeddingChunks} '
@@ -142,6 +165,7 @@ class SqliteEmbeddingRepository
       if (count.single['count'] != indexSet.chunkCount) {
         throw StateError('Embedding generation chunk count mismatch.');
       }
+      validate?.call();
       return true;
     });
   }

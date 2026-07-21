@@ -80,6 +80,7 @@ extension _SearchIndexCorpusOperations on SearchIndexService {
     required ModelRegistryEntry activeEmbeddingModel,
     required String modelRevisionHash,
     required SearchConfiguration configuration,
+    required _SearchIndexWriteContext writeContext,
   }) async {
     if (!configuration.allowLocalEmbedding) {
       await _purgeAllIndexSets();
@@ -109,6 +110,7 @@ extension _SearchIndexCorpusOperations on SearchIndexService {
         activeEmbeddingModel: activeEmbeddingModel,
         modelRevisionHash: modelRevisionHash,
         configuration: configuration,
+        writeContext: writeContext,
       );
     }
 

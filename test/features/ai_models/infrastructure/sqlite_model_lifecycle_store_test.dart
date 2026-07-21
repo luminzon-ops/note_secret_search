@@ -9,6 +9,26 @@ import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_mode
 import '../../../support/sqlite_test_database.dart';
 
 void main() {
+  test('model lifecycle mutations invalidate in-flight index writes', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    var invalidations = 0;
+    final store = SqliteModelLifecycleStore(
+      database: database,
+      beforeMutation: () => invalidations += 1,
+    );
+
+    await store.commitInstallation(
+      registryEntry: _registryEntry(),
+      completedTasks: <ModelDownloadTask>[
+        _completedTask(id: 'task-fence', sourceId: 'source-fence'),
+      ],
+    );
+    await store.purgeModelData('model-1');
+
+    expect(invalidations, 2);
+  });
+
   test('installation is atomic and idempotent', () async {
     final database = await openTestAppDatabase();
     addTearDown(database.close);

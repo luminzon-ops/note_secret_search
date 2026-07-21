@@ -7,10 +7,14 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 
 class SqliteModelRegistryRepository implements ModelRegistryRepository {
-  SqliteModelRegistryRepository({required AppDatabase database})
-    : _database = database;
+  SqliteModelRegistryRepository({
+    required AppDatabase database,
+    void Function()? beforeMutation,
+  }) : _database = database,
+       _beforeMutation = beforeMutation;
 
   final AppDatabase _database;
+  final void Function()? _beforeMutation;
 
   @override
   Future<ModelRegistryEntry?> getById(String id) {
@@ -32,6 +36,7 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
 
   @override
   Future<void> deleteById(String id) {
+    _beforeMutation?.call();
     return _database.run((db) async {
       await db.delete(
         DatabaseSchema.modelRegistry,
@@ -54,6 +59,7 @@ class SqliteModelRegistryRepository implements ModelRegistryRepository {
 
   @override
   Future<void> save(ModelRegistryEntry entry) {
+    _beforeMutation?.call();
     return _database.run((db) async {
       await db.rawInsert(
         '''

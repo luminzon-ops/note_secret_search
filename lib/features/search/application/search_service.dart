@@ -72,7 +72,13 @@ class SearchService {
       }
       _addTopKeywordResults(
         results,
-        _searchSecrets(normalizedQuery, policy, page),
+        _searchSecrets(
+          normalizedQuery,
+          policy,
+          page.where(
+            (item) => item.vaultId == activeVaultId && item.deletedAt == null,
+          ),
+        ),
         normalizedQuery,
       );
       final nextId = page.last.id;
@@ -96,7 +102,13 @@ class SearchService {
       }
       _addTopKeywordResults(
         results,
-        _searchNotes(normalizedQuery, policy, page),
+        _searchNotes(
+          normalizedQuery,
+          policy,
+          page.where(
+            (item) => item.vaultId == activeVaultId && item.deletedAt == null,
+          ),
+        ),
         normalizedQuery,
       );
       final nextId = page.last.id;

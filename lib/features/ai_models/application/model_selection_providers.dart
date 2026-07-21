@@ -4,6 +4,7 @@ import 'package:note_secret_search/features/ai_models/domain/active_model_select
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
@@ -19,6 +20,7 @@ class ActiveModelSelectionController {
   final Ref _ref;
 
   Future<void> setActiveEmbeddingModel(String? modelId) async {
+    _ref.read(searchIndexWriteFenceProvider).invalidate();
     final preferences = await _ref.read(sharedPreferencesProvider.future);
     if (modelId == null || modelId.isEmpty) {
       await preferences.remove(_activeEmbeddingModelIdKey);

@@ -12,6 +12,15 @@ abstract interface class EmbeddingIndexRepository {
   Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey);
 }
 
+typedef EmbeddingIndexWriteValidator = void Function();
+
+abstract interface class GuardedEmbeddingIndexRepository {
+  Future<bool> replaceIndexSetGuarded(
+    EmbeddingIndexSet indexSet, {
+    required EmbeddingIndexWriteValidator validate,
+  });
+}
+
 const int embeddingIndexHeaderBatchSize = 200;
 
 abstract interface class EmbeddingIndexHeaderRepository {

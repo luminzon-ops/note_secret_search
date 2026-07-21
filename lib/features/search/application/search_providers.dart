@@ -7,6 +7,7 @@ import 'package:note_secret_search/features/search/application/search_fusion_ser
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
@@ -65,6 +66,7 @@ final searchIndexServiceProvider = Provider<SearchIndexService>((ref) {
     cryptoService: ref.watch(cryptoServiceProvider),
     embeddingEngine: ref.watch(embeddingEngineProvider),
     sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
+    writeFence: ref.watch(searchIndexWriteFenceProvider),
   );
 });
 
@@ -254,6 +256,7 @@ class SearchScopeController {
   final Ref _ref;
 
   Future<void> update(SearchScopeConfig config) async {
+    _ref.read(searchIndexWriteFenceProvider).invalidate();
     final current = await _ref.read(searchConfigurationProvider.future);
     final repository = await _ref.read(
       searchConfigurationRepositoryProvider.future,

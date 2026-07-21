@@ -18,6 +18,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/io_model_artifact_store.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/onnx_embedding_engine.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';

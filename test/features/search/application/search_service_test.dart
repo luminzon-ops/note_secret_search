@@ -199,6 +199,34 @@ void main() {
       expect(results.first.id, 'secret-299');
     },
   );
+
+  test(
+    'paged keyword search rejects unscoped reader rows at the service boundary',
+    () async {
+      const service = SearchService(cryptoService: _WideCryptoService());
+      final repository = _UnscopedSecretRepository(<SecretItem>[
+        _secret(
+          title: 'Vault deleted',
+          id: 'deleted',
+          deletedAt: DateTime(2026),
+        ),
+        _secret(title: 'Vault live', id: 'live'),
+        _secret(title: 'Vault other', id: 'other', vaultId: 'other-vault'),
+      ]);
+
+      final results = await service.searchCorpus(
+        activeVaultId: 'default',
+        query: 'vault',
+        configuration: _configuration(includeTitle: true),
+        corpus: SearchCorpusReader(
+          secretRepository: repository,
+          noteRepository: _EmptyNoteRepository(),
+        ),
+      );
+
+      expect(results.map((item) => item.id), const <String>['live']);
+    },
+  );
 }
 
 class _RecordingCryptoService implements CryptoService {
@@ -302,6 +330,33 @@ class _EmptyNoteRepository implements NoteRepository, NoteSearchReader {
   @override
   Future<List<NoteItem>> listByVault(String vaultId) {
     throw StateError('unbounded note load');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _UnscopedSecretRepository
+    implements SecretRepository, SecretSearchReader {
+  _UnscopedSecretRepository(this.items);
+
+  final List<SecretItem> items;
+
+  @override
+  Future<List<SecretItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = searchSourcePageSize,
+  }) async {
+    return items
+        .where((item) => afterId == null || item.id.compareTo(afterId) > 0)
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<SecretItem>> listByVault(String vaultId) {
+    throw StateError('unbounded secret load');
   }
 
   @override

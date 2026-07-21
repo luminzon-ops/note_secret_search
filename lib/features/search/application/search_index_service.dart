@@ -9,6 +9,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_index_chunker.dart';
 import 'package:note_secret_search/features/search/application/search_index_projector.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
@@ -30,6 +31,7 @@ class SearchIndexService {
     required CryptoService cryptoService,
     required EmbeddingEngine embeddingEngine,
     DatabaseSessionKeyStore? sessionKeyStore,
+    SearchIndexWriteFence? writeFence,
     SearchIndexChunker chunker = const SearchIndexChunker(),
     DateTime Function()? clock,
   }) : _repository = repository,
@@ -41,6 +43,7 @@ class SearchIndexService {
        _projector = SearchIndexProjector(cryptoService: cryptoService),
        _embeddingEngine = embeddingEngine,
        _sessionKeyStore = sessionKeyStore,
+       _writeFence = writeFence,
        _chunker = chunker,
        _clock = clock ?? DateTime.now;
 
@@ -49,6 +52,7 @@ class SearchIndexService {
   final SearchIndexProjector _projector;
   final EmbeddingEngine _embeddingEngine;
   final DatabaseSessionKeyStore? _sessionKeyStore;
+  final SearchIndexWriteFence? _writeFence;
   final SearchIndexChunker _chunker;
   final DateTime Function() _clock;
 
@@ -146,12 +150,14 @@ class SearchIndexService {
     required String modelRevisionHash,
     required SearchConfiguration configuration,
   }) {
+    final writeContext = _captureWriteContext();
     return _indexCorpusPending(
       activeVaultId: activeVaultId,
       corpus: corpus,
       activeEmbeddingModel: activeEmbeddingModel,
       modelRevisionHash: modelRevisionHash,
       configuration: configuration,
+      writeContext: writeContext,
     );
   }
 
@@ -161,11 +167,13 @@ class SearchIndexService {
     required String modelRevisionHash,
     required SearchConfiguration configuration,
   }) async {
+    final writeContext = _captureWriteContext();
     await _replacePendingItems(
       items: items,
       activeEmbeddingModel: activeEmbeddingModel,
       modelRevisionHash: modelRevisionHash,
       configuration: configuration,
+      writeContext: writeContext,
     );
   }
 
@@ -174,9 +182,11 @@ class SearchIndexService {
     required ModelRegistryEntry activeEmbeddingModel,
     required String modelRevisionHash,
     required SearchConfiguration configuration,
+    required _SearchIndexWriteContext writeContext,
   }) async {
     var replacementCount = 0;
     for (final item in items) {
+      _validateWriteContext(writeContext);
       final document = item.document;
       if (document == null ||
           item.configurationEpoch != configuration.configurationEpoch ||
@@ -201,7 +211,9 @@ class SearchIndexService {
           throw StateError('Embedding vector dimensions are inconsistent.');
         }
         vectorDimension = dimension;
+        _validateWriteContext(writeContext);
         final chunkFingerprint = _withFingerprintKey(
+          writeContext.sessionKeys,
           (key) => chunkFingerprintBytes(
             key: key,
             sourceType: document.sourceKey.type.name,
@@ -224,28 +236,31 @@ class SearchIndexService {
           ),
         );
       }
-      final sourceFingerprint = _sourceFingerprint(document);
-      final replaced = await _repository.replaceIndexSet(
-        EmbeddingIndexSet(
-          id: setId,
-          sourceKey: document.sourceKey,
-          vaultId: document.vaultId,
-          modelId: activeEmbeddingModel.id,
-          modelRevisionHash: modelRevisionHash,
-          sourceUpdatedAt: document.updatedAt,
-          sourceFingerprint: sourceFingerprint,
-          fingerprintKeyId: _keys.requireCurrent().requireKeyId(),
-          fingerprintVersion: searchIndexFingerprintVersion,
-          indexConfigVersion: searchIndexConfigurationVersion,
-          indexConfigEpoch: configuration.configurationEpoch,
-          indexConfigHash: searchIndexConfigurationHash(configuration),
-          chunkSchemaVersion: 1,
-          vectorFormatVersion: float32VectorFormatVersion,
-          vectorDimension: vectorDimension ?? 0,
-          chunks: embeddedChunks,
-          createdAt: now,
-        ),
+      _validateWriteContext(writeContext);
+      final sourceFingerprint = _sourceFingerprint(
+        document,
+        writeContext.sessionKeys,
       );
+      final indexSet = EmbeddingIndexSet(
+        id: setId,
+        sourceKey: document.sourceKey,
+        vaultId: document.vaultId,
+        modelId: activeEmbeddingModel.id,
+        modelRevisionHash: modelRevisionHash,
+        sourceUpdatedAt: document.updatedAt,
+        sourceFingerprint: sourceFingerprint,
+        fingerprintKeyId: writeContext.sessionKeys.requireKeyId(),
+        fingerprintVersion: searchIndexFingerprintVersion,
+        indexConfigVersion: searchIndexConfigurationVersion,
+        indexConfigEpoch: configuration.configurationEpoch,
+        indexConfigHash: searchIndexConfigurationHash(configuration),
+        chunkSchemaVersion: 1,
+        vectorFormatVersion: float32VectorFormatVersion,
+        vectorDimension: vectorDimension ?? 0,
+        chunks: embeddedChunks,
+        createdAt: now,
+      );
+      final replaced = await _replaceIndexSet(indexSet, writeContext);
       if (replaced) {
         replacementCount += 1;
       }
@@ -330,8 +345,12 @@ class SearchIndexService {
     }
   }
 
-  List<int> _sourceFingerprint(SearchIndexDocument document) {
+  List<int> _sourceFingerprint(
+    SearchIndexDocument document, [
+    DatabaseSessionKeys? sessionKeys,
+  ]) {
     return _withFingerprintKey(
+      sessionKeys ?? _keys.requireCurrent(),
       (key) => structuredSourceFingerprintBytes(
         key: key,
         sourceType: document.sourceKey.type.name,
@@ -344,8 +363,54 @@ class SearchIndexService {
     );
   }
 
-  T _withFingerprintKey<T>(T Function(Uint8List key) consume) {
-    return _keys.requireCurrent().withSearchIndexFingerprintKey(consume);
+  T _withFingerprintKey<T>(
+    DatabaseSessionKeys sessionKeys,
+    T Function(Uint8List key) consume,
+  ) {
+    return sessionKeys.withSearchIndexFingerprintKey(consume);
+  }
+
+  void _validateSessionKeys(DatabaseSessionKeys expected) {
+    DatabaseSessionKeys current;
+    try {
+      current = _keys.requireCurrent();
+    } on StateError {
+      throw const EmbeddingIndexStaleWriteException();
+    }
+    if (!identical(current, expected) || expected.isCleared) {
+      throw const EmbeddingIndexStaleWriteException();
+    }
+  }
+
+  _SearchIndexWriteContext _captureWriteContext() {
+    return _SearchIndexWriteContext(
+      sessionKeys: _keys.requireCurrent(),
+      fenceRevision: _writeFence?.revision,
+    );
+  }
+
+  void _validateWriteContext(_SearchIndexWriteContext context) {
+    _validateSessionKeys(context.sessionKeys);
+    final revision = context.fenceRevision;
+    if (revision != null) {
+      _writeFence!.validate(revision);
+    }
+  }
+
+  Future<bool> _replaceIndexSet(
+    EmbeddingIndexSet indexSet,
+    _SearchIndexWriteContext writeContext,
+  ) {
+    final repository = _repository;
+    if (repository is GuardedEmbeddingIndexRepository) {
+      final guardedRepository = repository as GuardedEmbeddingIndexRepository;
+      return guardedRepository.replaceIndexSetGuarded(
+        indexSet,
+        validate: () => _validateWriteContext(writeContext),
+      );
+    }
+    _validateWriteContext(writeContext);
+    return repository.replaceIndexSet(indexSet);
   }
 
   DatabaseSessionKeyStore get _keys {
@@ -391,4 +456,14 @@ class SearchIndexService {
     }
     while (await repository.purgeAllIndexSets(batchSize: 100) == 100) {}
   }
+}
+
+class _SearchIndexWriteContext {
+  const _SearchIndexWriteContext({
+    required this.sessionKeys,
+    required this.fenceRevision,
+  });
+
+  final DatabaseSessionKeys sessionKeys;
+  final int? fenceRevision;
 }

@@ -10,6 +10,7 @@ import 'package:note_secret_search/features/ai_models/domain/active_model_select
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 
@@ -293,5 +294,24 @@ void main() {
 
     expect(model?.id, 'llm-1');
     expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
+  });
+
+  test('changing the active embedding model invalidates index writes', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final container = ProviderContainer(
+      overrides: <Override>[
+        sharedPreferencesProvider.overrideWith(
+          (ref) async => SharedPreferences.getInstance(),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final writeFence = container.read(searchIndexWriteFenceProvider);
+
+    await container
+        .read(activeModelSelectionControllerProvider)
+        .setActiveEmbeddingModel('embed-1');
+
+    expect(writeFence.revision, 1);
   });
 }

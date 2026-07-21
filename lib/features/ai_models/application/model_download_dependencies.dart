@@ -13,11 +13,15 @@ final modelRegistryRepositoryProvider = Provider<ModelRegistryRepository>((
 ) {
   return SqliteModelRegistryRepository(
     database: ref.watch(appDatabaseProvider),
+    beforeMutation: ref.watch(searchIndexWriteFenceProvider).invalidate,
   );
 });
 
 final modelLifecycleStoreProvider = Provider<ModelLifecycleStore>((ref) {
-  return SqliteModelLifecycleStore(database: ref.watch(appDatabaseProvider));
+  return SqliteModelLifecycleStore(
+    database: ref.watch(appDatabaseProvider),
+    beforeMutation: ref.watch(searchIndexWriteFenceProvider).invalidate,
+  );
 });
 
 final modelArtifactStoreProvider = Provider<ModelArtifactStore>((ref) {

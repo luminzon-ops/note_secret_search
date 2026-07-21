@@ -48,6 +48,38 @@ void main() {
     expect(decodeModelArtifactPathsFromSqlite(''), isEmpty);
   });
 
+  test('registry mutations invalidate in-flight index writes', () async {
+    final database = await openTestAppDatabase();
+    addTearDown(database.close);
+    var invalidations = 0;
+    final repository = SqliteModelRegistryRepository(
+      database: database,
+      beforeMutation: () => invalidations += 1,
+    );
+    const entry = ModelRegistryEntry(
+      id: 'model-fence',
+      type: 'embedding',
+      provider: 'local',
+      name: 'Fence model',
+      version: '1',
+      sizeBytes: 10,
+      quantization: null,
+      minRamMb: null,
+      recommendedTier: null,
+      localPath: '/models/fence.onnx',
+      checksum: null,
+      enabled: true,
+      installedAt: null,
+      filePresent: true,
+      integrityStatus: ModelIntegrityStatus.valid,
+    );
+
+    await repository.save(entry);
+    await repository.deleteById(entry.id);
+
+    expect(invalidations, 2);
+  });
+
   test('updating a model registry row preserves its embeddings', () async {
     final database = await openTestAppDatabase();
     addTearDown(database.close);
