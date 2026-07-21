@@ -77,11 +77,8 @@ class SqliteEmbeddingCorpusRepository
       final rows = await database.query(
         DatabaseSchema.embeddingIndexSets,
         columns: const <String>['id'],
-        where: 'vault_id = ? AND NOT (${predicate.sql})',
-        whereArgs: <Object>[
-          compatibility.vaultId,
-          ...predicate.arguments,
-        ],
+        where: 'NOT (${predicate.sql})',
+        whereArgs: predicate.arguments,
         orderBy: 'id ASC',
         limit: batchSize,
       );
