@@ -110,7 +110,7 @@ void main() {
   test(
     'keyword candidate cap preserves high-affinity username hits after 200 results',
     () {
-      final service = SearchService(cryptoService: const _WideCryptoService());
+      const service = SearchService(cryptoService: _WideCryptoService());
       final now = DateTime(2026, 7, 20);
       final secrets = <SecretItem>[
         for (var index = 0; index < 200; index++)
@@ -179,7 +179,7 @@ void main() {
           updatedAt: now.subtract(const Duration(days: 1)),
         ),
       ]);
-      final service = SearchService(cryptoService: const _WideCryptoService());
+      const service = SearchService(cryptoService: _WideCryptoService());
 
       final results = await service.searchCorpus(
         activeVaultId: 'default',

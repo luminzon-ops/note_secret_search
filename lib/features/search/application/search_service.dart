@@ -76,7 +76,7 @@ class SearchService {
         normalizedQuery,
       );
       final nextId = page.last.id;
-      if (afterSecretId != null && nextId.compareTo(afterSecretId!) <= 0) {
+      if (afterSecretId != null && nextId.compareTo(afterSecretId) <= 0) {
         throw StateError('Secret search corpus page cursor did not advance.');
       }
       afterSecretId = nextId;
@@ -100,7 +100,7 @@ class SearchService {
         normalizedQuery,
       );
       final nextId = page.last.id;
-      if (afterNoteId != null && nextId.compareTo(afterNoteId!) <= 0) {
+      if (afterNoteId != null && nextId.compareTo(afterNoteId) <= 0) {
         throw StateError('Note search corpus page cursor did not advance.');
       }
       afterNoteId = nextId;

@@ -326,7 +326,7 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
       : '字段分布：${fieldCounts.entries.map((entry) => '${_semanticFieldObservabilityLabel(entry.key)} ${entry.value} 条').join('，')}。';
   final diagnostics =
       fusionDiagnostics ??
-      SearchFusionService().diagnoseFinalResults(
+      const SearchFusionService().diagnoseFinalResults(
         unifiedResults: unifiedResults,
         semanticResults: semanticResults,
       );

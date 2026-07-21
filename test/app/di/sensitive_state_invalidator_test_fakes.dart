@@ -343,13 +343,13 @@ class _SensitiveSemanticSearchService extends SemanticSearchService {
   var searchReads = 0;
 
   @override
-  Future<List<SemanticSearchResult>> search({
+  Future<List<SemanticSearchResult>> searchCorpus({
+    required String activeVaultId,
     required String query,
     required SearchConfiguration configuration,
     required String modelRevisionHash,
     required ModelRegistryEntry activeEmbeddingModel,
-    required List<SecretItem> secrets,
-    required List<NoteItem> notes,
+    required SearchCorpusReader corpus,
     SearchOperation operation = SearchOperation.semanticSearch,
   }) async {
     searchReads++;

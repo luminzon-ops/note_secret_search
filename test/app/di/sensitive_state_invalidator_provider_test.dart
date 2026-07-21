@@ -47,6 +47,7 @@ import 'package:note_secret_search/features/search/domain/embedding_index_reposi
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';

@@ -1,5 +1,4 @@
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
-import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
