@@ -13,6 +13,7 @@ import 'package:note_secret_search/features/search/domain/embedding_index_reposi
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 void main() {
@@ -102,6 +103,39 @@ void main() {
       expect(results.single.hitSummary, contains('账号'));
     },
   );
+
+  test('multi-chunk evidence summarizes the exact matched chunk', () async {
+    final body = '${'A' * 160}SECOND-MATCH';
+    final repository = _CorpusRepository(<EmbeddingIndexSet>[
+      _set(
+        sourceKey: const SearchSourceKey.note('note-late-chunk'),
+        chunks: <({SearchSourceField field, List<double> vector})>[
+          (field: SearchSourceField.noteBody, vector: const <double>[0, 1]),
+          (field: SearchSourceField.noteBody, vector: const <double>[1, 0]),
+        ],
+      ),
+    ]);
+    final service = _service(repository);
+
+    final results = await service.search(
+      query: 'query',
+      configuration: SearchConfiguration.defaults().copyWith(
+        maxChunkLength: 160,
+      ),
+      modelRevisionHash: 'a' * 64,
+      activeEmbeddingModel: _model,
+      secrets: const <SecretItem>[],
+      notes: <NoteItem>[_note('note-late-chunk', body: body)],
+    );
+
+    expect(results, hasLength(1));
+    expect(results.single.evidence.first.fieldChunkIndex, 1);
+    expect(results.single.evidence.first.summary, contains('SECOND-MATCH'));
+    expect(results.single.evidence.first.summary, isNot(contains('AAAAA')));
+    expect(results.single.item.matchSources, const <SearchMatchSource>{
+      SearchMatchSource.semantic,
+    });
+  });
 
   test('corrupt generation is purged without hiding valid results', () async {
     final corrupt = _set(
@@ -341,6 +375,29 @@ EmbeddingIndexSet _set({
   Uint8List? overrideBlob,
 }) {
   final id = 'set-${sourceKey.type.name}-${sourceKey.id}';
+  final fieldCounts = <SearchSourceField, int>{};
+  final storedChunks = <EmbeddingChunk>[];
+  for (var index = 0; index < chunks.length; index++) {
+    final field = chunks[index].field;
+    final fieldChunkIndex = fieldCounts.update(
+      field,
+      (value) => value + 1,
+      ifAbsent: () => 0,
+    );
+    storedChunks.add(
+      EmbeddingChunk(
+        id: '$id-$index',
+        indexSetId: id,
+        sourceField: field,
+        fieldChunkIndex: fieldChunkIndex,
+        chunkFingerprint: Uint8List(32),
+        vectorBlob:
+            overrideBlob ?? Float32VectorCodec.encode(chunks[index].vector),
+        tokenCount: 1,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(1),
+      ),
+    );
+  }
   return EmbeddingIndexSet(
     id: id,
     sourceKey: sourceKey,
@@ -357,20 +414,7 @@ EmbeddingIndexSet _set({
     chunkSchemaVersion: 1,
     vectorFormatVersion: 1,
     vectorDimension: 2,
-    chunks: <EmbeddingChunk>[
-      for (var index = 0; index < chunks.length; index++)
-        EmbeddingChunk(
-          id: '$id-$index',
-          indexSetId: id,
-          sourceField: chunks[index].field,
-          fieldChunkIndex: index,
-          chunkFingerprint: Uint8List(32),
-          vectorBlob:
-              overrideBlob ?? Float32VectorCodec.encode(chunks[index].vector),
-          tokenCount: 1,
-          createdAt: DateTime.fromMillisecondsSinceEpoch(1),
-        ),
-    ],
+    chunks: storedChunks,
     createdAt: DateTime.fromMillisecondsSinceEpoch(1),
   );
 }
@@ -404,13 +448,13 @@ SecretItem _secret(String id) {
   );
 }
 
-NoteItem _note(String id) {
+NoteItem _note(String id, {String body = 'Body text'}) {
   final now = DateTime.fromMillisecondsSinceEpoch(1);
   return NoteItem(
     id: id,
     vaultId: 'vault-1',
     title: 'Title $id',
-    contentCiphertext: 'Body text'.codeUnits,
+    contentCiphertext: body.codeUnits,
     summaryCacheCiphertext: 'Summary text'.codeUnits,
     tags: const <String>['work'],
     categoryId: null,

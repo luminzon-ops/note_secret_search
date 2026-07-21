@@ -5,6 +5,8 @@ import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/search_index_fingerprint.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/search/application/search_index_chunker.dart';
+import 'package:note_secret_search/features/search/application/search_index_projector.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
@@ -18,23 +20,26 @@ import 'package:note_secret_search/features/search/domain/semantic_search_result
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 class SemanticSearchService {
-  const SemanticSearchService({
+  SemanticSearchService({
     required EmbeddingIndexCorpusRepository repository,
     required EmbeddingEngine embeddingEngine,
     required CryptoService cryptoService,
     DatabaseSessionKeyStore? sessionKeyStore,
+    SearchIndexChunker chunker = const SearchIndexChunker(),
     SemanticQualityPolicy qualityPolicy =
         const SemanticQualityPolicy.conservativeMvp(),
   }) : _repository = repository,
        _embeddingEngine = embeddingEngine,
-       _cryptoService = cryptoService,
+       _projector = SearchIndexProjector(cryptoService: cryptoService),
        _sessionKeyStore = sessionKeyStore,
+       _chunker = chunker,
        _qualityPolicy = qualityPolicy;
 
   final EmbeddingIndexCorpusRepository _repository;
   final EmbeddingEngine _embeddingEngine;
-  final CryptoService _cryptoService;
+  final SearchIndexProjector _projector;
   final DatabaseSessionKeyStore? _sessionKeyStore;
+  final SearchIndexChunker _chunker;
   final SemanticQualityPolicy _qualityPolicy;
 
   Future<List<SemanticSearchResult>> search({
@@ -161,7 +166,15 @@ class SemanticSearchService {
       return const _EvaluatedGeneration.corrupt();
     }
 
-    final evidence = <SearchEvidence>[];
+    final scored =
+        <
+          ({
+            EmbeddingChunk chunk,
+            double rawSimilarity,
+            double weight,
+            double threshold,
+          })
+        >[];
     for (final chunk in indexSet.chunks) {
       if (!policy.allows(chunk.sourceField, operation)) {
         continue;
@@ -181,21 +194,36 @@ class SemanticSearchService {
         continue;
       }
       final weight = _qualityPolicy.rankingWeightFor(chunk.sourceField);
+      scored.add((
+        chunk: chunk,
+        rawSimilarity: rawSimilarity,
+        weight: weight,
+        threshold: threshold,
+      ));
+    }
+    if (scored.isEmpty) {
+      return const _EvaluatedGeneration.empty();
+    }
+
+    final chunkTexts = _chunkTexts(policy: policy, secret: secret, note: note);
+    final evidence = <SearchEvidence>[];
+    for (final score in scored) {
+      final chunk = score.chunk;
+      final text =
+          chunkTexts[_coordinate(chunk.sourceField, chunk.fieldChunkIndex)];
+      if (text == null) {
+        return const _EvaluatedGeneration.corrupt();
+      }
       evidence.add(
         SearchEvidence(
           kind: SearchEvidenceKind.semantic,
           sourceField: chunk.sourceField,
           fieldChunkIndex: chunk.fieldChunkIndex,
-          summary: _summaryFor(
-            chunk.sourceField,
-            chunk.fieldChunkIndex,
-            secret: secret,
-            note: note,
-          ),
-          rawSimilarity: rawSimilarity,
-          weight: weight,
-          rankingScore: rawSimilarity * weight,
-          threshold: threshold,
+          summary: _summaryFor(chunk.sourceField, text),
+          rawSimilarity: score.rawSimilarity,
+          weight: score.weight,
+          rankingScore: score.rawSimilarity * score.weight,
+          threshold: score.threshold,
           modelRevisionHash: indexSet.modelRevisionHash,
           fingerprintVersion: indexSet.fingerprintVersion,
           indexConfigVersion: indexSet.indexConfigVersion,
@@ -204,9 +232,6 @@ class SemanticSearchService {
           vectorFormatVersion: indexSet.vectorFormatVersion,
         ),
       );
-    }
-    if (evidence.isEmpty) {
-      return const _EvaluatedGeneration.empty();
     }
     evidence.sort(_compareEvidence);
     final top = evidence.take(2).toList(growable: false);
@@ -271,6 +296,7 @@ class SemanticSearchService {
         tags: secret.tags,
         favorite: secret.favorite,
         updatedAt: secret.updatedAt,
+        matchSources: const <SearchMatchSource>{SearchMatchSource.semantic},
         semanticHitSummary: hitSummary,
         semanticHitField: hitField,
       );
@@ -284,57 +310,41 @@ class SemanticSearchService {
       tags: item.tags,
       favorite: item.favorite,
       updatedAt: item.updatedAt,
+      matchSources: const <SearchMatchSource>{SearchMatchSource.semantic},
       semanticHitSummary: hitSummary,
       semanticHitField: hitField,
     );
   }
 
-  String _summaryFor(
-    SearchSourceField field,
-    int fieldChunkIndex, {
+  Map<String, String> _chunkTexts({
+    required EffectiveSearchPolicy policy,
     required SecretItem? secret,
     required NoteItem? note,
   }) {
+    final document = secret != null
+        ? _projector.projectSecret(secret, policy)
+        : _projector.projectNote(note!, policy);
+    return <String, String>{
+      for (final chunk in _chunker.chunk(
+        document,
+        maxChunkLength: policy.configuration.maxChunkLength,
+      ))
+        _coordinate(chunk.field, chunk.fieldChunkIndex): chunk.text,
+    };
+  }
+
+  String _summaryFor(SearchSourceField field, String text) {
     return switch (field) {
-      SearchSourceField.secretTitle => '标题：${secret!.title}',
-      SearchSourceField.secretUsername =>
-        '账号：${_decrypt(secret!, EncryptedDatabaseField.secretUsername)}',
-      SearchSourceField.secretWebsiteUrl =>
-        '网址：${_decrypt(secret!, EncryptedDatabaseField.secretWebsiteUrl)}',
-      SearchSourceField.secretNote =>
-        '附注：${_truncate(_decrypt(secret!, EncryptedDatabaseField.secretNote))}',
-      SearchSourceField.secretTags =>
-        '标签：${_tagAt(secret!.tags, fieldChunkIndex)}',
-      SearchSourceField.noteTitle => '标题：${note!.title}',
-      SearchSourceField.noteSummary =>
-        '摘要：${_truncate(_decrypt(note!, EncryptedDatabaseField.noteSummary))}',
-      SearchSourceField.noteBody =>
-        '正文：${_truncate(_decrypt(note!, EncryptedDatabaseField.noteContent))}',
-      SearchSourceField.noteTags => '标签：${_tagAt(note!.tags, fieldChunkIndex)}',
+      SearchSourceField.secretTitle ||
+      SearchSourceField.noteTitle => '标题：$text',
+      SearchSourceField.secretUsername => '账号：$text',
+      SearchSourceField.secretWebsiteUrl => '网址：$text',
+      SearchSourceField.secretNote => '附注：${_truncate(text)}',
+      SearchSourceField.secretTags || SearchSourceField.noteTags => '标签：$text',
+      SearchSourceField.noteSummary => '摘要：${_truncate(text)}',
+      SearchSourceField.noteBody => '正文：${_truncate(text)}',
       SearchSourceField.secretPassword => '',
     };
-  }
-
-  String _decrypt(Object item, EncryptedDatabaseField field) {
-    final rowId = item is SecretItem ? item.id : (item as NoteItem).id;
-    final ciphertext = switch (field) {
-      EncryptedDatabaseField.secretUsername =>
-        (item as SecretItem).usernameCiphertext,
-      EncryptedDatabaseField.secretWebsiteUrl =>
-        (item as SecretItem).websiteUrlCiphertext,
-      EncryptedDatabaseField.secretNote => (item as SecretItem).noteCiphertext,
-      EncryptedDatabaseField.noteSummary =>
-        (item as NoteItem).summaryCacheCiphertext,
-      EncryptedDatabaseField.noteContent =>
-        (item as NoteItem).contentCiphertext,
-      _ => null,
-    };
-    return _cryptoService.decryptField(ciphertext, field: field, rowId: rowId);
-  }
-
-  String _tagAt(List<String> tags, int index) {
-    final canonical = canonicalTags(tags);
-    return index < canonical.length ? canonical[index] : '';
   }
 
   String _truncate(String value, {int maxRunes = 72}) {
@@ -344,6 +354,10 @@ class SemanticSearchService {
       return normalized;
     }
     return '${String.fromCharCodes(runes.take(maxRunes))}…';
+  }
+
+  String _coordinate(SearchSourceField field, int fieldChunkIndex) {
+    return '${field.wireName}:$fieldChunkIndex';
   }
 
   double _cosineSimilarity(List<double> left, List<double> right) {
