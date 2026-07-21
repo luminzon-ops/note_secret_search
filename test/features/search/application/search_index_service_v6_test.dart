@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
@@ -11,6 +12,7 @@ import 'package:note_secret_search/features/search/domain/embedding_index_reposi
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 void main() {
@@ -172,6 +174,42 @@ void main() {
       expect(status.pendingItems, isEmpty);
     },
   );
+
+  test('index status reads generation headers in 200-source batches', () async {
+    final repository = _BatchHeaderRepository();
+    final keyStore = DatabaseSessionKeyStore()
+      ..replace(
+        DatabaseSessionKeys(
+          databaseKey: Uint8List(32),
+          fieldKey: Uint8List(32),
+          keyId: 'root-key-1',
+          searchIndexFingerprintKey: Uint8List(32),
+        ),
+      );
+    addTearDown(keyStore.clear);
+    final service = SearchIndexService(
+      repository: repository,
+      cryptoService: _SearchIndexCryptoService(),
+      embeddingEngine: _RecordingEmbeddingEngine(),
+      sessionKeyStore: keyStore,
+    );
+
+    final status = await service.buildStatus(
+      secrets: <SecretItem>[
+        for (var index = 0; index < 401; index++)
+          _secret(id: 'secret-${index.toString().padLeft(3, '0')}'),
+      ],
+      notes: const <NoteItem>[],
+      activeEmbeddingModel: _model,
+      modelRevisionHash: 'a' * 64,
+      configuration: SearchConfiguration.defaults(),
+    );
+
+    expect(status.pendingCount, 401);
+    expect(status.pendingItems, hasLength(searchIndexPendingPreviewLimit));
+    expect(repository.headerBatchSizes, const <int>[200, 200, 1]);
+    expect(repository.fullGenerationReads, 0);
+  });
 }
 
 class _RecordingEmbeddingIndexRepository implements EmbeddingIndexRepository {
@@ -202,6 +240,37 @@ class _RecordingEmbeddingIndexRepository implements EmbeddingIndexRepository {
     current = indexSet;
     return true;
   }
+}
+
+class _BatchHeaderRepository
+    implements EmbeddingIndexRepository, EmbeddingIndexHeaderRepository {
+  final List<int> headerBatchSizes = <int>[];
+  int fullGenerationReads = 0;
+
+  @override
+  Future<Map<SearchSourceKey, EmbeddingIndexSetHeader>>
+  getIndexSetHeadersBySources(
+    Iterable<SearchSourceKey> sourceKeys,
+    String modelId,
+  ) async {
+    headerBatchSizes.add(sourceKeys.length);
+    return const <SearchSourceKey, EmbeddingIndexSetHeader>{};
+  }
+
+  @override
+  Future<EmbeddingIndexSet?> getIndexSetBySource(
+    SearchSourceKey sourceKey,
+    String modelId,
+  ) async {
+    fullGenerationReads++;
+    return null;
+  }
+
+  @override
+  Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey) async {}
+
+  @override
+  Future<bool> replaceIndexSet(EmbeddingIndexSet indexSet) async => true;
 }
 
 class _RecordingEmbeddingEngine implements EmbeddingEngine {
@@ -248,10 +317,10 @@ class _SearchIndexCryptoService implements CryptoService {
   }
 }
 
-SecretItem _secret() {
+SecretItem _secret({String id = 'secret-1'}) {
   final now = DateTime.fromMillisecondsSinceEpoch(1);
   return SecretItem(
-    id: 'secret-1',
+    id: id,
     vaultId: 'default',
     title: 'Example account',
     usernameCiphertext: const <int>[1],

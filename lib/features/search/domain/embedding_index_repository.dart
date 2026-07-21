@@ -12,6 +12,16 @@ abstract interface class EmbeddingIndexRepository {
   Future<void> removeIndexSetsBySource(SearchSourceKey sourceKey);
 }
 
+const int embeddingIndexHeaderBatchSize = 200;
+
+abstract interface class EmbeddingIndexHeaderRepository {
+  Future<Map<SearchSourceKey, EmbeddingIndexSetHeader>>
+  getIndexSetHeadersBySources(
+    Iterable<SearchSourceKey> sourceKeys,
+    String modelId,
+  );
+}
+
 class EmbeddingIndexCompatibility {
   const EmbeddingIndexCompatibility({
     required this.vaultId,

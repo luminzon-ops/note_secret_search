@@ -2,6 +2,68 @@ import 'dart:typed_data';
 
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 
+class EmbeddingIndexSetHeader {
+  EmbeddingIndexSetHeader({
+    required this.id,
+    required this.sourceKey,
+    required this.vaultId,
+    required this.modelId,
+    required this.modelRevisionHash,
+    required this.sourceUpdatedAt,
+    required List<int> sourceFingerprint,
+    required this.fingerprintKeyId,
+    required this.fingerprintVersion,
+    required this.indexConfigVersion,
+    required this.indexConfigEpoch,
+    required this.indexConfigHash,
+    required this.chunkSchemaVersion,
+    required this.vectorFormatVersion,
+    required this.vectorDimension,
+    required this.chunkCount,
+    required this.createdAt,
+  }) : sourceFingerprint = Uint8List.fromList(sourceFingerprint);
+
+  factory EmbeddingIndexSetHeader.fromSet(EmbeddingIndexSet set) {
+    return EmbeddingIndexSetHeader(
+      id: set.id,
+      sourceKey: set.sourceKey,
+      vaultId: set.vaultId,
+      modelId: set.modelId,
+      modelRevisionHash: set.modelRevisionHash,
+      sourceUpdatedAt: set.sourceUpdatedAt,
+      sourceFingerprint: set.sourceFingerprint,
+      fingerprintKeyId: set.fingerprintKeyId,
+      fingerprintVersion: set.fingerprintVersion,
+      indexConfigVersion: set.indexConfigVersion,
+      indexConfigEpoch: set.indexConfigEpoch,
+      indexConfigHash: set.indexConfigHash,
+      chunkSchemaVersion: set.chunkSchemaVersion,
+      vectorFormatVersion: set.vectorFormatVersion,
+      vectorDimension: set.vectorDimension,
+      chunkCount: set.chunkCount,
+      createdAt: set.createdAt,
+    );
+  }
+
+  final String id;
+  final SearchSourceKey sourceKey;
+  final String vaultId;
+  final String modelId;
+  final String modelRevisionHash;
+  final DateTime sourceUpdatedAt;
+  final Uint8List sourceFingerprint;
+  final String fingerprintKeyId;
+  final int fingerprintVersion;
+  final int indexConfigVersion;
+  final int indexConfigEpoch;
+  final String indexConfigHash;
+  final int chunkSchemaVersion;
+  final int vectorFormatVersion;
+  final int vectorDimension;
+  final int chunkCount;
+  final DateTime createdAt;
+}
+
 class EmbeddingIndexSet {
   EmbeddingIndexSet({
     required this.id,

@@ -18,7 +18,10 @@ typedef EmbeddingReplacementCheckpointCallback =
     FutureOr<void> Function(EmbeddingReplacementCheckpoint checkpoint);
 
 class SqliteEmbeddingRepository
-    implements EmbeddingIndexRepository, EmbeddingIndexCorpusRepository {
+    implements
+        EmbeddingIndexRepository,
+        EmbeddingIndexHeaderRepository,
+        EmbeddingIndexCorpusRepository {
   SqliteEmbeddingRepository({
     required AppDatabase database,
     EmbeddingReplacementCheckpointCallback? onReplacementCheckpoint,
@@ -40,6 +43,62 @@ class SqliteEmbeddingRepository
     return _database.run(
       (database) => _loadIndexSet(database, sourceKey, modelId),
     );
+  }
+
+  @override
+  Future<Map<SearchSourceKey, EmbeddingIndexSetHeader>>
+  getIndexSetHeadersBySources(
+    Iterable<SearchSourceKey> sourceKeys,
+    String modelId,
+  ) {
+    final keys = sourceKeys.toSet().toList(growable: false);
+    if (keys.isEmpty) {
+      return Future<Map<SearchSourceKey, EmbeddingIndexSetHeader>>.value(
+        const <SearchSourceKey, EmbeddingIndexSetHeader>{},
+      );
+    }
+    if (keys.length > embeddingIndexHeaderBatchSize) {
+      throw ArgumentError.value(
+        keys.length,
+        'sourceKeys',
+        'Maximum is $embeddingIndexHeaderBatchSize.',
+      );
+    }
+    final secretIds = <String>[
+      for (final key in keys)
+        if (key.type == SearchSourceType.secret) key.id,
+    ];
+    final noteIds = <String>[
+      for (final key in keys)
+        if (key.type == SearchSourceType.note) key.id,
+    ];
+    final clauses = <String>[];
+    final arguments = <Object>[modelId];
+    if (secretIds.isNotEmpty) {
+      clauses.add(
+        "(source_type = 'secret' AND source_id IN "
+        "(${List<String>.filled(secretIds.length, '?').join(', ')}))",
+      );
+      arguments.addAll(secretIds);
+    }
+    if (noteIds.isNotEmpty) {
+      clauses.add(
+        "(source_type = 'note' AND source_id IN "
+        "(${List<String>.filled(noteIds.length, '?').join(', ')}))",
+      );
+      arguments.addAll(noteIds);
+    }
+    return _database.run((database) async {
+      final rows = await database.query(
+        DatabaseSchema.embeddingIndexSets,
+        where: 'model_id = ? AND (${clauses.join(' OR ')})',
+        whereArgs: arguments,
+        orderBy: 'source_type ASC, source_id ASC',
+      );
+      return <SearchSourceKey, EmbeddingIndexSetHeader>{
+        for (final row in rows) _sourceKey(row): _mapHeader(row),
+      };
+    });
   }
 
   @override
@@ -190,6 +249,37 @@ class SqliteEmbeddingRepository
       vectorBlob: row['vector_blob']! as List<int>,
       tokenCount: row['token_count'] as int?,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
+    );
+  }
+
+  EmbeddingIndexSetHeader _mapHeader(Map<String, Object?> row) {
+    return EmbeddingIndexSetHeader(
+      id: row['id']! as String,
+      sourceKey: _sourceKey(row),
+      vaultId: row['vault_id']! as String,
+      modelId: row['model_id']! as String,
+      modelRevisionHash: row['model_revision_hash']! as String,
+      sourceUpdatedAt: DateTime.fromMillisecondsSinceEpoch(
+        row['source_updated_at']! as int,
+      ),
+      sourceFingerprint: row['source_fingerprint']! as List<int>,
+      fingerprintKeyId: row['fingerprint_key_id']! as String,
+      fingerprintVersion: row['fingerprint_version']! as int,
+      indexConfigVersion: row['index_config_version']! as int,
+      indexConfigEpoch: row['index_config_epoch']! as int,
+      indexConfigHash: row['index_config_hash']! as String,
+      chunkSchemaVersion: row['chunk_schema_version']! as int,
+      vectorFormatVersion: row['vector_format_version']! as int,
+      vectorDimension: row['vector_dimension']! as int,
+      chunkCount: row['chunk_count']! as int,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
+    );
+  }
+
+  SearchSourceKey _sourceKey(Map<String, Object?> row) {
+    return SearchSourceKey(
+      type: SearchSourceType.parse(row['source_type']! as String),
+      id: row['source_id']! as String,
     );
   }
 

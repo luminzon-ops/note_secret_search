@@ -7,6 +7,7 @@ import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
@@ -16,10 +17,14 @@ import 'package:note_secret_search/features/search/domain/embedding_engine.dart'
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
+import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
+import 'package:note_secret_search/features/vault/domain/vault.dart';
 
 class _FakeCryptoService implements CryptoService {
   const _FakeCryptoService();
@@ -85,12 +90,51 @@ class _FakeSearchIndexService extends SearchIndexService {
       );
 
   @override
+  Future<int> indexCorpusPending({
+    required String activeVaultId,
+    required SearchCorpusReader corpus,
+    required ModelRegistryEntry activeEmbeddingModel,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) async => 0;
+
+  @override
   Future<void> indexPendingItems({
     required List<SearchIndexPendingItem> items,
     required ModelRegistryEntry activeEmbeddingModel,
     required String modelRevisionHash,
     required SearchConfiguration configuration,
   }) async {}
+}
+
+class _UnusedSecretRepository implements SecretRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _UnusedNoteRepository implements NoteRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+SearchCorpusReader _emptyCorpusReader() {
+  return SearchCorpusReader(
+    secretRepository: _UnusedSecretRepository(),
+    noteRepository: _UnusedNoteRepository(),
+  );
+}
+
+Vault _defaultVault() {
+  final now = DateTime(2026, 7, 21);
+  return Vault(
+    id: 'default',
+    name: 'Default',
+    description: null,
+    isDefault: true,
+    encryptionVersion: 1,
+    createdAt: now,
+    updatedAt: now,
+  );
 }
 
 SearchIndexStatus _readyStatus() {
@@ -157,6 +201,10 @@ void main() {
             (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
+          searchCorpusReaderProvider.overrideWith(
+            (ref) => _emptyCorpusReader(),
+          ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => ''),
           searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -207,6 +255,10 @@ void main() {
             (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
+          searchCorpusReaderProvider.overrideWith(
+            (ref) => _emptyCorpusReader(),
+          ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
           searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -257,6 +309,10 @@ void main() {
             (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
+          searchCorpusReaderProvider.overrideWith(
+            (ref) => _emptyCorpusReader(),
+          ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
           searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -308,6 +364,10 @@ void main() {
             (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
+          searchCorpusReaderProvider.overrideWith(
+            (ref) => _emptyCorpusReader(),
+          ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
           searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
@@ -359,6 +419,10 @@ void main() {
             (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
+          searchCorpusReaderProvider.overrideWith(
+            (ref) => _emptyCorpusReader(),
+          ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
           searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),

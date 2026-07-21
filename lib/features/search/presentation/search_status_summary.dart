@@ -2,7 +2,13 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 
-enum SearchStatusPhase { blocked, needsInitialIndex, needsRefresh, lastRunFailed, ready }
+enum SearchStatusPhase {
+  blocked,
+  needsInitialIndex,
+  needsRefresh,
+  lastRunFailed,
+  ready,
+}
 
 enum SearchStatusPrimaryAction { openModelManagement, triggerIndex, none }
 
@@ -39,7 +45,8 @@ SearchStatusSummary buildSearchStatusSummary({
       EmbeddingRuntimeStatus.installedUnverified => '前往模型管理完成校验',
       EmbeddingRuntimeStatus.degraded => '前往模型管理排查',
       EmbeddingRuntimeStatus.corrupted => '前往模型管理重新下载',
-      EmbeddingRuntimeStatus.missing || EmbeddingRuntimeStatus.notInstalled => '前往模型管理',
+      EmbeddingRuntimeStatus.missing ||
+      EmbeddingRuntimeStatus.notInstalled => '前往模型管理',
       EmbeddingRuntimeStatus.ready || null => '前往模型管理',
     };
 
@@ -47,7 +54,7 @@ SearchStatusSummary buildSearchStatusSummary({
       phase: SearchStatusPhase.blocked,
       headline: '本地语义链路未就绪',
       description: readiness.reason,
-      pendingCount: status.pendingItems.length,
+      pendingCount: status.pendingCount,
       lastResultSummary: lastSummary,
       errorText: status.taskState.lastError,
       primaryActionLabel: actionLabel,
@@ -60,7 +67,7 @@ SearchStatusSummary buildSearchStatusSummary({
       phase: SearchStatusPhase.lastRunFailed,
       headline: '最近一次索引失败',
       description: '索引任务未成功完成，建议先重试索引再判断语义检索效果。',
-      pendingCount: status.pendingItems.length,
+      pendingCount: status.pendingCount,
       lastResultSummary: lastSummary,
       errorText: status.taskState.lastError,
       primaryActionLabel: '重试索引',
@@ -68,12 +75,12 @@ SearchStatusSummary buildSearchStatusSummary({
     );
   }
 
-  if (status.pendingItems.isNotEmpty && status.taskState.lastCompletedAt == null) {
+  if (status.hasPending && status.taskState.lastCompletedAt == null) {
     return SearchStatusSummary(
       phase: SearchStatusPhase.needsInitialIndex,
       headline: '建议先构建本地索引',
       description: '已有待索引内容，完成首次构建后再查看语义检索结果会更稳定。',
-      pendingCount: status.pendingItems.length,
+      pendingCount: status.pendingCount,
       lastResultSummary: lastSummary,
       errorText: null,
       primaryActionLabel: '立即构建索引',
@@ -81,12 +88,12 @@ SearchStatusSummary buildSearchStatusSummary({
     );
   }
 
-  if (status.pendingItems.isNotEmpty) {
+  if (status.hasPending) {
     return SearchStatusSummary(
       phase: SearchStatusPhase.needsRefresh,
       headline: '索引需要刷新',
       description: '索引已有新变更，建议刷新后再判断当前语义检索结果。',
-      pendingCount: status.pendingItems.length,
+      pendingCount: status.pendingCount,
       lastResultSummary: lastSummary,
       errorText: null,
       primaryActionLabel: '刷新索引',

@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_index_document.dart';
 
+const int searchIndexPendingPreviewLimit = 20;
+
 class SearchIndexPendingItem {
   SearchIndexPendingItem({
     required this.sourceId,
@@ -41,16 +43,22 @@ class SearchIndexStatus {
     required this.engineReason,
     required this.hasActiveEmbeddingModel,
     required this.pendingItems,
+    int? pendingCount,
     this.taskState = const SearchIndexTaskState.idle(),
-  });
+  }) : _pendingCount = pendingCount;
 
   final bool engineReady;
   final String engineReason;
   final bool hasActiveEmbeddingModel;
   final List<SearchIndexPendingItem> pendingItems;
+  final int? _pendingCount;
   final SearchIndexTaskState taskState;
 
   bool get readyForIndexing => engineReady && hasActiveEmbeddingModel;
+
+  int get pendingCount => _pendingCount ?? pendingItems.length;
+
+  bool get hasPending => pendingCount > 0;
 }
 
 class SearchIndexTaskState {

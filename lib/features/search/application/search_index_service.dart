@@ -16,9 +16,12 @@ import 'package:note_secret_search/features/search/domain/embedding_index_set.da
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_document.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+
+part 'search_index_service_corpus.dart';
 
 class SearchIndexService {
   SearchIndexService({
@@ -79,40 +82,76 @@ class SearchIndexService {
     final policy = EffectiveSearchPolicy(configuration);
     final configHash = searchIndexConfigurationHash(configuration);
     final pending = <SearchIndexPendingItem>[];
-    for (final secret in secrets) {
-      final document = _projector.projectSecret(secret, policy);
-      final item = await _pendingItem(
-        document: document,
-        model: activeEmbeddingModel,
-        modelRevisionHash: modelRevisionHash,
-        configuration: configuration,
-        configHash: configHash,
-      );
-      if (item != null) {
-        pending.add(item);
+    var pendingCount = 0;
+    final documents = <SearchIndexDocument>[
+      for (final secret in secrets)
+        if (secret.deletedAt == null) _projector.projectSecret(secret, policy),
+      for (final note in notes)
+        if (note.deletedAt == null) _projector.projectNote(note, policy),
+    ];
+    for (
+      var offset = 0;
+      offset < documents.length;
+      offset += embeddingIndexHeaderBatchSize
+    ) {
+      final batch = documents
+          .skip(offset)
+          .take(embeddingIndexHeaderBatchSize)
+          .toList(growable: false);
+      final headers = await _loadHeaders(batch, activeEmbeddingModel.id);
+      for (final document in batch) {
+        final item = _pendingItem(
+          document: document,
+          current: headers[document.sourceKey],
+          modelRevisionHash: modelRevisionHash,
+          configuration: configuration,
+          configHash: configHash,
+        );
+        if (item != null) {
+          pendingCount += 1;
+          _addPendingPreview(pending, item);
+        }
       }
     }
-    for (final note in notes) {
-      final document = _projector.projectNote(note, policy);
-      final item = await _pendingItem(
-        document: document,
-        model: activeEmbeddingModel,
-        modelRevisionHash: modelRevisionHash,
-        configuration: configuration,
-        configHash: configHash,
-      );
-      if (item != null) {
-        pending.add(item);
-      }
-    }
-
-    pending.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
     return SearchIndexStatus(
       engineReady: engineState.ready,
       engineReason: engineState.reason,
       hasActiveEmbeddingModel: true,
       pendingItems: pending,
+      pendingCount: pendingCount,
+    );
+  }
+
+  Future<SearchIndexStatus> buildCorpusStatus({
+    required String activeVaultId,
+    required SearchCorpusReader corpus,
+    required ModelRegistryEntry? activeEmbeddingModel,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) {
+    return _buildCorpusStatus(
+      activeVaultId: activeVaultId,
+      corpus: corpus,
+      activeEmbeddingModel: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
+  }
+
+  Future<int> indexCorpusPending({
+    required String activeVaultId,
+    required SearchCorpusReader corpus,
+    required ModelRegistryEntry activeEmbeddingModel,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) {
+    return _indexCorpusPending(
+      activeVaultId: activeVaultId,
+      corpus: corpus,
+      activeEmbeddingModel: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
     );
   }
 
@@ -122,6 +161,21 @@ class SearchIndexService {
     required String modelRevisionHash,
     required SearchConfiguration configuration,
   }) async {
+    await _replacePendingItems(
+      items: items,
+      activeEmbeddingModel: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
+  }
+
+  Future<int> _replacePendingItems({
+    required List<SearchIndexPendingItem> items,
+    required ModelRegistryEntry activeEmbeddingModel,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) async {
+    var replacementCount = 0;
     for (final item in items) {
       final document = item.document;
       if (document == null ||
@@ -171,7 +225,7 @@ class SearchIndexService {
         );
       }
       final sourceFingerprint = _sourceFingerprint(document);
-      await _repository.replaceIndexSet(
+      final replaced = await _repository.replaceIndexSet(
         EmbeddingIndexSet(
           id: setId,
           sourceKey: document.sourceKey,
@@ -192,22 +246,22 @@ class SearchIndexService {
           createdAt: now,
         ),
       );
+      if (replaced) {
+        replacementCount += 1;
+      }
     }
+    return replacementCount;
   }
 
-  Future<SearchIndexPendingItem?> _pendingItem({
+  SearchIndexPendingItem? _pendingItem({
     required SearchIndexDocument document,
-    required ModelRegistryEntry model,
+    required EmbeddingIndexSetHeader? current,
     required String modelRevisionHash,
     required SearchConfiguration configuration,
     required String configHash,
-  }) async {
+  }) {
     final sourceFingerprint = _sourceFingerprint(document);
     final keyId = _keys.requireCurrent().requireKeyId();
-    final current = await _repository.getIndexSetBySource(
-      document.sourceKey,
-      model.id,
-    );
     if (current != null &&
         current.vaultId == document.vaultId &&
         current.modelRevisionHash == modelRevisionHash &&
@@ -231,6 +285,49 @@ class SearchIndexService {
       configurationEpoch: configuration.configurationEpoch,
       modelRevisionHash: modelRevisionHash,
     );
+  }
+
+  Future<Map<SearchSourceKey, EmbeddingIndexSetHeader>> _loadHeaders(
+    List<SearchIndexDocument> documents,
+    String modelId,
+  ) async {
+    final repository = _repository;
+    if (repository is EmbeddingIndexHeaderRepository) {
+      final headerRepository = repository as EmbeddingIndexHeaderRepository;
+      return headerRepository.getIndexSetHeadersBySources(
+        documents.map((document) => document.sourceKey),
+        modelId,
+      );
+    }
+
+    final headers = <SearchSourceKey, EmbeddingIndexSetHeader>{};
+    for (final document in documents) {
+      final set = await repository.getIndexSetBySource(
+        document.sourceKey,
+        modelId,
+      );
+      if (set != null) {
+        headers[document.sourceKey] = EmbeddingIndexSetHeader.fromSet(set);
+      }
+    }
+    return headers;
+  }
+
+  void _addPendingPreview(
+    List<SearchIndexPendingItem> preview,
+    SearchIndexPendingItem item,
+  ) {
+    preview.add(item);
+    preview.sort((left, right) {
+      var result = right.updatedAt.compareTo(left.updatedAt);
+      result = result != 0
+          ? result
+          : left.sourceType.index.compareTo(right.sourceType.index);
+      return result != 0 ? result : left.sourceId.compareTo(right.sourceId);
+    });
+    if (preview.length > searchIndexPendingPreviewLimit) {
+      preview.removeRange(searchIndexPendingPreviewLimit, preview.length);
+    }
   }
 
   List<int> _sourceFingerprint(SearchIndexDocument document) {

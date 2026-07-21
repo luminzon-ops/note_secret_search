@@ -48,9 +48,9 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
     ref
         .read(searchPendingReindexHandoffProvider.notifier)
         .state = const SearchPendingReindexHandoffState(
-          visible: true,
-          message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
-        );
+      visible: true,
+      message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
+    );
     setState(() => _showPostSaveReindexActions = false);
     if (context.canPop()) {
       context.pop();
@@ -200,12 +200,12 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
                     savedSettingsSnapshot != null &&
                     indexStatusSnapshot != null &&
                     buildSearchSettingsImpactPreview(
-                          savedScope: savedScopeSnapshot,
-                          draftScope: _draftScope ?? savedScopeSnapshot,
-                          savedIndexSettings: savedSettingsSnapshot,
-                          draftIndexSettings: draft,
-                          indexStatus: indexStatusSnapshot,
-                        ).reindexItems.isNotEmpty;
+                      savedScope: savedScopeSnapshot,
+                      draftScope: _draftScope ?? savedScopeSnapshot,
+                      savedIndexSettings: savedSettingsSnapshot,
+                      draftIndexSettings: draft,
+                      indexStatus: indexStatusSnapshot,
+                    ).reindexItems.isNotEmpty;
                 await ref
                     .read(searchIndexSettingsControllerProvider)
                     .update(draft);
@@ -242,13 +242,13 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
                     savedSettingsSnapshot != null &&
                     indexStatusSnapshot != null &&
                     buildSearchSettingsImpactPreview(
-                          savedScope: savedScopeSnapshot,
-                          draftScope: draft,
-                          savedIndexSettings: savedSettingsSnapshot,
+                      savedScope: savedScopeSnapshot,
+                      draftScope: draft,
+                      savedIndexSettings: savedSettingsSnapshot,
                       draftIndexSettings:
                           _draftIndexSettings ?? savedSettingsSnapshot,
-                          indexStatus: indexStatusSnapshot,
-                        ).reindexItems.isNotEmpty;
+                      indexStatus: indexStatusSnapshot,
+                    ).reindexItems.isNotEmpty;
                 await ref.read(searchScopeControllerProvider).update(draft);
                 if (!mounted) {
                   return;
@@ -321,8 +321,8 @@ class _IndexSettingsCard extends ConsumerWidget {
                   DropdownMenuItem(value: 280, child: Text('280')),
                   DropdownMenuItem(value: 400, child: Text('400')),
                 ],
-                ),
               ),
+            ),
             const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
@@ -350,7 +350,7 @@ class _IndexStatusCard extends ConsumerWidget {
   final SearchRefreshSessionState refreshSession;
 
   Future<void> _handleIndexAction(BuildContext context, WidgetRef ref) async {
-    if (status.pendingItems.isEmpty) {
+    if (!status.hasPending) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('当前没有待索引内容，无需手动触发构建。')));
@@ -397,9 +397,9 @@ class _IndexStatusCard extends ConsumerWidget {
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
-                 title: Text('自动索引中'),
-                 subtitle: Text('正在构建或刷新占位语义索引。'),
-               )
+                title: Text('自动索引中'),
+                subtitle: Text('正在构建或刷新占位语义索引。'),
+              )
             else if (status.taskState.lastCompletedAt != null)
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -408,10 +408,10 @@ class _IndexStatusCard extends ConsumerWidget {
                 subtitle: Text(
                   status.taskState.lastCompletedAt!.toLocal().toString(),
                 ),
-                 trailing: status.taskState.lastError == null
-                     ? const Text('成功')
-                     : const Text('有错误'),
-               ),
+                trailing: status.taskState.lastError == null
+                    ? const Text('成功')
+                    : const Text('有错误'),
+              ),
             if (status.taskState.running) ...[
               const SizedBox(height: 8),
               Text(
@@ -458,14 +458,14 @@ class _IndexStatusCard extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
             ],
-            Text('待索引项目：${status.pendingItems.length}'),
+            Text('待索引项目：${status.pendingCount}'),
             const SizedBox(height: 8),
             Text(_pendingSummary(status.pendingItems)),
             if (summary.phase == SearchStatusPhase.ready) ...[
               const SizedBox(height: 12),
               const Text('当前索引已最新，可以直接继续使用语义检索。'),
             ],
-            if (status.pendingItems.isNotEmpty) ...[
+            if (status.hasPending) ...[
               const SizedBox(height: 8),
               Text('最近变更项', style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 4),
@@ -668,7 +668,7 @@ class _SemanticReadinessCard extends ConsumerWidget {
                   if (readiness.activeEmbeddingModel != null)
                     const SizedBox(height: 12),
                   Text(
-                     '本地语义链路阶段概览',
+                    '本地语义链路阶段概览',
                     style: Theme.of(context).textTheme.labelLarge?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -702,17 +702,17 @@ class _SemanticReadinessCard extends ConsumerWidget {
                             ActionChip(
                               label: Text(item.label),
                               onPressed: () {
-                                 if (item.route != null) {
-                                   context.push(item.route!);
-                                   return;
-                                 }
+                                if (item.route != null) {
+                                  context.push(item.route!);
+                                  return;
+                                }
 
                                 if (item.action ==
                                     _GuidanceAction.indexPending) {
-                                   _handleIndexAction(context, ref);
-                                 }
-                               },
-                             )
+                                  _handleIndexAction(context, ref);
+                                }
+                              },
+                            )
                           else
                             Chip(label: Text(item.label)),
                       ],
@@ -749,7 +749,7 @@ class _SemanticReadinessCard extends ConsumerWidget {
     if (!scope.allowLocalEmbedding) {
       items.add(const _GuidanceItem(label: '启用检索范围中的本地语义检索'));
     }
-    if (indexStatus.readyForIndexing && indexStatus.pendingItems.isNotEmpty) {
+    if (indexStatus.readyForIndexing && indexStatus.hasPending) {
       items.add(
         _GuidanceItem(
           label: indexStatus.taskState.lastCompletedAt == null

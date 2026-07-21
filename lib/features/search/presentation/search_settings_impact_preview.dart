@@ -103,7 +103,7 @@ SearchSettingsImpactPreview buildSearchSettingsImpactPreview({
       description: '你当前的草稿会影响语义索引内容。保存后需要重新索引，语义结果才会更新。',
       immediateItems: const <String>[],
       reindexItems: reindexItems,
-      recommendation: indexStatus.pendingItems.isNotEmpty
+      recommendation: indexStatus.hasPending
           ? '当前已有待索引内容，建议保存后直接刷新索引。'
           : '保存后建议尽快重建索引，再判断语义结果变化。',
     );
@@ -114,8 +114,6 @@ SearchSettingsImpactPreview buildSearchSettingsImpactPreview({
     description: '你当前的草稿包含两类影响：部分改动会立即影响结果，部分改动需要重新索引后生效。',
     immediateItems: immediateItems,
     reindexItems: reindexItems,
-    recommendation: indexStatus.pendingItems.isNotEmpty
-        ? '当前已有待索引内容，建议保存后直接刷新索引。'
-        : null,
+    recommendation: indexStatus.hasPending ? '当前已有待索引内容，建议保存后直接刷新索引。' : null,
   );
 }

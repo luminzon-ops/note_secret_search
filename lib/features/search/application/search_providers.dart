@@ -19,6 +19,8 @@ import 'package:note_secret_search/features/search/infrastructure/sqlite_embeddi
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
+part 'search_index_controller.dart';
+
 final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((
   ref,
 ) {
@@ -116,8 +118,7 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
       pendingItems: <SearchIndexPendingItem>[],
     ),
     load: () async {
-      final secrets = await ref.watch(secretListProvider.future);
-      final notes = await ref.watch(noteListProvider.future);
+      final vault = await ref.watch(defaultVaultProvider.future);
       final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
       final configuration = await ref.watch(searchConfigurationProvider.future);
       final modelRevisionHash = activeModel == null
@@ -125,21 +126,29 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
           : await ref.watch(
               searchIndexModelRevisionProvider(activeModel).future,
             );
-      final baseStatus = await ref
-          .watch(searchIndexServiceProvider)
-          .buildStatus(
-            secrets: secrets,
-            notes: notes,
-            activeEmbeddingModel: activeModel,
-            modelRevisionHash: modelRevisionHash,
-            configuration: configuration,
-          );
+      final indexService = ref.watch(searchIndexServiceProvider);
+      final baseStatus = vault == null
+          ? await indexService.buildStatus(
+              secrets: const [],
+              notes: const [],
+              activeEmbeddingModel: activeModel,
+              modelRevisionHash: modelRevisionHash,
+              configuration: configuration,
+            )
+          : await indexService.buildCorpusStatus(
+              activeVaultId: vault.id,
+              corpus: ref.watch(searchCorpusReaderProvider),
+              activeEmbeddingModel: activeModel,
+              modelRevisionHash: modelRevisionHash,
+              configuration: configuration,
+            );
       final taskState = ref.watch(searchIndexTaskStateProvider);
       return SearchIndexStatus(
         engineReady: baseStatus.engineReady,
         engineReason: baseStatus.engineReason,
         hasActiveEmbeddingModel: baseStatus.hasActiveEmbeddingModel,
         pendingItems: baseStatus.pendingItems,
+        pendingCount: baseStatus.pendingCount,
         taskState: taskState,
       );
     },
@@ -234,323 +243,6 @@ final searchPendingReindexHandoffProvider =
     StateProvider<SearchPendingReindexHandoffState>(
       (ref) => const SearchPendingReindexHandoffState.hidden(),
     );
-
-class SearchRefreshSessionState {
-  const SearchRefreshSessionState({
-    required this.refreshing,
-    this.message,
-    this.lastCompletedAt,
-  });
-
-  const SearchRefreshSessionState.idle()
-    : refreshing = false,
-      message = null,
-      lastCompletedAt = null;
-
-  final bool refreshing;
-  final String? message;
-  final DateTime? lastCompletedAt;
-
-  SearchRefreshSessionState copyWith({
-    bool? refreshing,
-    String? message,
-    bool clearMessage = false,
-    DateTime? lastCompletedAt,
-    bool clearLastCompletedAt = false,
-  }) {
-    return SearchRefreshSessionState(
-      refreshing: refreshing ?? this.refreshing,
-      message: clearMessage ? null : (message ?? this.message),
-      lastCompletedAt: clearLastCompletedAt
-          ? null
-          : (lastCompletedAt ?? this.lastCompletedAt),
-    );
-  }
-}
-
-class SearchRefreshFeedbackState {
-  const SearchRefreshFeedbackState({
-    required this.visible,
-    this.headline,
-    this.message,
-    this.changed,
-    this.queryAtRefresh,
-    this.completedAt,
-  });
-
-  const SearchRefreshFeedbackState.hidden()
-    : visible = false,
-      headline = null,
-      message = null,
-      changed = null,
-      queryAtRefresh = null,
-      completedAt = null;
-
-  final bool visible;
-  final String? headline;
-  final String? message;
-  final bool? changed;
-  final String? queryAtRefresh;
-  final DateTime? completedAt;
-}
-
-class SearchPendingReindexHandoffState {
-  const SearchPendingReindexHandoffState({required this.visible, this.message});
-
-  const SearchPendingReindexHandoffState.hidden()
-    : visible = false,
-      message = null;
-
-  final bool visible;
-  final String? message;
-}
-
-class SearchIndexController {
-  SearchIndexController({required Ref ref}) : _ref = ref;
-
-  final Ref _ref;
-
-  Future<void> indexPending() async {
-    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-
-    final status = await _ref.read(searchIndexStatusProvider.future);
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    final activeModel = await _ref.read(activeEmbeddingModelProvider.future);
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    final configuration = await _ref.read(searchConfigurationProvider.future);
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    if (!status.readyForIndexing || activeModel == null) {
-      return;
-    }
-
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    _ref.read(searchIndexTaskStateProvider.notifier).state = status.taskState
-        .copyWith(running: true, clearLastError: true);
-
-    try {
-      final modelRevisionHash = await _ref.read(
-        searchIndexModelRevisionProvider(activeModel).future,
-      );
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      await _ref
-          .read(searchIndexServiceProvider)
-          .indexPendingItems(
-            items: status.pendingItems,
-            activeEmbeddingModel: activeModel,
-            modelRevisionHash: modelRevisionHash,
-            configuration: configuration,
-          );
-
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref
-          .read(searchIndexTaskStateProvider.notifier)
-          .state = const SearchIndexTaskState.idle().copyWith(
-        lastCompletedAt: DateTime.now(),
-        lastIndexedCount: status.pendingItems.length,
-      );
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.invalidate(searchIndexStatusProvider);
-    } catch (error) {
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref
-          .read(searchIndexTaskStateProvider.notifier)
-          .state = const SearchIndexTaskState.idle().copyWith(
-        lastCompletedAt: DateTime.now(),
-        lastIndexedCount: 0,
-        lastError: error.toString(),
-      );
-      rethrow;
-    }
-  }
-
-  Future<void> indexPendingAndRefresh() async {
-    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-
-    final query = _ref.read(searchQueryProvider).trim();
-    final beforeResults = await _ref.read(unifiedSearchResultsProvider.future);
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    final beforeIdentities = beforeResults
-        .map((item) => item.identity)
-        .toList(growable: false);
-
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-    _ref.read(searchRefreshFeedbackProvider.notifier).state =
-        const SearchRefreshFeedbackState.hidden();
-
-    await indexPending();
-    if (!_canContinue(lockEpoch)) {
-      return;
-    }
-
-    _ref
-        .read(searchRefreshSessionProvider.notifier)
-        .state = const SearchRefreshSessionState.idle().copyWith(
-      refreshing: true,
-      message: '正在刷新搜索状态与结果...',
-    );
-
-    try {
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.invalidate(searchIndexStatusProvider);
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.invalidate(semanticSearchResultsProvider);
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.invalidate(unifiedSearchResultsProvider);
-
-      await _ref.read(searchIndexStatusProvider.future);
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      await _ref.read(semanticSearchResultsProvider.future);
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      final afterResults = await _ref.read(unifiedSearchResultsProvider.future);
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-
-      _ref
-          .read(searchRefreshFeedbackProvider.notifier)
-          .state = _buildRefreshFeedback(
-        query: query,
-        beforeIdentities: beforeIdentities,
-        afterIdentities: afterResults
-            .map((item) => item.identity)
-            .toList(growable: false),
-      );
-
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref
-          .read(searchRefreshSessionProvider.notifier)
-          .state = const SearchRefreshSessionState.idle().copyWith(
-        lastCompletedAt: DateTime.now(),
-      );
-    } catch (_) {
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.read(searchRefreshFeedbackProvider.notifier).state =
-          const SearchRefreshFeedbackState.hidden();
-      if (!_canContinue(lockEpoch)) {
-        return;
-      }
-      _ref.read(searchRefreshSessionProvider.notifier).state =
-          const SearchRefreshSessionState.idle();
-      rethrow;
-    }
-  }
-
-  bool _canContinue(int lockEpoch) {
-    return _ref.read(lockSessionControllerProvider).lockEpoch == lockEpoch &&
-        _ref.read(sensitiveStateAccessAllowedProvider);
-  }
-
-  SearchRefreshFeedbackState _buildRefreshFeedback({
-    required String query,
-    required List<SearchResultIdentity> beforeIdentities,
-    required List<SearchResultIdentity> afterIdentities,
-  }) {
-    final now = DateTime.now();
-    if (query.isEmpty) {
-      return SearchRefreshFeedbackState(
-        visible: true,
-        headline: '搜索状态已刷新',
-        message: '输入关键词后可查看最新结果。',
-        changed: null,
-        queryAtRefresh: query,
-        completedAt: now,
-      );
-    }
-
-    final countChanged = beforeIdentities.length != afterIdentities.length;
-    final orderChanged = !_sameOrderedIdentities(
-      beforeIdentities,
-      afterIdentities,
-    );
-
-    if (countChanged) {
-      return SearchRefreshFeedbackState(
-        visible: true,
-        headline: '搜索状态已刷新',
-        message:
-            '当前结果已更新，结果数量从 ${beforeIdentities.length} 条变为 ${afterIdentities.length} 条。',
-        changed: true,
-        queryAtRefresh: query,
-        completedAt: now,
-      );
-    }
-
-    if (orderChanged) {
-      return SearchRefreshFeedbackState(
-        visible: true,
-        headline: '搜索状态已刷新',
-        message: '当前结果已更新，本轮刷新调整了结果排序。',
-        changed: true,
-        queryAtRefresh: query,
-        completedAt: now,
-      );
-    }
-
-    return SearchRefreshFeedbackState(
-      visible: true,
-      headline: '搜索状态已刷新',
-      message: '当前结果已更新，本轮刷新未改变当前结果。',
-      changed: false,
-      queryAtRefresh: query,
-      completedAt: now,
-    );
-  }
-
-  bool _sameOrderedIdentities(
-    List<SearchResultIdentity> left,
-    List<SearchResultIdentity> right,
-  ) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (var index = 0; index < left.length; index++) {
-      if (left[index] != right[index]) {
-        return false;
-      }
-    }
-    return true;
-  }
-}
 
 final searchScopeControllerProvider = Provider<SearchScopeController>((ref) {
   return SearchScopeController(ref: ref);
