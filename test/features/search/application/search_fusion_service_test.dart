@@ -309,4 +309,61 @@ void main() {
 
     expect(results.map((item) => item.id), <String>['z-title', 'a-tags']);
   });
+
+  test('fusion diagnostics classify weak semantic-only rejection reasons', () {
+    final outcome = service.fuseDetailed(
+      keywordResults: const <SearchResultItem>[],
+      semanticResults: [
+        _semanticResult('kept', score: 0.70, hitField: SemanticHitField.title),
+        _semanticResult(
+          'weak-tags',
+          score: 0.89,
+          hitField: SemanticHitField.tags,
+        ),
+        _semanticResult(
+          'weak-body',
+          score: 0.89,
+          hitField: SemanticHitField.noteBody,
+        ),
+      ],
+    );
+
+    expect(outcome.diagnostics.semanticOnlyCandidateCount, 3);
+    expect(outcome.diagnostics.admittedSemanticOnlyCount, 1);
+    expect(outcome.diagnostics.rejections, hasLength(2));
+    expect(
+      outcome.diagnostics.rejections.map((item) => item.reason),
+      everyElement(SearchFusionRejectionReason.weakSemanticAssist),
+    );
+    expect(
+      outcome.admittedSemanticResults.map((result) => result.item.id),
+      const <String>['kept'],
+    );
+  });
+
+  test(
+    'fusion diagnostics distinguish final result limit from low quality',
+    () {
+      final outcome = service.fuseDetailed(
+        keywordResults: const <SearchResultItem>[],
+        semanticResults: <SemanticSearchResult>[
+          for (var index = 0; index < 101; index++)
+            _semanticResult(
+              'semantic-${index.toString().padLeft(3, '0')}',
+              score: 0.70,
+              hitField: SemanticHitField.title,
+            ),
+        ],
+      );
+
+      expect(outcome.results, hasLength(100));
+      expect(outcome.diagnostics.semanticOnlyCandidateCount, 101);
+      expect(outcome.diagnostics.admittedSemanticOnlyCount, 101);
+      expect(outcome.diagnostics.rejections, hasLength(1));
+      expect(
+        outcome.diagnostics.rejections.single.reason,
+        SearchFusionRejectionReason.finalResultLimit,
+      );
+    },
+  );
 }

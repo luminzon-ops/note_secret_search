@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
+import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
@@ -39,6 +40,21 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       searchPendingReindexHandoffProvider,
     );
     final query = ref.watch(searchQueryProvider).trim();
+    final fusionService = ref.watch(searchFusionServiceProvider);
+    final fusionDiagnostics =
+        unifiedResultsAsync.hasValue && semanticResultsAsync.hasValue
+        ? fusionService.diagnoseFinalResults(
+            unifiedResults: unifiedResultsAsync.requireValue,
+            semanticResults: semanticResultsAsync.requireValue,
+          )
+        : null;
+    final admittedSemanticResults =
+        unifiedResultsAsync.hasValue && semanticResultsAsync.hasValue
+        ? fusionService.admittedSemanticResultsForFinalResults(
+            unifiedResults: unifiedResultsAsync.requireValue,
+            semanticResults: semanticResultsAsync.requireValue,
+          )
+        : const <SemanticSearchResult>[];
 
     return Scaffold(
       appBar: AppBar(
@@ -111,7 +127,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               query: query,
               readiness: readinessAsync.valueOrNull,
               unifiedResults: unifiedResultsAsync.requireValue,
-              semanticResults: semanticResultsAsync.requireValue,
+              semanticResults: admittedSemanticResults,
             )
           else
             const SizedBox.shrink(),
@@ -119,7 +135,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           if (unifiedResultsAsync.hasValue && semanticResultsAsync.hasValue)
             _SearchPipelineSummaryCard(
               unifiedResults: unifiedResultsAsync.requireValue,
-              semanticResults: semanticResultsAsync.requireValue,
+              semanticResults: admittedSemanticResults,
+              fusionDiagnostics: fusionDiagnostics,
             )
           else
             const SizedBox.shrink(),
@@ -134,7 +151,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           ),
           const SizedBox(height: 16),
           semanticResultsAsync.when(
-            data: (results) => _SemanticSearchSection(results: results),
+            data: (_) =>
+                _SemanticSearchSection(results: admittedSemanticResults),
             loading: () => const SizedBox.shrink(),
             error: (error, stackTrace) => Text(error.toString()),
           ),
@@ -380,18 +398,21 @@ class _SearchPipelineSummaryCard extends StatelessWidget {
   const _SearchPipelineSummaryCard({
     required this.unifiedResults,
     required this.semanticResults,
+    required this.fusionDiagnostics,
   });
 
   static const _qualityPolicy = SemanticQualityPolicy.conservativeMvp();
 
   final List<SearchResultItem> unifiedResults;
   final List<SemanticSearchResult> semanticResults;
+  final SearchFusionDiagnostics? fusionDiagnostics;
 
   @override
   Widget build(BuildContext context) {
     final topSummary = buildSearchPipelineTopSummary(
       unifiedResults: unifiedResults,
       semanticResults: semanticResults,
+      fusionDiagnostics: fusionDiagnostics,
     );
 
     return Card(

@@ -4,6 +4,54 @@ import 'package:note_secret_search/features/search/domain/search_result_item.dar
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 
+enum SearchFusionRejectionReason { weakSemanticAssist, finalResultLimit }
+
+class SearchFusionRejection {
+  const SearchFusionRejection({
+    required this.identity,
+    required this.reason,
+    required this.semanticOnly,
+  });
+
+  final SearchResultIdentity identity;
+  final SearchFusionRejectionReason reason;
+  final bool semanticOnly;
+}
+
+class SearchFusionDiagnostics {
+  const SearchFusionDiagnostics({
+    required this.semanticCandidateCount,
+    required this.dualHitCount,
+    required this.semanticOnlyCandidateCount,
+    required this.admittedSemanticOnlyCount,
+    required this.keptSemanticOnlyCount,
+    required this.rejections,
+  });
+
+  final int semanticCandidateCount;
+  final int dualHitCount;
+  final int semanticOnlyCandidateCount;
+  final int admittedSemanticOnlyCount;
+  final int keptSemanticOnlyCount;
+  final List<SearchFusionRejection> rejections;
+
+  int rejectionCount(SearchFusionRejectionReason reason) {
+    return rejections.where((item) => item.reason == reason).length;
+  }
+}
+
+class SearchFusionOutcome {
+  const SearchFusionOutcome({
+    required this.results,
+    required this.admittedSemanticResults,
+    required this.diagnostics,
+  });
+
+  final List<SearchResultItem> results;
+  final List<SemanticSearchResult> admittedSemanticResults;
+  final SearchFusionDiagnostics diagnostics;
+}
+
 class SearchFusionService {
   const SearchFusionService({
     SemanticQualityPolicy qualityPolicy =
@@ -17,10 +65,26 @@ class SearchFusionService {
     required List<SemanticSearchResult> semanticResults,
     String query = '',
   }) {
+    return fuseDetailed(
+      keywordResults: keywordResults,
+      semanticResults: semanticResults,
+      query: query,
+    ).results;
+  }
+
+  SearchFusionOutcome fuseDetailed({
+    required List<SearchResultItem> keywordResults,
+    required List<SemanticSearchResult> semanticResults,
+    String query = '',
+  }) {
     final byKey = <SearchResultIdentity, SearchResultItem>{};
+    final keywordKeys = <SearchResultIdentity>{};
+    final semanticByKey = <SearchResultIdentity, SemanticSearchResult>{};
     for (final item in keywordResults) {
       final keywordEvidence = _keywordEvidence(item);
-      byKey[_keyFor(item)] = item.copyWith(
+      final key = _keyFor(item);
+      keywordKeys.add(key);
+      byKey[key] = item.copyWith(
         matchSources: <SearchMatchSource>{
           ...item.matchSources,
           SearchMatchSource.keyword,
@@ -30,6 +94,10 @@ class SearchFusionService {
     }
     for (final semantic in semanticResults) {
       final key = _keyFor(semantic.item);
+      final previousSemantic = semanticByKey[key];
+      if (previousSemantic == null || semantic.score > previousSemantic.score) {
+        semanticByKey[key] = semantic;
+      }
       final existing = byKey[key];
       final incomingWins =
           existing?.semanticScore == null ||
@@ -72,11 +140,151 @@ class SearchFusionService {
       );
     }
 
-    final results = byKey.values
-        .where(_shouldKeepUnifiedResult)
-        .toList(growable: false);
-    results.sort((left, right) => _compare(query, left, right));
-    return List<SearchResultItem>.unmodifiable(results.take(100));
+    final admitted = <SearchResultItem>[];
+    final weakRejectedKeys = <SearchResultIdentity>{};
+    for (final item in byKey.values) {
+      if (_shouldKeepUnifiedResult(item)) {
+        admitted.add(item);
+      } else {
+        weakRejectedKeys.add(item.identity);
+      }
+    }
+    admitted.sort((left, right) => _compare(query, left, right));
+    final results = List<SearchResultItem>.unmodifiable(admitted.take(100));
+    final resultKeys = results.map((item) => item.identity).toSet();
+    final semanticOnlyKeys = semanticByKey.keys
+        .where((key) => !keywordKeys.contains(key))
+        .toSet();
+    final rejections = <SearchFusionRejection>[
+      for (final key in weakRejectedKeys)
+        SearchFusionRejection(
+          identity: key,
+          reason: SearchFusionRejectionReason.weakSemanticAssist,
+          semanticOnly: true,
+        ),
+      for (final key in semanticByKey.keys)
+        if (!weakRejectedKeys.contains(key) && !resultKeys.contains(key))
+          SearchFusionRejection(
+            identity: key,
+            reason: SearchFusionRejectionReason.finalResultLimit,
+            semanticOnly: semanticOnlyKeys.contains(key),
+          ),
+    ];
+    final admittedSemanticResults = <SemanticSearchResult>[
+      for (final item in results)
+        if (semanticByKey[item.identity] case final semantic?) semantic,
+    ];
+    final admittedSemanticOnlyCount = semanticOnlyKeys
+        .where((key) => !weakRejectedKeys.contains(key))
+        .length;
+
+    return SearchFusionOutcome(
+      results: results,
+      admittedSemanticResults: List<SemanticSearchResult>.unmodifiable(
+        admittedSemanticResults,
+      ),
+      diagnostics: SearchFusionDiagnostics(
+        semanticCandidateCount: semanticByKey.length,
+        dualHitCount: semanticByKey.keys.where(keywordKeys.contains).length,
+        semanticOnlyCandidateCount: semanticOnlyKeys.length,
+        admittedSemanticOnlyCount: admittedSemanticOnlyCount,
+        keptSemanticOnlyCount: semanticOnlyKeys
+            .where(resultKeys.contains)
+            .length,
+        rejections: List<SearchFusionRejection>.unmodifiable(rejections),
+      ),
+    );
+  }
+
+  SearchFusionDiagnostics diagnoseFinalResults({
+    required List<SearchResultItem> unifiedResults,
+    required List<SemanticSearchResult> semanticResults,
+  }) {
+    final unifiedByKey = <SearchResultIdentity, SearchResultItem>{
+      for (final item in unifiedResults) item.identity: item,
+    };
+    final semanticByKey = <SearchResultIdentity, SemanticSearchResult>{};
+    for (final result in semanticResults) {
+      final key = result.item.identity;
+      final previous = semanticByKey[key];
+      if (previous == null || result.score > previous.score) {
+        semanticByKey[key] = result;
+      }
+    }
+
+    final semanticOnlyKeys = <SearchResultIdentity>{};
+    final rejections = <SearchFusionRejection>[];
+    for (final entry in semanticByKey.entries) {
+      final unified = unifiedByKey[entry.key];
+      if (unified?.matchSources.contains(SearchMatchSource.keyword) == true) {
+        continue;
+      }
+      semanticOnlyKeys.add(entry.key);
+      if (unified != null) {
+        continue;
+      }
+      final result = entry.value;
+      final admitted = _qualityPolicy.admitsSemanticOnly(
+        fieldQualityTier: result.fieldQualityTier,
+        aggregateRankingScore: result.score,
+      );
+      rejections.add(
+        SearchFusionRejection(
+          identity: entry.key,
+          reason: admitted
+              ? SearchFusionRejectionReason.finalResultLimit
+              : SearchFusionRejectionReason.weakSemanticAssist,
+          semanticOnly: true,
+        ),
+      );
+    }
+
+    return SearchFusionDiagnostics(
+      semanticCandidateCount: semanticByKey.length,
+      dualHitCount: semanticByKey.keys
+          .where(
+            (key) =>
+                unifiedByKey[key]?.matchSources.contains(
+                  SearchMatchSource.keyword,
+                ) ==
+                true,
+          )
+          .length,
+      semanticOnlyCandidateCount: semanticOnlyKeys.length,
+      admittedSemanticOnlyCount: semanticOnlyKeys
+          .where(
+            (key) => !rejections.any(
+              (rejection) =>
+                  rejection.identity == key &&
+                  rejection.reason ==
+                      SearchFusionRejectionReason.weakSemanticAssist,
+            ),
+          )
+          .length,
+      keptSemanticOnlyCount: semanticOnlyKeys
+          .where(unifiedByKey.containsKey)
+          .length,
+      rejections: List<SearchFusionRejection>.unmodifiable(rejections),
+    );
+  }
+
+  List<SemanticSearchResult> admittedSemanticResultsForFinalResults({
+    required List<SearchResultItem> unifiedResults,
+    required List<SemanticSearchResult> semanticResults,
+  }) {
+    final semanticByKey = <SearchResultIdentity, SemanticSearchResult>{};
+    for (final result in semanticResults) {
+      final key = result.item.identity;
+      final previous = semanticByKey[key];
+      if (previous == null || result.score > previous.score) {
+        semanticByKey[key] = result;
+      }
+    }
+    return List<SemanticSearchResult>.unmodifiable([
+      for (final item in unifiedResults)
+        if (item.matchSources.contains(SearchMatchSource.semantic))
+          if (semanticByKey[item.identity] case final result?) result,
+    ]);
   }
 
   int _compare(String query, SearchResultItem left, SearchResultItem right) {

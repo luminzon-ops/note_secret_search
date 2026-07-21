@@ -935,8 +935,10 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
       await tester.pumpAndSettle();
 
-      expect(find.text('语义过滤：语义直达候选 2 条，保留 1 条，过滤 1 条。'), findsOneWidget);
-      expect(find.text('过滤原因：被过滤结果多数只提供补充语义线索，且未达到高分保留条件。'), findsOneWidget);
+      expect(find.text('语义过滤：语义直达候选 3 条，保留 1 条，过滤 2 条。'), findsOneWidget);
+      expect(find.text('过滤原因：低质量补充语义线索 2 条，结果上限截断 0 条。'), findsOneWidget);
+      expect(find.text('Filtered 1'), findsNothing);
+      expect(find.text('Filtered 2'), findsNothing);
     },
   );
 

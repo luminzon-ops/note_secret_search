@@ -1,17 +1,10 @@
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
+import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 
-enum SearchResultHitLabel {
-  dual,
-  keywordPrimary,
-  semanticAssist,
-}
+enum SearchResultHitLabel { dual, keywordPrimary, semanticAssist }
 
-enum SemanticExplanationTier {
-  none,
-  highQuality,
-  assist,
-}
+enum SemanticExplanationTier { none, highQuality, assist }
 
 class SearchResultExplanationSummary {
   const SearchResultExplanationSummary({
@@ -66,7 +59,10 @@ class SearchPipelineTopSummary {
 }
 
 class SemanticTierCounts {
-  const SemanticTierCounts({required this.highQualityCount, required this.assistCount});
+  const SemanticTierCounts({
+    required this.highQualityCount,
+    required this.assistCount,
+  });
 
   final int highQualityCount;
   final int assistCount;
@@ -112,7 +108,10 @@ SemanticTierCounts countSemanticExplanationTiers(List<SearchResultItem> items) {
     }
   }
 
-  return SemanticTierCounts(highQualityCount: highQualityCount, assistCount: assistCount);
+  return SemanticTierCounts(
+    highQualityCount: highQualityCount,
+    assistCount: assistCount,
+  );
 }
 
 String? buildSemanticTierBreakdown(List<SearchResultItem> items) {
@@ -259,7 +258,8 @@ SearchResultExplanationSummary buildSearchResultExplanationSummary(
 
   final headline = switch (dominant) {
     SearchResultHitLabel.dual => '当前前排结果以双命中为主，关键词与语义信号共同参与排序。',
-    SearchResultHitLabel.keywordPrimary when semanticAssistCount > 0 || dualCount > 0 =>
+    SearchResultHitLabel.keywordPrimary
+        when semanticAssistCount > 0 || dualCount > 0 =>
       '当前前排结果以关键词命中为主，语义信号主要用于补充排序。',
     SearchResultHitLabel.keywordPrimary => '当前结果主要来自关键词检索，语义链路尚未明显参与前排排序。',
     SearchResultHitLabel.semanticAssist => '当前前排结果更多依赖语义召回，适合继续检查命中摘要与上下文。',
@@ -276,6 +276,7 @@ SearchResultExplanationSummary buildSearchResultExplanationSummary(
 SearchObservabilitySummary buildSearchObservabilitySummary(
   List<SearchResultItem> unifiedResults, {
   List<SemanticSearchResult> semanticResults = const <SemanticSearchResult>[],
+  SearchFusionDiagnostics? fusionDiagnostics,
 }) {
   var dualCount = 0;
   var keywordPrimaryCount = 0;
@@ -297,7 +298,8 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
     }
 
     final field = item.semanticHitField;
-    if (field != null && item.matchSources.contains(SearchMatchSource.semantic)) {
+    if (field != null &&
+        item.matchSources.contains(SearchMatchSource.semantic)) {
       fieldCounts.update(field, (count) => count + 1, ifAbsent: () => 1);
     }
   }
@@ -322,17 +324,27 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
   final semanticFieldBreakdown = fieldCounts.isEmpty
       ? null
       : '字段分布：${fieldCounts.entries.map((entry) => '${_semanticFieldObservabilityLabel(entry.key)} ${entry.value} 条').join('，')}。';
+  final diagnostics =
+      fusionDiagnostics ??
+      SearchFusionService().diagnoseFinalResults(
+        unifiedResults: unifiedResults,
+        semanticResults: semanticResults,
+      );
   final semanticOnlyFilteringBreakdown = _buildSemanticOnlyFilteringBreakdown(
-    unifiedResults: unifiedResults,
-    semanticResults: semanticResults,
+    diagnostics,
   );
   final semanticOnlyFilteringReason = semanticOnlyFilteringBreakdown == null
       ? null
-       : '过滤原因：被过滤结果多数只提供补充语义线索，且未达到高分保留条件。';
+      : '过滤原因：低质量补充语义线索 '
+            '${diagnostics.rejectionCount(SearchFusionRejectionReason.weakSemanticAssist)} 条，'
+            '结果上限截断 '
+            '${diagnostics.rejections.where((item) => item.reason == SearchFusionRejectionReason.finalResultLimit).length} 条。';
 
   return SearchObservabilitySummary(
-    hitBreakdown: '命中结构：双命中 $dualCount 条，关键词优先 $keywordPrimaryCount 条，语义命中 $semanticAssistCount 条。',
-    semanticTierBreakdown: '语义分层：重点 ${tierCounts.highQualityCount} 条，补充线索 ${tierCounts.assistCount} 条。',
+    hitBreakdown:
+        '命中结构：双命中 $dualCount 条，关键词优先 $keywordPrimaryCount 条，语义命中 $semanticAssistCount 条。',
+    semanticTierBreakdown:
+        '语义分层：重点 ${tierCounts.highQualityCount} 条，补充线索 ${tierCounts.assistCount} 条。',
     dominantSignalHint: _buildDominantSignalHint(
       dominantSignal,
       switch (dominantSignal) {
@@ -344,38 +356,29 @@ SearchObservabilitySummary buildSearchObservabilitySummary(
     semanticFieldBreakdown: semanticFieldBreakdown,
     semanticOnlyFilteringBreakdown: semanticOnlyFilteringBreakdown,
     semanticOnlyFilteringReason: semanticOnlyFilteringReason,
-    dominantFieldHint: dominantField == null ? null : _buildDominantFieldHint(dominantField, fieldCounts[dominantField]!),
+    dominantFieldHint: dominantField == null
+        ? null
+        : _buildDominantFieldHint(dominantField, fieldCounts[dominantField]!),
     reminderHint: reminderHint,
   );
 }
 
-String? _buildSemanticOnlyFilteringBreakdown({
-  required List<SearchResultItem> unifiedResults,
-  required List<SemanticSearchResult> semanticResults,
-}) {
-  if (semanticResults.isEmpty) {
+String? _buildSemanticOnlyFilteringBreakdown(
+  SearchFusionDiagnostics diagnostics,
+) {
+  if (diagnostics.semanticOnlyCandidateCount == 0 ||
+      diagnostics.rejections.isEmpty) {
     return null;
   }
 
-  final unifiedKeys = unifiedResults.map(_searchResultItemKey).toSet();
-  final semanticOnlyCandidateCount = semanticResults
-      .where((result) => !unifiedKeys.contains(_searchResultItemKey(result.item)))
+  final filteredSemanticOnlyCount = diagnostics.rejections
+      .where((item) => item.semanticOnly)
       .length;
-  final keptSemanticOnlyCount = unifiedResults.where(_isSemanticOnlyUnifiedResult).length;
-  final filteredSemanticOnlyCount = semanticOnlyCandidateCount - keptSemanticOnlyCount;
-
-  if (semanticOnlyCandidateCount <= 0 || filteredSemanticOnlyCount <= 0) {
-    return null;
-  }
-
-  return '语义过滤：语义直达候选 $semanticOnlyCandidateCount 条，保留 $keptSemanticOnlyCount 条，过滤 $filteredSemanticOnlyCount 条。';
+  return '语义过滤：语义直达候选 '
+      '${diagnostics.semanticOnlyCandidateCount} 条，保留 '
+      '${diagnostics.keptSemanticOnlyCount} 条，过滤 '
+      '$filteredSemanticOnlyCount 条。';
 }
-
-bool _isSemanticOnlyUnifiedResult(SearchResultItem item) {
-  return item.matchSources.length == 1 && item.matchSources.contains(SearchMatchSource.semantic);
-}
-
-String _searchResultItemKey(SearchResultItem item) => '${item.type.name}:${item.id}';
 
 String? _buildReminderHint({
   required SearchResultHitLabel dominantSignal,
@@ -386,8 +389,10 @@ String? _buildReminderHint({
   required int highQualitySemanticCount,
   required int assistSemanticCount,
 }) {
-  final weakSemanticParticipation = dualCount + semanticAssistCount <= keywordPrimaryCount;
-  if (dominantSignal == SearchResultHitLabel.keywordPrimary && weakSemanticParticipation) {
+  final weakSemanticParticipation =
+      dualCount + semanticAssistCount <= keywordPrimaryCount;
+  if (dominantSignal == SearchResultHitLabel.keywordPrimary &&
+      weakSemanticParticipation) {
     return '当前结果主要由关键词命中主导，语义链路参与较弱。';
   }
 
@@ -457,7 +462,9 @@ String _buildDominantSignalHint(SearchResultHitLabel label, int count) {
   }
 }
 
-SemanticHitField? _resolveDominantField(Map<SemanticHitField, int> fieldCounts) {
+SemanticHitField? _resolveDominantField(
+  Map<SemanticHitField, int> fieldCounts,
+) {
   if (fieldCounts.isEmpty) {
     return null;
   }
@@ -492,6 +499,7 @@ String _buildDominantFieldHint(SemanticHitField field, int count) {
 SearchPipelineTopSummary buildSearchPipelineTopSummary({
   required List<SearchResultItem> unifiedResults,
   required List<SemanticSearchResult> semanticResults,
+  SearchFusionDiagnostics? fusionDiagnostics,
 }) {
   final semanticResultCount = semanticResults.length;
   final hasSemanticInUnified = unifiedResults.any(
@@ -514,6 +522,7 @@ SearchPipelineTopSummary buildSearchPipelineTopSummary({
     observability: buildSearchObservabilitySummary(
       unifiedResults,
       semanticResults: semanticResults,
+      fusionDiagnostics: fusionDiagnostics,
     ),
     showSemanticQualityHint: hasSemanticInUnified && semanticResultCount > 0,
   );
