@@ -103,6 +103,59 @@ void main() {
       expect(results.map((item) => item.id), const <String>['live']);
     },
   );
+
+  test(
+    'keyword candidate cap preserves high-affinity username hits after 200 results',
+    () {
+      final service = SearchService(cryptoService: const _WideCryptoService());
+      final now = DateTime(2026, 7, 20);
+      final secrets = <SecretItem>[
+        for (var index = 0; index < 200; index++)
+          SecretItem(
+            id: 'note-hit-${index.toString().padLeft(3, '0')}',
+            vaultId: 'default',
+            title: 'Low priority $index',
+            usernameCiphertext: 'other'.codeUnits,
+            passwordCiphertext: 'password'.codeUnits,
+            websiteUrlCiphertext: 'https://example.test'.codeUnits,
+            noteCiphertext: 'alice@example.test'.codeUnits,
+            tags: const <String>[],
+            categoryId: null,
+            favorite: false,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        SecretItem(
+          id: 'username-hit',
+          vaultId: 'default',
+          title: 'Older high affinity',
+          usernameCiphertext: 'alice@example.test'.codeUnits,
+          passwordCiphertext: 'password'.codeUnits,
+          websiteUrlCiphertext: 'https://example.test'.codeUnits,
+          noteCiphertext: 'other'.codeUnits,
+          tags: const <String>[],
+          categoryId: null,
+          favorite: false,
+          createdAt: now.subtract(const Duration(days: 2)),
+          updatedAt: now.subtract(const Duration(days: 1)),
+        ),
+      ];
+
+      final results = service.search(
+        activeVaultId: 'default',
+        query: 'alice@example.test',
+        configuration: _configuration(
+          includeSecretNote: true,
+          includeUsername: true,
+        ),
+        secrets: secrets,
+        notes: const <NoteItem>[],
+      );
+
+      expect(results, hasLength(200));
+      expect(results.first.id, 'username-hit');
+    },
+  );
 }
 
 class _RecordingCryptoService implements CryptoService {
@@ -136,6 +189,26 @@ class _RecordingCryptoService implements CryptoService {
 
   String _key(FieldCryptoContext context) {
     return '${context.table}/${context.rowId}/${context.column}';
+  }
+}
+
+class _WideCryptoService implements CryptoService {
+  const _WideCryptoService();
+
+  @override
+  String decryptNullable(
+    List<int>? ciphertext, {
+    required FieldCryptoContext context,
+  }) {
+    return ciphertext == null ? '' : String.fromCharCodes(ciphertext);
+  }
+
+  @override
+  Uint8List? encryptNullable(
+    String? plaintext, {
+    required FieldCryptoContext context,
+  }) {
+    return plaintext == null ? null : Uint8List.fromList(plaintext.codeUnits);
   }
 }
 

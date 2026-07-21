@@ -41,7 +41,9 @@ class SearchService {
         ),
       ),
     ];
-    results.sort(_compareResults);
+    results.sort(
+      (left, right) => _compareResults(normalizedQuery, left, right),
+    );
     return List<SearchResultItem>.unmodifiable(results.take(200));
   }
 
@@ -226,10 +228,76 @@ class SearchService {
     );
   }
 
-  int _compareResults(SearchResultItem left, SearchResultItem right) {
-    var result = (right.favorite ? 1 : 0).compareTo(left.favorite ? 1 : 0);
+  int _compareResults(
+    String query,
+    SearchResultItem left,
+    SearchResultItem right,
+  ) {
+    var result = _queryAffinity(
+      query,
+      right,
+    ).compareTo(_queryAffinity(query, left));
+    result = result != 0
+        ? result
+        : _fieldQuality(right).compareTo(_fieldQuality(left));
+    result = result != 0
+        ? result
+        : _fieldPriority(right).compareTo(_fieldPriority(left));
+    result = result != 0
+        ? result
+        : (right.favorite ? 1 : 0).compareTo(left.favorite ? 1 : 0);
     result = result != 0 ? result : right.updatedAt.compareTo(left.updatedAt);
     result = result != 0 ? result : left.type.index.compareTo(right.type.index);
     return result != 0 ? result : left.id.compareTo(right.id);
+  }
+
+  int _queryAffinity(String query, SearchResultItem item) {
+    if (query.contains('@') &&
+        item.keywordHitFields.contains(SearchSourceField.secretUsername)) {
+      return 1;
+    }
+    if ((query.contains('://') || query.contains('.') || query.contains('/')) &&
+        item.keywordHitFields.contains(SearchSourceField.secretWebsiteUrl)) {
+      return 1;
+    }
+    if (RegExp(r'^[a-zA-Z0-9_-]{1,24}$').hasMatch(query) &&
+        item.keywordHitFields.any(
+          (field) =>
+              field == SearchSourceField.secretTags ||
+              field == SearchSourceField.noteTags,
+        )) {
+      return 1;
+    }
+    return 0;
+  }
+
+  int _fieldQuality(SearchResultItem item) {
+    return item.keywordHitFields.any(
+          (field) =>
+              field == SearchSourceField.secretTitle ||
+              field == SearchSourceField.noteTitle ||
+              field == SearchSourceField.secretUsername ||
+              field == SearchSourceField.noteSummary,
+        )
+        ? 2
+        : 1;
+  }
+
+  int _fieldPriority(SearchResultItem item) {
+    var best = 0;
+    for (final field in item.keywordHitFields) {
+      final priority = switch (field) {
+        SearchSourceField.secretTitle || SearchSourceField.noteTitle => 6,
+        SearchSourceField.secretUsername || SearchSourceField.noteSummary => 5,
+        SearchSourceField.secretWebsiteUrl || SearchSourceField.secretNote => 4,
+        SearchSourceField.secretTags || SearchSourceField.noteTags => 3,
+        SearchSourceField.noteBody => 2,
+        SearchSourceField.secretPassword => 1,
+      };
+      if (priority > best) {
+        best = priority;
+      }
+    }
+    return best;
   }
 }
