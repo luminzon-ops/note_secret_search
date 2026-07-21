@@ -186,6 +186,74 @@ void main() {
     expect(await _columnNames(database, 'vaults'), contains('rogue'));
   });
 
+  test('v6 rejects foreign key corruption without repair', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'note_secret_search_schema_foreign_key_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final manager = DatabaseSchemaManager();
+    final database = await _openManagedDatabase(
+      p.join(directory.path, 'foreign-key.db'),
+      manager,
+    );
+    addTearDown(database.close);
+    await database.execute('PRAGMA foreign_keys = OFF');
+    await database.insert('secret_items', <String, Object?>{
+      'id': 'orphan-secret',
+      'vault_id': 'missing-vault',
+      'title': 'Orphan',
+      'favorite': 0,
+      'created_at': 1,
+      'updated_at': 1,
+    });
+    await database.execute('PRAGMA foreign_keys = ON');
+
+    expect(await _pragmaInt(database, 'foreign_keys'), 1);
+    expect(await database.rawQuery('PRAGMA foreign_key_check'), isNotEmpty);
+    await expectLater(
+      manager.validate(database),
+      throwsA(
+        isA<DatabaseSchemaException>().having(
+          (error) => error.code,
+          'code',
+          'database_schema_invalid',
+        ),
+      ),
+    );
+    expect(
+      await database.query(
+        'secret_items',
+        where: 'id = ?',
+        whereArgs: const <Object>['orphan-secret'],
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('v6 rejects a failed quick check', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'note_secret_search_schema_quick_check_',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final manager = DatabaseSchemaManager();
+    final database = await _openManagedDatabase(
+      p.join(directory.path, 'quick-check.db'),
+      manager,
+    );
+    addTearDown(database.close);
+
+    await expectLater(
+      manager.validate(_QuickCheckFailureDatabase(database)),
+      throwsA(
+        isA<DatabaseSchemaException>().having(
+          (error) => error.code,
+          'code',
+          'database_schema_invalid',
+        ),
+      ),
+    );
+  });
+
   test('v6 fingerprint includes table CHECK definitions', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_check_fingerprint_',
@@ -334,6 +402,57 @@ Future<Database> _openManagedDatabase(
       singleInstance: false,
     ),
   );
+}
+
+class _QuickCheckFailureDatabase implements Database {
+  const _QuickCheckFailureDatabase(this._delegate);
+
+  final Database _delegate;
+
+  @override
+  Future<List<Map<String, Object?>>> query(
+    String table, {
+    bool? distinct,
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereArgs,
+    String? groupBy,
+    String? having,
+    String? orderBy,
+    int? limit,
+    int? offset,
+  }) {
+    return _delegate.query(
+      table,
+      distinct: distinct,
+      columns: columns,
+      where: where,
+      whereArgs: whereArgs,
+      groupBy: groupBy,
+      having: having,
+      orderBy: orderBy,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) {
+    if (sql == 'PRAGMA quick_check') {
+      return Future<List<Map<String, Object?>>>.value(
+        const <Map<String, Object?>>[
+          <String, Object?>{'quick_check': 'corrupt'},
+        ],
+      );
+    }
+    return _delegate.rawQuery(sql, arguments);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 Future<int> _pragmaInt(Database database, String pragma) async {

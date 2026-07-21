@@ -295,6 +295,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   }
 
   Future<void> _validateTargetStructure(DatabaseExecutor database) async {
+    await _validateIntegrity(database);
     await _validateLedger(database);
     final defaults = await database.rawQuery('''
       SELECT COUNT(*) AS count
@@ -305,6 +306,16 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       throw const DatabaseSchemaException('database_schema_invalid');
     }
     if (await fingerprint(database) != expectedFingerprint) {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+  }
+
+  Future<void> _validateIntegrity(DatabaseExecutor database) async {
+    final quickCheck = await database.rawQuery('PRAGMA quick_check');
+    if (quickCheck.length != 1 ||
+        quickCheck.single.length != 1 ||
+        quickCheck.single.values.single != 'ok' ||
+        (await database.rawQuery('PRAGMA foreign_key_check')).isNotEmpty) {
       throw const DatabaseSchemaException('database_schema_invalid');
     }
   }
