@@ -4,7 +4,7 @@ import 'package:uuid/uuid.dart';
 
 enum ItemTagType { secret, note }
 
-const _maxBoundItemIds = 999 - 3;
+const _itemIdBatchSize = 200;
 
 abstract interface class ItemTagStore {
   Future<Map<String, List<String>>> loadTagsByItemIds(
@@ -58,12 +58,18 @@ class SqliteItemTagStore implements ItemTagStore {
       ItemTagType.secret => DatabaseSchema.secretItems,
       ItemTagType.note => DatabaseSchema.noteItems,
     };
-    final bindItemIds = tagsByItemId.length <= _maxBoundItemIds;
-    final itemIdFilter = bindItemIds
-        ? 'AND link.item_id IN (${List<String>.filled(tagsByItemId.length, '?').join(', ')})'
-        : '';
-    final rows = await executor.rawQuery(
-      '''
+    final uniqueItemIds = tagsByItemId.keys.toList(growable: false);
+    for (
+      var offset = 0;
+      offset < uniqueItemIds.length;
+      offset += _itemIdBatchSize
+    ) {
+      final batch = uniqueItemIds
+          .skip(offset)
+          .take(_itemIdBatchSize)
+          .toList(growable: false);
+      final rows = await executor.rawQuery(
+        '''
       SELECT link.item_id, tag.name
       FROM ${DatabaseSchema.itemTags} link
       INNER JOIN ${DatabaseSchema.tags} tag ON tag.id = link.tag_id
@@ -72,18 +78,14 @@ class SqliteItemTagStore implements ItemTagStore {
         AND tag.vault_id = ?
         AND item.vault_id = ?
         AND item.deleted_at IS NULL
-        $itemIdFilter
+        AND link.item_id IN (${List<String>.filled(batch.length, '?').join(', ')})
       ORDER BY link.item_id ASC, tag.name COLLATE NOCASE ASC, tag.id ASC
       ''',
-      <Object>[
-        itemType.name,
-        vaultId,
-        vaultId,
-        if (bindItemIds) ...tagsByItemId.keys,
-      ],
-    );
-    for (final row in rows) {
-      tagsByItemId[row['item_id']! as String]?.add(row['name']! as String);
+        <Object>[itemType.name, vaultId, vaultId, ...batch],
+      );
+      for (final row in rows) {
+        tagsByItemId[row['item_id']! as String]?.add(row['name']! as String);
+      }
     }
     return tagsByItemId;
   }

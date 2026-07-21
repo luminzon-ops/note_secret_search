@@ -171,31 +171,42 @@ void main() {
     });
   });
 
-  test('batch tag loading stays below legacy SQLite bind limits', () async {
-    final database = await openTestAppDatabase();
-    addTearDown(database.close);
-    final store = SqliteItemTagStore();
-    final itemIds = List<String>.generate(
-      1001,
-      (index) => 'secret-$index',
-      growable: false,
-    );
-    late _BindLimitedExecutor limited;
-
-    final tags = await database.run((executor) {
-      limited = _BindLimitedExecutor(executor, maxBindVariables: 999);
-      return store.loadTagsByItemIds(
-        limited,
-        itemIds: itemIds,
-        itemType: ItemTagType.secret,
-        vaultId: 'default',
+  test(
+    'batch tag loading keeps every query scoped to at most 200 ids',
+    () async {
+      final database = await openTestAppDatabase();
+      addTearDown(database.close);
+      final store = SqliteItemTagStore();
+      final itemIds = List<String>.generate(
+        1001,
+        (index) => 'secret-$index',
+        growable: false,
       );
-    });
+      late _BindLimitedExecutor limited;
 
-    expect(limited.rawQueryCount, 1);
-    expect(tags, hasLength(itemIds.length));
-    expect(tags.values, everyElement(isEmpty));
-  });
+      final tags = await database.run((executor) {
+        limited = _BindLimitedExecutor(executor, maxBindVariables: 999);
+        return store.loadTagsByItemIds(
+          limited,
+          itemIds: itemIds,
+          itemType: ItemTagType.secret,
+          vaultId: 'default',
+        );
+      });
+
+      expect(limited.rawQueryCount, 6);
+      expect(
+        limited.sqlStatements,
+        everyElement(contains('link.item_id IN (')),
+      );
+      expect(
+        limited.argumentLists.map((arguments) => arguments.length),
+        everyElement(lessThanOrEqualTo(203)),
+      );
+      expect(tags, hasLength(itemIds.length));
+      expect(tags.values, everyElement(isEmpty));
+    },
+  );
 
   test('single item tag loading binds the requested item id', () async {
     final database = await openTestAppDatabase();
@@ -214,10 +225,12 @@ void main() {
     });
 
     expect(limited.lastSql, contains('link.item_id IN (?)'));
-    expect(
-      limited.lastArguments,
-      const <Object?>['secret', 'default', 'default', 'secret-1'],
-    );
+    expect(limited.lastArguments, const <Object?>[
+      'secret',
+      'default',
+      'default',
+      'secret-1',
+    ]);
   });
 }
 
@@ -229,6 +242,8 @@ class _BindLimitedExecutor implements DatabaseExecutor {
   int rawQueryCount = 0;
   String? lastSql;
   List<Object?>? lastArguments;
+  final List<String> sqlStatements = <String>[];
+  final List<List<Object?>> argumentLists = <List<Object?>>[];
 
   @override
   Future<List<Map<String, Object?>>> rawQuery(
@@ -238,6 +253,8 @@ class _BindLimitedExecutor implements DatabaseExecutor {
     rawQueryCount += 1;
     lastSql = sql;
     lastArguments = arguments;
+    sqlStatements.add(sql);
+    argumentLists.add(List<Object?>.unmodifiable(arguments ?? const []));
     if ((arguments?.length ?? 0) > maxBindVariables) {
       throw StateError('sqlite_bind_limit_exceeded');
     }
