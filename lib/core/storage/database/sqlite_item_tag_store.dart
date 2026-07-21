@@ -110,12 +110,23 @@ class SqliteItemTagStore implements ItemTagStore {
       for (final row in existingRows)
         _sqliteNoCaseKey(row['name']! as String): row['id']! as String,
     };
-
-    await executor.delete(
-      DatabaseSchema.itemTags,
-      where: 'item_id = ? AND item_type = ?',
-      whereArgs: <Object>[itemId, itemType.name],
+    final linkedRows = await executor.rawQuery(
+      '''
+      SELECT link.tag_id, tag.name
+      FROM ${DatabaseSchema.itemTags} link
+      INNER JOIN ${DatabaseSchema.tags} tag ON tag.id = link.tag_id
+      WHERE link.item_id = ?
+        AND link.item_type = ?
+        AND tag.vault_id = ?
+      ORDER BY link.tag_id ASC
+      ''',
+      <Object>[itemId, itemType.name, vaultId],
     );
+    final linkedTagIds = <String>{
+      for (final row in linkedRows) row['tag_id']! as String,
+    };
+    final desiredTagIds = <String>{};
+
     for (final entry in normalizedNames.entries) {
       var tagId = tagsByName[entry.key];
       if (tagId == null) {
@@ -128,15 +139,25 @@ class SqliteItemTagStore implements ItemTagStore {
         });
         tagsByName[entry.key] = tagId;
       }
-      await executor.rawInsert(
-        '''
+      desiredTagIds.add(tagId);
+      if (!linkedTagIds.contains(tagId)) {
+        await executor.rawInsert(
+          '''
         INSERT OR IGNORE INTO ${DatabaseSchema.itemTags} (
           item_id,
           item_type,
           tag_id
         ) VALUES (?, ?, ?)
         ''',
-        <Object>[itemId, itemType.name, tagId],
+          <Object>[itemId, itemType.name, tagId],
+        );
+      }
+    }
+    for (final tagId in linkedTagIds.difference(desiredTagIds)) {
+      await executor.delete(
+        DatabaseSchema.itemTags,
+        where: 'item_id = ? AND item_type = ? AND tag_id = ?',
+        whereArgs: <Object>[itemId, itemType.name, tagId],
       );
     }
     await _deleteOrphanTags(executor, vaultId);

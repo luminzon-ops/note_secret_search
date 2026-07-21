@@ -66,11 +66,13 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       'dcd00e6a99dfc4913bb0ef551a311c0c';
   static const String v6MigrationName = 'database_schema_v6';
   static const String v6MigrationChecksum =
-      'e4330eefceac703fc8436da05e40ad593875148782b3f7dea3fbe9c50f6bfb10';
+      'e91b4d4595beab7f2343439d177d28fa'
+      '570300b27eb33de89f5f2447f1d14183';
   static const String migrationName = v6MigrationName;
   static const String migrationChecksum = v6MigrationChecksum;
   static const String expectedFingerprint =
-      '29d431c6ea08e6de7236657a4aa370328070628ed337817e2de1afbbc67b455e';
+      'cdcfbebdc3dff31920a81cb4e6890f12'
+      '28fbdd4a18a226407e67a568d2e1ad41';
 
   final int Function() _nowMilliseconds;
   final DatabaseMigrationCheckpointCallback? _onMigrationCheckpoint;

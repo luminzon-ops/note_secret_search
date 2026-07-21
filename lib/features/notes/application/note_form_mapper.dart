@@ -48,16 +48,20 @@ abstract final class NoteFormMapper {
       vaultId: previous.vaultId,
       title: draft.title.trim(),
       contentCiphertext:
-          cryptoService.encryptField(
-            draft.content,
+          _updatedCiphertext(
+            previousCiphertext: previous.contentCiphertext,
+            plaintext: draft.content,
             field: EncryptedDatabaseField.noteContent,
             rowId: previous.id,
+            cryptoService: cryptoService,
           ) ??
           <int>[],
-      summaryCacheCiphertext: cryptoService.encryptField(
-        draft.summary,
+      summaryCacheCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.summaryCacheCiphertext,
+        plaintext: draft.summary,
         field: EncryptedDatabaseField.noteSummary,
         rowId: previous.id,
+        cryptoService: cryptoService,
       ),
       tags: draft.tags,
       categoryId: draft.categoryId,
@@ -85,5 +89,22 @@ abstract final class NoteFormMapper {
       categoryId: item.categoryId,
       favorite: item.favorite,
     );
+  }
+
+  static List<int>? _updatedCiphertext({
+    required List<int>? previousCiphertext,
+    required String plaintext,
+    required EncryptedDatabaseField field,
+    required String rowId,
+    required CryptoService cryptoService,
+  }) {
+    final previousPlaintext = cryptoService.decryptField(
+      previousCiphertext,
+      field: field,
+      rowId: rowId,
+    );
+    return previousPlaintext == plaintext
+        ? previousCiphertext
+        : cryptoService.encryptField(plaintext, field: field, rowId: rowId);
   }
 }

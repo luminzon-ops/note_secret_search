@@ -1,14 +1,28 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_manager.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v6.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
   setUpAll(sqfliteFfiInit);
+
+  test('v6 migration checksum covers the normalized final delta', () {
+    final normalized = DatabaseSchemaV6.createStatements
+        .map(_normalizeSql)
+        .toList(growable: false);
+
+    expect(
+      DatabaseSchemaManager.v6MigrationChecksum,
+      sha256.convert(utf8.encode(jsonEncode(normalized))).toString(),
+    );
+  });
 
   test(
     'fresh database creates validated schema v6 with ordered ledger',
@@ -373,4 +387,8 @@ Map<String, Object?> _indexSetRow({
     'chunk_count': chunkCount,
     'created_at': 1,
   };
+}
+
+String _normalizeSql(String value) {
+  return value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
 }

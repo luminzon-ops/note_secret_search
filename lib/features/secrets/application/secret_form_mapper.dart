@@ -56,25 +56,33 @@ abstract final class SecretFormMapper {
       id: previous.id,
       vaultId: previous.vaultId,
       title: draft.title.trim(),
-      usernameCiphertext: cryptoService.encryptField(
-        draft.username,
+      usernameCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.usernameCiphertext,
+        plaintext: draft.username,
         field: EncryptedDatabaseField.secretUsername,
         rowId: previous.id,
+        cryptoService: cryptoService,
       ),
-      passwordCiphertext: cryptoService.encryptField(
-        draft.password,
+      passwordCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.passwordCiphertext,
+        plaintext: draft.password,
         field: EncryptedDatabaseField.secretPassword,
         rowId: previous.id,
+        cryptoService: cryptoService,
       ),
-      websiteUrlCiphertext: cryptoService.encryptField(
-        draft.websiteUrl,
+      websiteUrlCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.websiteUrlCiphertext,
+        plaintext: draft.websiteUrl,
         field: EncryptedDatabaseField.secretWebsiteUrl,
         rowId: previous.id,
+        cryptoService: cryptoService,
       ),
-      noteCiphertext: cryptoService.encryptField(
-        draft.note,
+      noteCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.noteCiphertext,
+        plaintext: draft.note,
         field: EncryptedDatabaseField.secretNote,
         rowId: previous.id,
+        cryptoService: cryptoService,
       ),
       tags: draft.tags,
       categoryId: draft.categoryId,
@@ -113,5 +121,22 @@ abstract final class SecretFormMapper {
       categoryId: item.categoryId,
       favorite: item.favorite,
     );
+  }
+
+  static List<int>? _updatedCiphertext({
+    required List<int>? previousCiphertext,
+    required String plaintext,
+    required EncryptedDatabaseField field,
+    required String rowId,
+    required CryptoService cryptoService,
+  }) {
+    final previousPlaintext = cryptoService.decryptField(
+      previousCiphertext,
+      field: field,
+      rowId: rowId,
+    );
+    return previousPlaintext == plaintext
+        ? previousCiphertext
+        : cryptoService.encryptField(plaintext, field: field, rowId: rowId);
   }
 }

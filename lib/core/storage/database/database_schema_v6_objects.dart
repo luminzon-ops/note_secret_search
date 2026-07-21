@@ -130,6 +130,14 @@ abstract final class DatabaseSchemaV6Objects {
     END
     ''',
     '''
+    CREATE TRIGGER IF NOT EXISTS trg_secret_embedding_index_delete
+    AFTER DELETE ON secret_items
+    BEGIN
+      DELETE FROM embedding_index_sets
+      WHERE source_type = 'secret' AND source_id = OLD.id;
+    END
+    ''',
+    '''
     CREATE TRIGGER IF NOT EXISTS trg_note_embedding_index_invalidate
     AFTER UPDATE OF vault_id, title, content_ciphertext,
       summary_ciphertext, deleted_at ON note_items
@@ -138,6 +146,14 @@ abstract final class DatabaseSchemaV6Objects {
       OR OLD.content_ciphertext IS NOT NEW.content_ciphertext
       OR OLD.summary_ciphertext IS NOT NEW.summary_ciphertext
       OR OLD.deleted_at IS NOT NEW.deleted_at
+    BEGIN
+      DELETE FROM embedding_index_sets
+      WHERE source_type = 'note' AND source_id = OLD.id;
+    END
+    ''',
+    '''
+    CREATE TRIGGER IF NOT EXISTS trg_note_embedding_index_delete
+    AFTER DELETE ON note_items
     BEGIN
       DELETE FROM embedding_index_sets
       WHERE source_type = 'note' AND source_id = OLD.id;
