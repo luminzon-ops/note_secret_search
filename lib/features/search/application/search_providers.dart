@@ -391,8 +391,8 @@ class SearchIndexController {
     if (!_canContinue(lockEpoch)) {
       return;
     }
-    final beforeIds = beforeResults
-        .map((item) => item.id)
+    final beforeIdentities = beforeResults
+        .map((item) => item.identity)
         .toList(growable: false);
 
     if (!_canContinue(lockEpoch)) {
@@ -444,8 +444,10 @@ class SearchIndexController {
           .read(searchRefreshFeedbackProvider.notifier)
           .state = _buildRefreshFeedback(
         query: query,
-        beforeIds: beforeIds,
-        afterIds: afterResults.map((item) => item.id).toList(growable: false),
+        beforeIdentities: beforeIdentities,
+        afterIdentities: afterResults
+            .map((item) => item.identity)
+            .toList(growable: false),
       );
 
       if (!_canContinue(lockEpoch)) {
@@ -478,8 +480,8 @@ class SearchIndexController {
 
   SearchRefreshFeedbackState _buildRefreshFeedback({
     required String query,
-    required List<String> beforeIds,
-    required List<String> afterIds,
+    required List<SearchResultIdentity> beforeIdentities,
+    required List<SearchResultIdentity> afterIdentities,
   }) {
     final now = DateTime.now();
     if (query.isEmpty) {
@@ -493,14 +495,18 @@ class SearchIndexController {
       );
     }
 
-    final countChanged = beforeIds.length != afterIds.length;
-    final orderChanged = !_sameOrderedIds(beforeIds, afterIds);
+    final countChanged = beforeIdentities.length != afterIdentities.length;
+    final orderChanged = !_sameOrderedIdentities(
+      beforeIdentities,
+      afterIdentities,
+    );
 
     if (countChanged) {
       return SearchRefreshFeedbackState(
         visible: true,
         headline: '搜索状态已刷新',
-        message: '当前结果已更新，结果数量从 ${beforeIds.length} 条变为 ${afterIds.length} 条。',
+        message:
+            '当前结果已更新，结果数量从 ${beforeIdentities.length} 条变为 ${afterIdentities.length} 条。',
         changed: true,
         queryAtRefresh: query,
         completedAt: now,
@@ -528,7 +534,10 @@ class SearchIndexController {
     );
   }
 
-  bool _sameOrderedIds(List<String> left, List<String> right) {
+  bool _sameOrderedIdentities(
+    List<SearchResultIdentity> left,
+    List<SearchResultIdentity> right,
+  ) {
     if (left.length != right.length) {
       return false;
     }

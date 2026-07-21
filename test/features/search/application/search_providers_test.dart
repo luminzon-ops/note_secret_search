@@ -135,6 +135,18 @@ List<SearchResultItem> _results(List<String> ids) {
       .toList(growable: false);
 }
 
+SearchResultItem _result(String id, SearchResultType type) {
+  return SearchResultItem(
+    id: id,
+    type: type,
+    title: 'Title $id',
+    preview: 'Preview $id',
+    tags: const <String>[],
+    favorite: false,
+    updatedAt: DateTime(2026, 4, 22),
+  );
+}
+
 void main() {
   test(
     'indexPendingAndRefresh writes empty-query feedback after refresh completes',
@@ -332,6 +344,58 @@ void main() {
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.visible, isTrue);
+      expect(feedback.changed, isTrue);
+      expect(feedback.message, '当前结果已更新，本轮刷新调整了结果排序。');
+    },
+  );
+
+  test(
+    'indexPendingAndRefresh treats Secret and Note with the same id as different results',
+    () async {
+      var callCount = 0;
+      final container = ProviderContainer(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => LockSessionController()..markUnlocked(UnlockMethod.pin),
+          ),
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
+          searchQueryProvider.overrideWith((ref) => 'bank'),
+          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          activeEmbeddingModelProvider.overrideWith(
+            (ref) async => _fakeEmbeddingModel,
+          ),
+          searchIndexSettingsProvider.overrideWith(
+            (ref) async => const SearchIndexSettings.defaults(),
+          ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          searchIndexModelRevisionProvider(
+            _fakeEmbeddingModel,
+          ).overrideWith((ref) async => 'a' * 64),
+          searchIndexServiceProvider.overrideWith(
+            (ref) => _FakeSearchIndexService(),
+          ),
+          unifiedSearchResultsProvider.overrideWith((ref) async {
+            callCount++;
+            return callCount == 1
+                ? <SearchResultItem>[_result('same', SearchResultType.secret)]
+                : <SearchResultItem>[_result('same', SearchResultType.note)];
+          }),
+          semanticSearchResultsProvider.overrideWith(
+            (ref) async => const <SemanticSearchResult>[],
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(searchIndexControllerProvider)
+          .indexPendingAndRefresh();
+
+      final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.changed, isTrue);
       expect(feedback.message, '当前结果已更新，本轮刷新调整了结果排序。');
     },

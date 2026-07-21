@@ -5,6 +5,23 @@ enum SearchResultType { secret, note }
 
 enum SearchMatchSource { keyword, semantic }
 
+class SearchResultIdentity {
+  const SearchResultIdentity({required this.type, required this.id});
+
+  final SearchResultType type;
+  final String id;
+
+  @override
+  bool operator ==(Object other) {
+    return other is SearchResultIdentity &&
+        other.type == type &&
+        other.id == id;
+  }
+
+  @override
+  int get hashCode => Object.hash(type, id);
+}
+
 enum SemanticHitField {
   title,
   username,
@@ -51,6 +68,10 @@ class SearchResultItem {
   final int semanticFieldQualityTier;
   final List<SearchSourceField> keywordHitFields;
   final List<SearchEvidence> evidence;
+
+  SearchResultIdentity get identity {
+    return SearchResultIdentity(type: type, id: id);
+  }
 
   SearchResultItem copyWith({
     String? id,

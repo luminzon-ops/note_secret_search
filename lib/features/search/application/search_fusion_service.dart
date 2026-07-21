@@ -17,7 +17,7 @@ class SearchFusionService {
     required List<SemanticSearchResult> semanticResults,
     String query = '',
   }) {
-    final byKey = <String, SearchResultItem>{};
+    final byKey = <SearchResultIdentity, SearchResultItem>{};
     for (final item in keywordResults) {
       final keywordEvidence = _keywordEvidence(item);
       byKey[_keyFor(item)] = item.copyWith(
@@ -253,5 +253,5 @@ class SearchFusionService {
     };
   }
 
-  String _keyFor(SearchResultItem item) => '${item.type.name}:${item.id}';
+  SearchResultIdentity _keyFor(SearchResultItem item) => item.identity;
 }
