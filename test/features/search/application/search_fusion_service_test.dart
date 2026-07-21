@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
+import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 
@@ -8,6 +9,7 @@ SearchResultItem _keywordItem(
   SearchResultType type = SearchResultType.secret,
   bool favorite = false,
   DateTime? updatedAt,
+  List<SearchSourceField> keywordHitFields = const <SearchSourceField>[],
 }) {
   return SearchResultItem(
     id: id,
@@ -18,6 +20,7 @@ SearchResultItem _keywordItem(
     favorite: favorite,
     updatedAt: updatedAt ?? DateTime(2026, 4, 22),
     matchSources: const {SearchMatchSource.keyword},
+    keywordHitFields: keywordHitFields,
   );
 }
 
@@ -28,6 +31,7 @@ SemanticSearchResult _semanticResult(
   required SemanticHitField hitField,
   bool favorite = false,
   DateTime? updatedAt,
+  List<SearchEvidence> evidence = const <SearchEvidence>[],
 }) {
   return SemanticSearchResult(
     item: SearchResultItem(
@@ -43,6 +47,7 @@ SemanticSearchResult _semanticResult(
     hitSummary: '${hitField.name}: $id',
     hitField: hitField,
     primaryRawSimilarity: 0.88,
+    evidence: evidence,
   );
 }
 
@@ -219,5 +224,89 @@ void main() {
 
     expect(results.single.semanticScore, 1.03);
     expect(results.single.semanticRawSimilarity, 0.88);
+  });
+
+  test('fusion preserves typed keyword and semantic evidence metadata', () {
+    final semanticEvidence = SearchEvidence(
+      kind: SearchEvidenceKind.semantic,
+      sourceField: SearchSourceField.secretTags,
+      fieldChunkIndex: 2,
+      summary: '标签：backup',
+      rawSimilarity: 0.93,
+      weight: 0.96,
+      rankingScore: 0.8928,
+      threshold: 0.90,
+      modelRevisionHash: 'a' * 64,
+      fingerprintVersion: 1,
+      indexConfigVersion: 1,
+      indexConfigEpoch: 7,
+      chunkSchemaVersion: 1,
+      vectorFormatVersion: 1,
+    );
+
+    final results = service.fuse(
+      keywordResults: [
+        _keywordItem(
+          'dual',
+          keywordHitFields: const <SearchSourceField>[
+            SearchSourceField.secretTitle,
+          ],
+        ),
+      ],
+      semanticResults: [
+        _semanticResult(
+          'dual',
+          score: 0.8928,
+          hitField: SemanticHitField.tags,
+          evidence: <SearchEvidence>[semanticEvidence],
+        ),
+      ],
+    );
+
+    expect(
+      results.single.evidence.map(
+        (evidence) => (evidence.kind, evidence.sourceField),
+      ),
+      const <(SearchEvidenceKind, SearchSourceField)>[
+        (SearchEvidenceKind.keyword, SearchSourceField.secretTitle),
+        (SearchEvidenceKind.semantic, SearchSourceField.secretTags),
+      ],
+    );
+    expect(results.single.evidence.first.summary, isEmpty);
+    expect(results.single.evidence.last.modelRevisionHash, 'a' * 64);
+    expect(results.single.evidence.last.indexConfigEpoch, 7);
+  });
+
+  test('dual-hit ranking uses the strongest keyword or semantic field', () {
+    final results = service.fuse(
+      keywordResults: [
+        _keywordItem(
+          'z-title',
+          keywordHitFields: const <SearchSourceField>[
+            SearchSourceField.secretTitle,
+          ],
+        ),
+        _keywordItem(
+          'a-tags',
+          keywordHitFields: const <SearchSourceField>[
+            SearchSourceField.secretTags,
+          ],
+        ),
+      ],
+      semanticResults: [
+        _semanticResult(
+          'z-title',
+          score: 0.91,
+          hitField: SemanticHitField.noteBody,
+        ),
+        _semanticResult(
+          'a-tags',
+          score: 0.91,
+          hitField: SemanticHitField.noteBody,
+        ),
+      ],
+    );
+
+    expect(results.map((item) => item.id), <String>['z-title', 'a-tags']);
   });
 }

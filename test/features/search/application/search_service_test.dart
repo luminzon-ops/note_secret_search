@@ -6,6 +6,7 @@ import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 void main() {
@@ -28,6 +29,20 @@ void main() {
         <SearchSourceField>[SearchSourceField.secretTitle],
         <SearchSourceField>[SearchSourceField.noteTitle],
       ],
+    );
+    expect(
+      results.map((item) => item.evidence).toList(),
+      everyElement(
+        contains(
+          isA<SearchEvidence>()
+              .having(
+                (evidence) => evidence.kind,
+                'kind',
+                SearchEvidenceKind.keyword,
+              )
+              .having((evidence) => evidence.summary, 'summary', isEmpty),
+        ),
+      ),
     );
     expect(crypto.decryptedContexts, isEmpty);
   });

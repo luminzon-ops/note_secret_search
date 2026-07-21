@@ -236,7 +236,7 @@ class SemanticSearchService {
     evidence.sort(_compareEvidence);
     final top = evidence.take(2).toList(growable: false);
     final aggregate =
-        top.fold<double>(0, (sum, item) => sum + item.rankingScore) /
+        top.fold<double>(0, (sum, item) => sum + item.rankingScore!) /
         top.length;
     final primary = evidence.first;
     final item = _resultItem(
@@ -376,7 +376,7 @@ class SemanticSearchService {
   }
 
   int _compareEvidence(SearchEvidence left, SearchEvidence right) {
-    final score = right.rankingScore.compareTo(left.rankingScore);
+    final score = right.rankingScore!.compareTo(left.rankingScore!);
     if (score != 0) {
       return score;
     }
@@ -385,7 +385,7 @@ class SemanticSearchService {
     ).compareTo(_fieldPriority(left.sourceField));
     return field != 0
         ? field
-        : left.fieldChunkIndex.compareTo(right.fieldChunkIndex);
+        : left.fieldChunkIndex!.compareTo(right.fieldChunkIndex!);
   }
 
   int _compareCandidates(

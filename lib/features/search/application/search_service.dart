@@ -3,6 +3,7 @@ import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
@@ -104,6 +105,7 @@ class SearchService {
           favorite: item.favorite,
           updatedAt: item.updatedAt,
           keywordHitFields: List<SearchSourceField>.unmodifiable(hits),
+          evidence: _keywordEvidence(hits),
         ),
       );
     }
@@ -167,6 +169,7 @@ class SearchService {
           favorite: item.favorite,
           updatedAt: item.updatedAt,
           keywordHitFields: List<SearchSourceField>.unmodifiable(hits),
+          evidence: _keywordEvidence(hits),
         ),
       );
     }
@@ -202,6 +205,12 @@ class SearchService {
 
   bool _matches(String query, String value) {
     return value.isNotEmpty && value.toLowerCase().contains(query);
+  }
+
+  List<SearchEvidence> _keywordEvidence(List<SearchSourceField> fields) {
+    return List<SearchEvidence>.unmodifiable(
+      fields.map((field) => SearchEvidence.keyword(sourceField: field)),
+    );
   }
 
   int _compareResults(SearchResultItem left, SearchResultItem right) {

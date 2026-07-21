@@ -1,4 +1,5 @@
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 
 enum SearchResultType { secret, note }
 
@@ -31,6 +32,7 @@ class SearchResultItem {
     this.semanticQueryAffinity = 0,
     this.semanticFieldQualityTier = 0,
     this.keywordHitFields = const <SearchSourceField>[],
+    this.evidence = const <SearchEvidence>[],
   });
 
   final String id;
@@ -48,6 +50,7 @@ class SearchResultItem {
   final int semanticQueryAffinity;
   final int semanticFieldQualityTier;
   final List<SearchSourceField> keywordHitFields;
+  final List<SearchEvidence> evidence;
 
   SearchResultItem copyWith({
     String? id,
@@ -69,6 +72,7 @@ class SearchResultItem {
     int? semanticQueryAffinity,
     int? semanticFieldQualityTier,
     List<SearchSourceField>? keywordHitFields,
+    List<SearchEvidence>? evidence,
   }) {
     return SearchResultItem(
       id: id ?? this.id,
@@ -96,6 +100,7 @@ class SearchResultItem {
       semanticFieldQualityTier:
           semanticFieldQualityTier ?? this.semanticFieldQualityTier,
       keywordHitFields: keywordHitFields ?? this.keywordHitFields,
+      evidence: evidence ?? this.evidence,
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 
@@ -12,11 +13,13 @@ class SearchFusionService {
   }) {
     final byKey = <String, SearchResultItem>{};
     for (final item in keywordResults) {
+      final keywordEvidence = _keywordEvidence(item);
       byKey[_keyFor(item)] = item.copyWith(
         matchSources: <SearchMatchSource>{
           ...item.matchSources,
           SearchMatchSource.keyword,
         },
+        evidence: keywordEvidence,
       );
     }
     for (final semantic in semanticResults) {
@@ -43,6 +46,9 @@ class SearchFusionService {
               quality: existing.semanticFieldQualityTier,
             );
       final base = existing ?? semantic.item;
+      final evidence = incomingWins
+          ? _mergeEvidence(_keywordEvidence(base), semantic.evidence)
+          : base.evidence;
       byKey[key] = base.copyWith(
         matchSources: existing == null
             ? const <SearchMatchSource>{SearchMatchSource.semantic}
@@ -56,6 +62,7 @@ class SearchFusionService {
         semanticHitField: semanticFields.field,
         semanticQueryAffinity: semanticFields.affinity,
         semanticFieldQualityTier: semanticFields.quality,
+        evidence: evidence,
       );
     }
 
@@ -91,45 +98,38 @@ class SearchFusionService {
   }
 
   int _queryAffinity(String query, SearchResultItem item) {
-    if (item.semanticQueryAffinity != 0) {
-      return item.semanticQueryAffinity;
-    }
+    var affinity = item.semanticQueryAffinity;
     final normalized = query.trim();
     if (normalized.contains('@') &&
-        item.keywordHitFields.contains(SearchSourceField.secretUsername)) {
-      return 1;
+        _fields(item).contains(SearchSourceField.secretUsername)) {
+      affinity = 1;
     }
     if ((normalized.contains('://') ||
             normalized.contains('.') ||
             normalized.contains('/')) &&
-        item.keywordHitFields.contains(SearchSourceField.secretWebsiteUrl)) {
-      return 1;
+        _fields(item).contains(SearchSourceField.secretWebsiteUrl)) {
+      affinity = 1;
     }
     if (RegExp(r'^[a-zA-Z0-9_-]{1,24}$').hasMatch(normalized) &&
-        item.keywordHitFields.any(
+        _fields(item).any(
           (field) =>
               field == SearchSourceField.secretTags ||
               field == SearchSourceField.noteTags,
         )) {
-      return 1;
+      affinity = 1;
     }
-    return 0;
+    return affinity;
   }
 
   int _qualityTier(SearchResultItem item) {
-    if (item.semanticFieldQualityTier != 0) {
-      return item.semanticFieldQualityTier;
+    var best = item.semanticFieldQualityTier;
+    for (final field in _fields(item)) {
+      final tier = _isHighValueKeywordField(field) ? 2 : 1;
+      if (tier > best) {
+        best = tier;
+      }
     }
-    return switch (item.semanticHitField) {
-      SemanticHitField.title ||
-      SemanticHitField.username ||
-      SemanticHitField.summary => 2,
-      SemanticHitField.url ||
-      SemanticHitField.secretNote ||
-      SemanticHitField.tags ||
-      SemanticHitField.noteBody => 1,
-      null => item.keywordHitFields.any(_isHighValueKeywordField) ? 2 : 1,
-    };
+    return best == 0 ? 1 : best;
   }
 
   bool _isHighValueKeywordField(SearchSourceField field) {
@@ -140,27 +140,9 @@ class SearchFusionService {
   }
 
   int _fieldPriority(SearchResultItem item) {
-    final semantic = switch (item.semanticHitField) {
-      SemanticHitField.title => 6,
-      SemanticHitField.username || SemanticHitField.summary => 5,
-      SemanticHitField.url || SemanticHitField.secretNote => 4,
-      SemanticHitField.tags => 3,
-      SemanticHitField.noteBody => 2,
-      null => 0,
-    };
-    if (semantic != 0) {
-      return semantic;
-    }
     var best = 0;
-    for (final field in item.keywordHitFields) {
-      final priority = switch (field) {
-        SearchSourceField.secretTitle || SearchSourceField.noteTitle => 6,
-        SearchSourceField.secretUsername || SearchSourceField.noteSummary => 5,
-        SearchSourceField.secretWebsiteUrl || SearchSourceField.secretNote => 4,
-        SearchSourceField.secretTags || SearchSourceField.noteTags => 3,
-        SearchSourceField.noteBody => 2,
-        SearchSourceField.secretPassword => 1,
-      };
+    for (final field in _fields(item)) {
+      final priority = _sourceFieldPriority(field);
       if (priority > best) {
         best = priority;
       }
@@ -184,6 +166,82 @@ class SearchFusionService {
       return 3;
     }
     return sources.contains(SearchMatchSource.semantic) ? 2 : 1;
+  }
+
+  List<SearchEvidence> _keywordEvidence(SearchResultItem item) {
+    final evidence = <SearchEvidence>[...item.evidence];
+    final existing = evidence
+        .where((item) => item.kind == SearchEvidenceKind.keyword)
+        .map((item) => item.sourceField)
+        .toSet();
+    for (final field in item.keywordHitFields) {
+      if (existing.add(field)) {
+        evidence.add(SearchEvidence.keyword(sourceField: field));
+      }
+    }
+    return List<SearchEvidence>.unmodifiable(evidence);
+  }
+
+  List<SearchEvidence> _mergeEvidence(
+    List<SearchEvidence> left,
+    List<SearchEvidence> right,
+  ) {
+    final merged = <SearchEvidence>[];
+    final coordinates = <String>{};
+    for (final evidence in <SearchEvidence>[...left, ...right]) {
+      final coordinate =
+          '${evidence.kind.name}:${evidence.sourceField.wireName}:'
+          '${evidence.fieldChunkIndex ?? -1}';
+      if (coordinates.add(coordinate)) {
+        merged.add(evidence);
+      }
+    }
+    return List<SearchEvidence>.unmodifiable(merged);
+  }
+
+  Set<SearchSourceField> _fields(SearchResultItem item) {
+    final fields = <SearchSourceField>{
+      ...item.keywordHitFields,
+      ...item.evidence.map((evidence) => evidence.sourceField),
+    };
+    final legacy = _sourceFieldFor(item.type, item.semanticHitField);
+    if (legacy != null) {
+      fields.add(legacy);
+    }
+    return fields;
+  }
+
+  SearchSourceField? _sourceFieldFor(
+    SearchResultType type,
+    SemanticHitField? field,
+  ) {
+    return switch ((type, field)) {
+      (SearchResultType.secret, SemanticHitField.title) =>
+        SearchSourceField.secretTitle,
+      (SearchResultType.note, SemanticHitField.title) =>
+        SearchSourceField.noteTitle,
+      (_, SemanticHitField.username) => SearchSourceField.secretUsername,
+      (_, SemanticHitField.url) => SearchSourceField.secretWebsiteUrl,
+      (_, SemanticHitField.secretNote) => SearchSourceField.secretNote,
+      (_, SemanticHitField.summary) => SearchSourceField.noteSummary,
+      (_, SemanticHitField.noteBody) => SearchSourceField.noteBody,
+      (SearchResultType.secret, SemanticHitField.tags) =>
+        SearchSourceField.secretTags,
+      (SearchResultType.note, SemanticHitField.tags) =>
+        SearchSourceField.noteTags,
+      (_, null) => null,
+    };
+  }
+
+  int _sourceFieldPriority(SearchSourceField field) {
+    return switch (field) {
+      SearchSourceField.secretTitle || SearchSourceField.noteTitle => 6,
+      SearchSourceField.secretUsername || SearchSourceField.noteSummary => 5,
+      SearchSourceField.secretWebsiteUrl || SearchSourceField.secretNote => 4,
+      SearchSourceField.secretTags || SearchSourceField.noteTags => 3,
+      SearchSourceField.noteBody => 2,
+      SearchSourceField.secretPassword => 1,
+    };
   }
 
   String _keyFor(SearchResultItem item) => '${item.type.name}:${item.id}';
