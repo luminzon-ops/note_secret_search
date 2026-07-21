@@ -171,8 +171,6 @@ final semanticSearchResultsProvider =
           if (vault == null) {
             return const <SemanticSearchResult>[];
           }
-          final secrets = await ref.watch(secretListProvider.future);
-          final notes = await ref.watch(noteListProvider.future);
           final modelRevisionHash = await ref.watch(
             searchIndexModelRevisionProvider(
               readiness.activeEmbeddingModel!,
@@ -180,14 +178,13 @@ final semanticSearchResultsProvider =
           );
           return ref
               .watch(semanticSearchServiceProvider)
-              .search(
+              .searchCorpus(
                 activeVaultId: vault.id,
                 query: query,
                 configuration: configuration,
                 modelRevisionHash: modelRevisionHash,
                 activeEmbeddingModel: readiness.activeEmbeddingModel!,
-                secrets: secrets,
-                notes: notes,
+                corpus: ref.watch(searchCorpusReaderProvider),
               );
         },
       );

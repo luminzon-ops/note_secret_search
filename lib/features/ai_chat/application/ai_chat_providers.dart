@@ -84,21 +84,18 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     if (vault == null) {
       return const <ChatContextItem>[];
     }
-    final secrets = await _ref.read(secretListProvider.future);
-    final notes = await _ref.read(noteListProvider.future);
     final modelRevisionHash = await _ref.read(
       searchIndexModelRevisionProvider(embeddingModel).future,
     );
     final results = await _ref
         .read(semanticSearchServiceProvider)
-        .search(
+        .searchCorpus(
           activeVaultId: vault.id,
           query: query,
           configuration: configuration,
           modelRevisionHash: modelRevisionHash,
           activeEmbeddingModel: embeddingModel,
-          secrets: secrets,
-          notes: notes,
+          corpus: _ref.read(searchCorpusReaderProvider),
           operation: SearchOperation.aiAutoContext,
         );
 

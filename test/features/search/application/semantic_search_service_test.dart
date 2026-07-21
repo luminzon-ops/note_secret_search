@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
@@ -13,8 +14,10 @@ import 'package:note_secret_search/features/search/domain/embedding_index_reposi
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 
 void main() {
   test('raw field threshold is applied before ranking weight', () async {
@@ -334,6 +337,44 @@ void main() {
       expect(results.map((result) => result.item.id), const <String>['active']);
     },
   );
+
+  test(
+    'paged semantic corpus hydrates current generation sources in one ID batch',
+    () async {
+      final repository = _CorpusRepository(<EmbeddingIndexSet>[
+        _set(
+          sourceKey: const SearchSourceKey.secret('secret-1'),
+          chunks: <({SearchSourceField field, List<double> vector})>[
+            (
+              field: SearchSourceField.secretTitle,
+              vector: const <double>[1, 0],
+            ),
+          ],
+        ),
+      ]);
+      final sources = _IdHydrationSecretRepository(_secret('secret-1'));
+      final service = _service(repository);
+
+      final results = await service.searchCorpus(
+        activeVaultId: 'vault-1',
+        query: 'query',
+        configuration: SearchConfiguration.defaults(),
+        modelRevisionHash: 'a' * 64,
+        activeEmbeddingModel: _model,
+        corpus: SearchCorpusReader(
+          secretRepository: sources,
+          noteRepository: _EmptyNoteRepository(),
+        ),
+      );
+
+      expect(results.map((result) => result.item.id), const <String>[
+        'secret-1',
+      ]);
+      expect(sources.requestedBatches, const <List<String>>[
+        <String>['secret-1'],
+      ]);
+    },
+  );
 }
 
 SemanticSearchService _service(_CorpusRepository repository) {
@@ -388,6 +429,67 @@ class _CorpusRepository implements EmbeddingIndexCorpusRepository {
 
   @override
   Future<int> purgeAllIndexSets({int batchSize = 100}) async => 0;
+}
+
+class _IdHydrationSecretRepository
+    implements SecretRepository, SecretSearchReader {
+  _IdHydrationSecretRepository(this.item);
+
+  final SecretItem item;
+  final List<List<String>> requestedBatches = <List<String>>[];
+
+  @override
+  Future<List<SecretItem>> listByVaultIds(
+    String vaultId,
+    Iterable<String> ids,
+  ) async {
+    requestedBatches.add(List<String>.from(ids));
+    return ids.contains(item.id) ? <SecretItem>[item] : const <SecretItem>[];
+  }
+
+  @override
+  Future<List<SecretItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = searchSourcePageSize,
+  }) async {
+    return const <SecretItem>[];
+  }
+
+  @override
+  Future<List<SecretItem>> listByVault(String vaultId) {
+    throw StateError('unbounded secret load');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _EmptyNoteRepository implements NoteRepository, NoteSearchReader {
+  @override
+  Future<List<NoteItem>> listByVaultIds(
+    String vaultId,
+    Iterable<String> ids,
+  ) async {
+    return const <NoteItem>[];
+  }
+
+  @override
+  Future<List<NoteItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = searchSourcePageSize,
+  }) async {
+    return const <NoteItem>[];
+  }
+
+  @override
+  Future<List<NoteItem>> listByVault(String vaultId) {
+    throw StateError('unbounded note load');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _EmbeddingEngine implements EmbeddingEngine {

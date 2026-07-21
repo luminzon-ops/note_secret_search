@@ -15,9 +15,12 @@ import 'package:note_secret_search/features/search/domain/embedding_index_reposi
 import 'package:note_secret_search/features/search/domain/embedding_index_set.dart';
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+
+part 'semantic_search_service_paging.dart';
 
 class SemanticSearchService {
   SemanticSearchService({
@@ -82,72 +85,95 @@ class SemanticSearchService {
     final noteById = <String, NoteItem>{
       for (final note in scopedNotes) note.id: note,
     };
-    if (secretById.isEmpty && noteById.isEmpty) {
-      return const <SemanticSearchResult>[];
-    }
-
-    final candidates = <SemanticSearchResult>[];
-    final corruptSetIds = <String>{};
     final compatibility = _compatibility(
       vaultId: activeVaultId,
       model: activeEmbeddingModel,
       modelRevisionHash: modelRevisionHash,
       configuration: configuration,
     );
-    while (await _repository.purgeIncompatibleIndexSets(
-          compatibility,
-          batchSize: 100,
-        ) ==
-        100) {}
-    String? afterId;
-    while (true) {
-      final page = await _repository.getCompatibleIndexSets(
-        compatibility,
-        afterId: afterId,
-        limit: 100,
-      );
-      if (page.isEmpty) {
-        break;
-      }
-      for (final indexSet in page) {
-        if (indexSet.vaultId != activeVaultId) {
-          continue;
-        }
-        final evaluated = _evaluateGeneration(
-          query: normalizedQuery,
-          queryVector: queryVector.values,
-          indexSet: indexSet,
-          policy: policy,
-          operation: operation,
-          secret: indexSet.sourceKey.type == SearchSourceType.secret
-              ? secretById[indexSet.sourceKey.id]
-              : null,
-          note: indexSet.sourceKey.type == SearchSourceType.note
-              ? noteById[indexSet.sourceKey.id]
-              : null,
-        );
-        if (evaluated.corrupt) {
-          corruptSetIds.add(indexSet.id);
-        } else if (evaluated.result != null) {
-          candidates.add(evaluated.result!);
-        }
-      }
-      candidates.sort(_compareCandidates);
-      if (candidates.length > 100) {
-        candidates.removeRange(100, candidates.length);
-      }
-      afterId = page.last.id;
-      if (page.length < 100) {
-        break;
-      }
+    return _searchPages(
+      activeVaultId: activeVaultId,
+      normalizedQuery: normalizedQuery,
+      queryVector: queryVector.values,
+      policy: policy,
+      operation: operation,
+      compatibility: compatibility,
+      hydrate: (_) async =>
+          _SemanticSourceMaps(secretById: secretById, noteById: noteById),
+    );
+  }
+
+  Future<List<SemanticSearchResult>> searchCorpus({
+    required String activeVaultId,
+    required String query,
+    required SearchConfiguration configuration,
+    required String modelRevisionHash,
+    required ModelRegistryEntry activeEmbeddingModel,
+    required SearchCorpusReader corpus,
+    SearchOperation operation = SearchOperation.semanticSearch,
+  }) async {
+    final normalizedQuery = query.trim();
+    final policy = EffectiveSearchPolicy(configuration);
+    if (normalizedQuery.isEmpty) {
+      return const <SemanticSearchResult>[];
+    }
+    if (!configuration.allowLocalEmbedding) {
+      while (await _repository.purgeAllIndexSets(batchSize: 100) == 100) {}
+      return const <SemanticSearchResult>[];
     }
 
-    for (var offset = 0; offset < corruptSetIds.length; offset += 100) {
-      final ids = corruptSetIds.skip(offset).take(100);
-      await _repository.purgeIndexSetsByIds(ids);
+    final queryVector = await _embeddingEngine.embed(
+      EmbeddingRequest(model: activeEmbeddingModel, text: normalizedQuery),
+    );
+    if (queryVector.values.isEmpty ||
+        queryVector.values.any((value) => !value.isFinite)) {
+      return const <SemanticSearchResult>[];
     }
-    candidates.sort(_compareCandidates);
-    return List<SemanticSearchResult>.unmodifiable(candidates.take(100));
+
+    final compatibility = _compatibility(
+      vaultId: activeVaultId,
+      model: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
+    return _searchPages(
+      activeVaultId: activeVaultId,
+      normalizedQuery: normalizedQuery,
+      queryVector: queryVector.values,
+      policy: policy,
+      operation: operation,
+      compatibility: compatibility,
+      hydrate: (page) async {
+        final secretIds = <String>[
+          for (final set in page)
+            if (set.sourceKey.type == SearchSourceType.secret) set.sourceKey.id,
+        ];
+        final noteIds = <String>[
+          for (final set in page)
+            if (set.sourceKey.type == SearchSourceType.note) set.sourceKey.id,
+        ];
+        final secrets = await corpus.secretsByIds(
+          vaultId: activeVaultId,
+          ids: secretIds,
+        );
+        final notes = await corpus.notesByIds(
+          vaultId: activeVaultId,
+          ids: noteIds,
+        );
+        return _SemanticSourceMaps(
+          secretById: <String, SecretItem>{
+            for (final secret in secrets)
+              if (secret.vaultId == activeVaultId && secret.deletedAt == null)
+                secret.id: secret,
+          },
+          noteById: <String, NoteItem>{
+            for (final note in notes)
+              if (note.vaultId == activeVaultId && note.deletedAt == null)
+                note.id: note,
+          },
+        );
+      },
+    );
   }
 
   _EvaluatedGeneration _evaluateGeneration({
