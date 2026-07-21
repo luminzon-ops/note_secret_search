@@ -3,6 +3,7 @@ import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_evidence.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
@@ -44,6 +45,70 @@ class SearchService {
     results.sort(
       (left, right) => _compareResults(normalizedQuery, left, right),
     );
+    return List<SearchResultItem>.unmodifiable(results.take(200));
+  }
+
+  Future<List<SearchResultItem>> searchCorpus({
+    required String activeVaultId,
+    required String query,
+    required SearchConfiguration configuration,
+    required SearchCorpusReader corpus,
+  }) async {
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isEmpty) {
+      return const <SearchResultItem>[];
+    }
+    final policy = EffectiveSearchPolicy(configuration);
+    final results = <SearchResultItem>[];
+
+    String? afterSecretId;
+    while (true) {
+      final page = await corpus.secretPage(
+        vaultId: activeVaultId,
+        afterId: afterSecretId,
+      );
+      if (page.isEmpty) {
+        break;
+      }
+      _addTopKeywordResults(
+        results,
+        _searchSecrets(normalizedQuery, policy, page),
+        normalizedQuery,
+      );
+      final nextId = page.last.id;
+      if (afterSecretId != null && nextId.compareTo(afterSecretId!) <= 0) {
+        throw StateError('Secret search corpus page cursor did not advance.');
+      }
+      afterSecretId = nextId;
+      if (page.length < searchSourcePageSize) {
+        break;
+      }
+    }
+
+    String? afterNoteId;
+    while (true) {
+      final page = await corpus.notePage(
+        vaultId: activeVaultId,
+        afterId: afterNoteId,
+      );
+      if (page.isEmpty) {
+        break;
+      }
+      _addTopKeywordResults(
+        results,
+        _searchNotes(normalizedQuery, policy, page),
+        normalizedQuery,
+      );
+      final nextId = page.last.id;
+      if (afterNoteId != null && nextId.compareTo(afterNoteId!) <= 0) {
+        throw StateError('Note search corpus page cursor did not advance.');
+      }
+      afterNoteId = nextId;
+      if (page.length < searchSourcePageSize) {
+        break;
+      }
+    }
+
     return List<SearchResultItem>.unmodifiable(results.take(200));
   }
 
@@ -249,6 +314,18 @@ class SearchService {
     result = result != 0 ? result : right.updatedAt.compareTo(left.updatedAt);
     result = result != 0 ? result : left.type.index.compareTo(right.type.index);
     return result != 0 ? result : left.id.compareTo(right.id);
+  }
+
+  void _addTopKeywordResults(
+    List<SearchResultItem> results,
+    Iterable<SearchResultItem> incoming,
+    String query,
+  ) {
+    results.addAll(incoming);
+    results.sort((left, right) => _compareResults(query, left, right));
+    if (results.length > 200) {
+      results.removeRange(200, results.length);
+    }
   }
 
   int _queryAffinity(String query, SearchResultItem item) {

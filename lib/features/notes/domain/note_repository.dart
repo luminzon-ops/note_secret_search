@@ -9,3 +9,13 @@ abstract interface class NoteRepository {
 
   Future<void> softDelete(String id);
 }
+
+abstract interface class NoteSearchReader {
+  Future<List<NoteItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = 128,
+  });
+
+  Future<List<NoteItem>> listByVaultIds(String vaultId, Iterable<String> ids);
+}

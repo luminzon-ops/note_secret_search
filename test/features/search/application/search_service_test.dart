@@ -3,11 +3,14 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
+import 'package:note_secret_search/features/notes/domain/note_repository.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 
 void main() {
   test('title-only search never decrypts excluded fields', () {
@@ -156,6 +159,46 @@ void main() {
       expect(results.first.id, 'username-hit');
     },
   );
+
+  test(
+    'paged keyword corpus keeps bounded pages and late high-affinity hits',
+    () async {
+      final now = DateTime(2026, 7, 20);
+      final repository = _PagedSecretRepository(<SecretItem>[
+        for (var index = 0; index < 299; index++)
+          _wideSecret(
+            id: 'secret-${index.toString().padLeft(3, '0')}',
+            username: 'other',
+            note: 'alice@example.test',
+            updatedAt: now,
+          ),
+        _wideSecret(
+          id: 'secret-299',
+          username: 'alice@example.test',
+          note: 'other',
+          updatedAt: now.subtract(const Duration(days: 1)),
+        ),
+      ]);
+      final service = SearchService(cryptoService: const _WideCryptoService());
+
+      final results = await service.searchCorpus(
+        activeVaultId: 'default',
+        query: 'alice@example.test',
+        configuration: _configuration(
+          includeSecretNote: true,
+          includeUsername: true,
+        ),
+        corpus: SearchCorpusReader(
+          secretRepository: repository,
+          noteRepository: _EmptyNoteRepository(),
+        ),
+      );
+
+      expect(repository.pageSizes, const <int>[128, 128, 44]);
+      expect(results, hasLength(200));
+      expect(results.first.id, 'secret-299');
+    },
+  );
 }
 
 class _RecordingCryptoService implements CryptoService {
@@ -210,6 +253,59 @@ class _WideCryptoService implements CryptoService {
   }) {
     return plaintext == null ? null : Uint8List.fromList(plaintext.codeUnits);
   }
+}
+
+class _PagedSecretRepository implements SecretRepository, SecretSearchReader {
+  _PagedSecretRepository(this.items);
+
+  final List<SecretItem> items;
+  final List<int> pageSizes = <int>[];
+
+  @override
+  Future<List<SecretItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = searchSourcePageSize,
+  }) async {
+    final page = items
+        .where(
+          (item) =>
+              item.vaultId == vaultId &&
+              item.deletedAt == null &&
+              (afterId == null || item.id.compareTo(afterId) > 0),
+        )
+        .take(limit)
+        .toList(growable: false);
+    pageSizes.add(page.length);
+    return page;
+  }
+
+  @override
+  Future<List<SecretItem>> listByVault(String vaultId) {
+    throw StateError('unbounded secret load');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _EmptyNoteRepository implements NoteRepository, NoteSearchReader {
+  @override
+  Future<List<NoteItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = searchSourcePageSize,
+  }) async {
+    return const <NoteItem>[];
+  }
+
+  @override
+  Future<List<NoteItem>> listByVault(String vaultId) {
+    throw StateError('unbounded note load');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 SearchConfiguration _configuration({
@@ -270,5 +366,27 @@ NoteItem _note({required String title}) {
     favorite: false,
     createdAt: now,
     updatedAt: now,
+  );
+}
+
+SecretItem _wideSecret({
+  required String id,
+  required String username,
+  required String note,
+  required DateTime updatedAt,
+}) {
+  return SecretItem(
+    id: id,
+    vaultId: 'default',
+    title: id,
+    usernameCiphertext: username.codeUnits,
+    passwordCiphertext: 'password'.codeUnits,
+    websiteUrlCiphertext: 'https://example.test'.codeUnits,
+    noteCiphertext: note.codeUnits,
+    tags: const <String>[],
+    categoryId: null,
+    favorite: false,
+    createdAt: updatedAt,
+    updatedAt: updatedAt,
   );
 }

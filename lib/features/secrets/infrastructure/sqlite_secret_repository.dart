@@ -6,7 +6,10 @@ import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
-class SqliteSecretRepository implements SecretRepository {
+class SqliteSecretRepository implements SecretRepository, SecretSearchReader {
+  static const int pageSize = 128;
+  static const int idBatchSize = 200;
+
   SqliteSecretRepository({
     required AppDatabase database,
     ItemTagStore? tagStore,
@@ -71,6 +74,66 @@ class SqliteSecretRepository implements SecretRepository {
             ),
           )
           .toList(growable: false);
+    });
+  }
+
+  @override
+  Future<List<SecretItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = pageSize,
+  }) {
+    _validatePageLimit(limit);
+    return _database.run((db) async {
+      final rows = await db.query(
+        DatabaseSchema.secretItems,
+        where: afterId == null
+            ? 'vault_id = ? AND deleted_at IS NULL'
+            : 'vault_id = ? AND deleted_at IS NULL AND id > ?',
+        whereArgs: <Object>[vaultId, if (afterId != null) afterId],
+        orderBy: 'id ASC',
+        limit: limit,
+      );
+      return _mapRows(db, rows, vaultId);
+    });
+  }
+
+  @override
+  Future<List<SecretItem>> listByVaultIds(
+    String vaultId,
+    Iterable<String> ids,
+  ) {
+    final requestedIds = ids.toSet().toList(growable: false);
+    if (requestedIds.isEmpty) {
+      return Future<List<SecretItem>>.value(const <SecretItem>[]);
+    }
+    return _database.run((db) async {
+      final byId = <String, SecretItem>{};
+      for (
+        var offset = 0;
+        offset < requestedIds.length;
+        offset += idBatchSize
+      ) {
+        final batch = requestedIds
+            .skip(offset)
+            .take(idBatchSize)
+            .toList(growable: false);
+        final rows = await db.query(
+          DatabaseSchema.secretItems,
+          where:
+              'vault_id = ? AND deleted_at IS NULL AND id IN '
+              '(${List<String>.filled(batch.length, '?').join(', ')})',
+          whereArgs: <Object>[vaultId, ...batch],
+          orderBy: 'id ASC',
+        );
+        for (final item in await _mapRows(db, rows, vaultId)) {
+          byId[item.id] = item;
+        }
+      }
+      return <SecretItem>[
+        for (final id in requestedIds)
+          if (byId[id] case final item?) item,
+      ];
     });
   }
 
@@ -218,6 +281,40 @@ class SqliteSecretRepository implements SecretRepository {
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row['deleted_at']! as int),
     );
+  }
+
+  Future<List<SecretItem>> _mapRows(
+    DatabaseExecutor database,
+    List<Map<String, Object?>> rows,
+    String vaultId,
+  ) async {
+    final itemIds = rows
+        .map((row) => row['id']! as String)
+        .toList(growable: false);
+    final tagsByItemId = await _tagStore.loadTagsByItemIds(
+      database,
+      itemIds: itemIds,
+      itemType: ItemTagType.secret,
+      vaultId: vaultId,
+    );
+    return rows
+        .map(
+          (row) => _mapSecret(
+            row,
+            tagsByItemId[row['id']! as String] ?? const <String>[],
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  void _validatePageLimit(int limit) {
+    if (limit < 1 || limit > pageSize) {
+      throw ArgumentError.value(
+        limit,
+        'limit',
+        'Must be between 1 and $pageSize.',
+      );
+    }
   }
 
   void _validateCiphertexts(SecretItem item) {

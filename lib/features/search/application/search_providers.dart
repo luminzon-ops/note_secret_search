@@ -9,6 +9,7 @@ import 'package:note_secret_search/features/search/application/search_index_mode
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
@@ -43,6 +44,13 @@ final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
 
 final searchServiceProvider = Provider<SearchService>((ref) {
   return SearchService(cryptoService: ref.watch(cryptoServiceProvider));
+});
+
+final searchCorpusReaderProvider = Provider<SearchCorpusReader>((ref) {
+  return SearchCorpusReader(
+    secretRepository: ref.watch(secretRepositoryProvider),
+    noteRepository: ref.watch(noteRepositoryProvider),
+  );
 });
 
 final searchFusionServiceProvider = Provider<SearchFusionService>((ref) {
@@ -86,16 +94,13 @@ final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
       if (vault == null) {
         return const <SearchResultItem>[];
       }
-      final secrets = await ref.watch(secretListProvider.future);
-      final notes = await ref.watch(noteListProvider.future);
       return ref
           .watch(searchServiceProvider)
-          .search(
+          .searchCorpus(
             activeVaultId: vault.id,
             query: query,
             configuration: configuration,
-            secrets: secrets,
-            notes: notes,
+            corpus: ref.watch(searchCorpusReaderProvider),
           );
     },
   );

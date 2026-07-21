@@ -9,3 +9,13 @@ abstract interface class SecretRepository {
 
   Future<void> softDelete(String id);
 }
+
+abstract interface class SecretSearchReader {
+  Future<List<SecretItem>> listByVaultPage(
+    String vaultId, {
+    String? afterId,
+    int limit = 128,
+  });
+
+  Future<List<SecretItem>> listByVaultIds(String vaultId, Iterable<String> ids);
+}
