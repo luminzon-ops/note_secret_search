@@ -64,6 +64,7 @@ class SearchIndexService {
     required SearchConfiguration configuration,
   }) async {
     if (activeEmbeddingModel == null) {
+      await _purgeAllIndexSets();
       return const SearchIndexStatus(
         engineReady: false,
         engineReason: '尚未配置可用的本地 embedding 模型。',
@@ -455,6 +456,35 @@ class SearchIndexService {
       return;
     }
     while (await repository.purgeAllIndexSets(batchSize: 100) == 100) {}
+  }
+
+  Future<void> _purgeIncompatibleIndexSets({
+    required String activeVaultId,
+    required ModelRegistryEntry activeEmbeddingModel,
+    required String modelRevisionHash,
+    required SearchConfiguration configuration,
+  }) async {
+    final repository = _corpusRepository;
+    if (repository == null) {
+      return;
+    }
+    final compatibility = EmbeddingIndexCompatibility(
+      vaultId: activeVaultId,
+      modelId: activeEmbeddingModel.id,
+      modelRevisionHash: modelRevisionHash,
+      fingerprintKeyId: _keys.requireCurrent().requireKeyId(),
+      fingerprintVersion: searchIndexFingerprintVersion,
+      indexConfigVersion: searchIndexConfigurationVersion,
+      indexConfigEpoch: configuration.configurationEpoch,
+      indexConfigHash: searchIndexConfigurationHash(configuration),
+      chunkSchemaVersion: 1,
+      vectorFormatVersion: float32VectorFormatVersion,
+    );
+    while (await repository.purgeIncompatibleIndexSets(
+          compatibility,
+          batchSize: 100,
+        ) ==
+        100) {}
   }
 }
 

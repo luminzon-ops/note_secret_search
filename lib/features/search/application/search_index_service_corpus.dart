@@ -9,6 +9,7 @@ extension _SearchIndexCorpusOperations on SearchIndexService {
     required SearchConfiguration configuration,
   }) async {
     if (activeEmbeddingModel == null) {
+      await _purgeAllIndexSets();
       return const SearchIndexStatus(
         engineReady: false,
         engineReason: '尚未配置可用的本地 embedding 模型。',
@@ -27,6 +28,12 @@ extension _SearchIndexCorpusOperations on SearchIndexService {
         pendingItems: const <SearchIndexPendingItem>[],
       );
     }
+    await _purgeIncompatibleIndexSets(
+      activeVaultId: activeVaultId,
+      activeEmbeddingModel: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
 
     final policy = EffectiveSearchPolicy(configuration);
     final configHash = searchIndexConfigurationHash(configuration);
@@ -86,6 +93,12 @@ extension _SearchIndexCorpusOperations on SearchIndexService {
       await _purgeAllIndexSets();
       return 0;
     }
+    await _purgeIncompatibleIndexSets(
+      activeVaultId: activeVaultId,
+      activeEmbeddingModel: activeEmbeddingModel,
+      modelRevisionHash: modelRevisionHash,
+      configuration: configuration,
+    );
 
     final policy = EffectiveSearchPolicy(configuration);
     final configHash = searchIndexConfigurationHash(configuration);
