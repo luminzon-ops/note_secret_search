@@ -7,12 +7,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
+import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
 const _embeddingModel = ModelRegistryEntry(
   id: 'embed-1',
@@ -314,4 +317,85 @@ void main() {
 
     expect(writeFence.revision, 1);
   });
+
+  test('changing embedding model releases the old session before persistence', () async {
+    SharedPreferences.setMockInitialValues(
+      <String, Object>{'ai.active_embedding_model_id': 'embed-old'},
+    );
+    final preferences = await SharedPreferences.getInstance();
+    String? selectionObservedDuringRelease;
+    final bridge = _SelectionEmbeddingRuntimeBridge(
+      onRelease: (modelId) async {
+        selectionObservedDuringRelease = preferences.getString(
+          'ai.active_embedding_model_id',
+        );
+      },
+    );
+    final container = ProviderContainer(
+      overrides: <Override>[
+        sharedPreferencesProvider.overrideWith((ref) async => preferences),
+        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container
+        .read(activeModelSelectionControllerProvider)
+        .setActiveEmbeddingModel('embed-new');
+
+    expect(bridge.releasedModelIds, <String>['embed-old']);
+    expect(selectionObservedDuringRelease, 'embed-old');
+    expect(preferences.getString('ai.active_embedding_model_id'), 'embed-new');
+  });
+}
+
+class _SelectionEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
+  _SelectionEmbeddingRuntimeBridge({required this.onRelease});
+
+  final Future<void> Function(String modelId) onRelease;
+  final List<String> releasedModelIds = <String>[];
+
+  @override
+  Future<void> cancelRequest({required String requestId}) async {}
+
+  @override
+  Future<Map<String, dynamic>> embedText({
+    required String modelId,
+    required String modelPath,
+    required String text,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+    String? requestId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Map<String, dynamic>> ensureModelReady({
+    required String modelId,
+    required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Map<String, dynamic>> inspectModel({
+    required String modelId,
+    required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> releaseModel({required String modelId}) async {
+    releasedModelIds.add(modelId);
+    await onRelease(modelId);
+  }
 }

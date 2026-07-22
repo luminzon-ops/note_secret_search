@@ -303,6 +303,7 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
             modelPath: result.localPath,
             tokenizer: catalogEntry.tokenizer,
             runtime: catalogEntry.runtime,
+            verifiedChecksum: result.verifiedChecksum,
           );
       final runtimeState = mapEmbeddingEngineState(
         runtimeResult,

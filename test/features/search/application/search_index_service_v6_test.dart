@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ import 'package:note_secret_search/features/search/domain/embedding_index_set.da
 import 'package:note_secret_search/features/search/domain/float32_vector_codec.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
+import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 void main() {
@@ -280,6 +282,56 @@ void main() {
     },
   );
 
+  test(
+    'write fence cancellation reaches an in-flight embedding request',
+    () async {
+      final repository = _RecordingEmbeddingIndexRepository();
+      final keyStore = DatabaseSessionKeyStore()
+        ..replace(
+          DatabaseSessionKeys(
+            databaseKey: Uint8List(32),
+            fieldKey: Uint8List(32),
+            keyId: 'root-key-1',
+            searchIndexFingerprintKey: Uint8List(32),
+          ),
+        );
+      addTearDown(keyStore.clear);
+      final writeFence = SearchIndexWriteFence();
+      final embeddingEngine = _CancellableEmbeddingEngine();
+      final service = SearchIndexService(
+        repository: repository,
+        cryptoService: _SearchIndexCryptoService(),
+        embeddingEngine: embeddingEngine,
+        sessionKeyStore: keyStore,
+        writeFence: writeFence,
+      );
+      final configuration = SearchConfiguration.defaults();
+      final status = await service.buildStatus(
+        secrets: <SecretItem>[_secret()],
+        notes: const <NoteItem>[],
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+
+      final indexing = service.indexPendingItems(
+        items: status.pendingItems,
+        activeEmbeddingModel: _model,
+        modelRevisionHash: 'a' * 64,
+        configuration: configuration,
+      );
+      await embeddingEngine.started.future;
+      writeFence.invalidate();
+
+      await expectLater(
+        indexing,
+        throwsA(isA<EmbeddingIndexStaleWriteException>()),
+      );
+      expect(embeddingEngine.cancelled, isTrue);
+      expect(repository.replacements, isEmpty);
+    },
+  );
+
   test('index status reads generation headers in 200-source batches', () async {
     final repository = _BatchHeaderRepository();
     final keyStore = DatabaseSessionKeyStore()
@@ -411,6 +463,42 @@ class _CallbackEmbeddingEngine implements EmbeddingEngine {
       onFirstEmbed();
     }
     return const EmbeddingVector(values: <double>[1, 0], tokenCount: 1);
+  }
+
+  @override
+  Future<EmbeddingEngineState> getState(ModelRegistryEntry model) async {
+    return const EmbeddingEngineState(
+      ready: true,
+      reason: 'ready',
+      status: EmbeddingRuntimeStatus.ready,
+      vectorDimension: 2,
+    );
+  }
+}
+
+class _CancellableEmbeddingEngine implements EmbeddingEngine {
+  final Completer<void> started = Completer<void>();
+  bool cancelled = false;
+
+  @override
+  Future<EmbeddingVector> embed(EmbeddingRequest request) {
+    final completer = Completer<EmbeddingVector>();
+    if (identical(request.cancellationToken, EmbeddingCancellationToken.none)) {
+      completer.completeError(StateError('missing cancellation token'));
+      started.complete();
+      return completer.future;
+    }
+    request.cancellationToken.register(() {
+      cancelled = true;
+      completer.completeError(
+        const EmbeddingRuntimeCancelledException(
+          stage: 'inference',
+          modelId: 'embed-1',
+        ),
+      );
+    });
+    started.complete();
+    return completer.future;
   }
 
   @override

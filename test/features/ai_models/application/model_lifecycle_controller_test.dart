@@ -52,6 +52,28 @@ void main() {
       expect(lifecycleStore.purgeCalls, 1);
     },
   );
+
+  test('releases embedding runtime before deleting model artifacts', () async {
+    final events = <String>[];
+    final lifecycleStore = _RecordingLifecycleStore(
+      _registryEntry().copyWith(type: 'embedding'),
+    );
+    final artifactStore = _RecordingArtifactStore(
+      fail: false,
+      onDelete: () => events.add('delete'),
+    );
+    final controller = ModelLifecycleController(
+      lifecycleStore: lifecycleStore,
+      artifactStore: artifactStore,
+      releaseEmbeddingModel: (modelId) async {
+        events.add('release:$modelId');
+      },
+    );
+
+    await controller.deleteInstalledModel('model-1');
+
+    expect(events, <String>['release:model-1', 'delete']);
+  });
 }
 
 class _RecordingLifecycleStore implements ModelLifecycleStore {
@@ -81,9 +103,10 @@ class _RecordingLifecycleStore implements ModelLifecycleStore {
 }
 
 class _RecordingArtifactStore implements ModelArtifactStore {
-  _RecordingArtifactStore({required this.fail});
+  _RecordingArtifactStore({required this.fail, this.onDelete});
 
   bool fail;
+  final void Function()? onDelete;
   int deleteCalls = 0;
   String? primaryPath;
   List<ModelArtifactPath>? artifacts;
@@ -94,6 +117,7 @@ class _RecordingArtifactStore implements ModelArtifactStore {
     required String? primaryPath,
     required List<ModelArtifactPath> artifacts,
   }) async {
+    onDelete?.call();
     deleteCalls += 1;
     this.primaryPath = primaryPath;
     this.artifacts = artifacts;

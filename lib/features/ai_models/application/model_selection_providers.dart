@@ -4,15 +4,17 @@ import 'package:note_secret_search/features/ai_models/domain/active_model_select
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 part 'model_selection_sensitive_providers.dart';
 
-final activeModelSelectionControllerProvider = Provider<ActiveModelSelectionController>((ref) {
-  return ActiveModelSelectionController(ref: ref);
-});
+final activeModelSelectionControllerProvider =
+    Provider<ActiveModelSelectionController>((ref) {
+      return ActiveModelSelectionController(ref: ref);
+    });
 
 class ActiveModelSelectionController {
   ActiveModelSelectionController({required Ref ref}) : _ref = ref;
@@ -22,6 +24,14 @@ class ActiveModelSelectionController {
   Future<void> setActiveEmbeddingModel(String? modelId) async {
     _ref.read(searchIndexWriteFenceProvider).invalidate();
     final preferences = await _ref.read(sharedPreferencesProvider.future);
+    final previousModelId = preferences.getString(_activeEmbeddingModelIdKey);
+    if (previousModelId != null &&
+        previousModelId.isNotEmpty &&
+        previousModelId != modelId) {
+      await _ref
+          .read(embeddingRuntimeBridgeProvider)
+          .releaseModel(modelId: previousModelId);
+    }
     if (modelId == null || modelId.isEmpty) {
       await preferences.remove(_activeEmbeddingModelIdKey);
     } else {
@@ -51,7 +61,10 @@ class SemanticSearchReadiness {
 }
 
 class SelectedEmbeddingRuntime {
-  const SelectedEmbeddingRuntime({required this.entry, required this.runtimeState});
+  const SelectedEmbeddingRuntime({
+    required this.entry,
+    required this.runtimeState,
+  });
 
   final ModelRegistryEntry entry;
   final EmbeddingEngineState runtimeState;
@@ -75,7 +88,7 @@ EmbeddingEngineState _fallbackRuntimeState(ModelRegistryEntry entry) {
     );
   }
 
-   if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
+  if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
     return EmbeddingEngineState(
       ready: false,
       reason: '本地模型文件校验失败，需要重新下载或修复。',
@@ -87,16 +100,22 @@ EmbeddingEngineState _fallbackRuntimeState(ModelRegistryEntry entry) {
   return EmbeddingEngineState(
     ready: entry.isInstalled,
     reason: entry.isInstalled ? '本地语义检索模型已就绪。' : '本地 embedding 模型当前不可用。',
-    status: entry.isInstalled ? EmbeddingRuntimeStatus.ready : EmbeddingRuntimeStatus.degraded,
+    status: entry.isInstalled
+        ? EmbeddingRuntimeStatus.ready
+        : EmbeddingRuntimeStatus.degraded,
     modelPath: entry.localPath,
   );
 }
 
-String _runtimeBlockedReason(String modelName, EmbeddingEngineState runtimeState) {
+String _runtimeBlockedReason(
+  String modelName,
+  EmbeddingEngineState runtimeState,
+) {
   return switch (runtimeState.status) {
     EmbeddingRuntimeStatus.notInstalled => '已选择模型 $modelName，但本地模型文件尚未安装。',
     EmbeddingRuntimeStatus.missing => '已选择模型 $modelName，但本地模型文件缺失，需要重新下载或修复。',
-    EmbeddingRuntimeStatus.corrupted => '已选择模型 $modelName，但本地模型文件校验失败，需要重新下载或修复。',
+    EmbeddingRuntimeStatus.corrupted =>
+      '已选择模型 $modelName，但本地模型文件校验失败，需要重新下载或修复。',
     EmbeddingRuntimeStatus.installedUnverified =>
       '已选择模型 $modelName，但运行时尚未完成校验，暂不能用于语义检索。',
     EmbeddingRuntimeStatus.degraded =>

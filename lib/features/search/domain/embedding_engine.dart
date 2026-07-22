@@ -13,17 +13,74 @@ class EmbeddingRequest {
   const EmbeddingRequest({
     required this.model,
     required this.text,
+    this.cancellationToken = EmbeddingCancellationToken.none,
   });
 
   final ModelRegistryEntry model;
   final String text;
+  final EmbeddingCancellationToken cancellationToken;
 }
 
+class EmbeddingCancellationToken {
+  const EmbeddingCancellationToken._();
+
+  static const none = EmbeddingCancellationToken._();
+
+  bool get isCancelled => false;
+
+  EmbeddingCancellationRegistration register(void Function() listener) {
+    return const EmbeddingCancellationRegistration._noop();
+  }
+}
+
+class EmbeddingCancellationController implements EmbeddingCancellationToken {
+  bool _isCancelled = false;
+  final Set<void Function()> _listeners = <void Function()>{};
+
+  @override
+  bool get isCancelled => _isCancelled;
+
+  void cancel() {
+    if (_isCancelled) {
+      return;
+    }
+    _isCancelled = true;
+    final listeners = _listeners.toList(growable: false);
+    _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
+  }
+
+  @override
+  EmbeddingCancellationRegistration register(void Function() listener) {
+    if (_isCancelled) {
+      listener();
+      return const EmbeddingCancellationRegistration._noop();
+    }
+    _listeners.add(listener);
+    return EmbeddingCancellationRegistration._(
+      () => _listeners.remove(listener),
+    );
+  }
+}
+
+class EmbeddingCancellationRegistration {
+  const EmbeddingCancellationRegistration._noop() : _dispose = null;
+
+  EmbeddingCancellationRegistration._(this._dispose);
+
+  final void Function()? _dispose;
+
+  void dispose() {
+    _dispose?.call();
+  }
+}
+
+abstract interface class EmbeddingCancellationException implements Exception {}
+
 class EmbeddingVector {
-  const EmbeddingVector({
-    required this.values,
-    required this.tokenCount,
-  });
+  const EmbeddingVector({required this.values, required this.tokenCount});
 
   final List<double> values;
   final int tokenCount;

@@ -332,8 +332,10 @@ class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   int ensureCalls = 0;
   String? lastModelId;
   String? lastModelPath;
+  String? lastVerifiedChecksum;
   EmbeddingTokenizerSpec? lastTokenizer;
   EmbeddingRuntimeSpec? lastRuntime;
+  final List<String> releasedModelIds = <String>[];
 
   @override
   Future<Map<String, dynamic>> embedText({
@@ -342,6 +344,8 @@ class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String text,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+    String? requestId,
   }) {
     throw UnimplementedError();
   }
@@ -352,10 +356,12 @@ class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String modelPath,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
   }) async {
     ensureCalls++;
     lastModelId = modelId;
     lastModelPath = modelPath;
+    lastVerifiedChecksum = verifiedChecksum;
     lastTokenizer = tokenizer;
     lastRuntime = runtime;
     return <String, dynamic>{
@@ -373,6 +379,7 @@ class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String modelPath,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
   }) async {
     inspectCalls++;
     return <String, dynamic>{
@@ -383,7 +390,12 @@ class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   }
 
   @override
-  Future<void> releaseModel({required String modelId}) async {}
+  Future<void> cancelRequest({required String requestId}) async {}
+
+  @override
+  Future<void> releaseModel({required String modelId}) async {
+    releasedModelIds.add(modelId);
+  }
 }
 
 class _RecordingLlmRuntimeBridge implements LlmRuntimeBridge {
@@ -591,6 +603,7 @@ void main() {
     expect(bridge.lastTokenizer?.maxSequenceLength, 256);
     expect(bridge.lastRuntime, isNotNull);
     expect(bridge.lastRuntime?.pooling, 'mean');
+    expect(bridge.lastVerifiedChecksum, 'sha256:verified-embed-1');
     expect(registryRepository.entries['embed-1']?.localPath, '/models/embed-1.onnx');
     expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
   });
@@ -1258,6 +1271,7 @@ void main() {
 
     expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
     expect(downloadService.invocations, hasLength(1));
+    expect(bridge.releasedModelIds, <String>['embed-1']);
   });
 
   test('embeddingRuntimeStatesProvider reports corrupted when installed embedding file fails checksum revalidation', () async {
@@ -2234,6 +2248,7 @@ void main() {
     expect(downloadService.invocations[0].modelId, 'embed-1');
     expect(downloadService.invocations[0].sourceUrl, 'https://example.com/embed-1.onnx');
     expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
+    expect(bridge.releasedModelIds, <String>['embed-1']);
     // After repair, model should be re-registered as valid
     expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
     expect(registryRepository.entries['embed-1']?.integrityStatus, ModelIntegrityStatus.valid);

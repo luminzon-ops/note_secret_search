@@ -150,16 +150,20 @@ class SearchIndexService {
     required ModelRegistryEntry activeEmbeddingModel,
     required String modelRevisionHash,
     required SearchConfiguration configuration,
-  }) {
+  }) async {
     final writeContext = _captureWriteContext();
-    return _indexCorpusPending(
-      activeVaultId: activeVaultId,
-      corpus: corpus,
-      activeEmbeddingModel: activeEmbeddingModel,
-      modelRevisionHash: modelRevisionHash,
-      configuration: configuration,
-      writeContext: writeContext,
-    );
+    try {
+      return await _indexCorpusPending(
+        activeVaultId: activeVaultId,
+        corpus: corpus,
+        activeEmbeddingModel: activeEmbeddingModel,
+        modelRevisionHash: modelRevisionHash,
+        configuration: configuration,
+        writeContext: writeContext,
+      );
+    } finally {
+      writeContext.release();
+    }
   }
 
   Future<void> indexPendingItems({
@@ -169,13 +173,17 @@ class SearchIndexService {
     required SearchConfiguration configuration,
   }) async {
     final writeContext = _captureWriteContext();
-    await _replacePendingItems(
-      items: items,
-      activeEmbeddingModel: activeEmbeddingModel,
-      modelRevisionHash: modelRevisionHash,
-      configuration: configuration,
-      writeContext: writeContext,
-    );
+    try {
+      await _replacePendingItems(
+        items: items,
+        activeEmbeddingModel: activeEmbeddingModel,
+        modelRevisionHash: modelRevisionHash,
+        configuration: configuration,
+        writeContext: writeContext,
+      );
+    } finally {
+      writeContext.release();
+    }
   }
 
   Future<int> _replacePendingItems({
@@ -203,9 +211,19 @@ class SearchIndexService {
       final embeddedChunks = <EmbeddingChunk>[];
       int? vectorDimension;
       for (final textChunk in textChunks) {
-        final vector = await _embeddingEngine.embed(
-          EmbeddingRequest(model: activeEmbeddingModel, text: textChunk.text),
-        );
+        late final EmbeddingVector vector;
+        try {
+          vector = await _embeddingEngine.embed(
+            EmbeddingRequest(
+              model: activeEmbeddingModel,
+              text: textChunk.text,
+              cancellationToken: writeContext.cancellationToken,
+            ),
+          );
+        } on EmbeddingCancellationException {
+          _validateWriteContext(writeContext);
+          rethrow;
+        }
         final dimension = vector.values.length;
         if (dimension == 0 ||
             (vectorDimension != null && vectorDimension != dimension)) {
@@ -387,6 +405,7 @@ class SearchIndexService {
     return _SearchIndexWriteContext(
       sessionKeys: _keys.requireCurrent(),
       fenceRevision: _writeFence?.revision,
+      writeLease: _writeFence?.acquireLease(),
     );
   }
 
@@ -492,8 +511,17 @@ class _SearchIndexWriteContext {
   const _SearchIndexWriteContext({
     required this.sessionKeys,
     required this.fenceRevision,
+    required this.writeLease,
   });
 
   final DatabaseSessionKeys sessionKeys;
   final int? fenceRevision;
+  final SearchIndexWriteLease? writeLease;
+
+  EmbeddingCancellationToken get cancellationToken =>
+      writeLease?.cancellationToken ?? EmbeddingCancellationToken.none;
+
+  void release() {
+    writeLease?.release();
+  }
 }

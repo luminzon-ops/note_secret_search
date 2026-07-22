@@ -278,6 +278,7 @@ class _ThrowingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String modelPath,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
   }) {
     throw StateError('runtime_failed');
   }
@@ -289,6 +290,8 @@ class _ThrowingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String text,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+    String? requestId,
   }) {
     throw UnimplementedError();
   }
@@ -299,9 +302,13 @@ class _ThrowingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
     required String modelPath,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
   }) {
     throw UnimplementedError();
   }
+
+  @override
+  Future<void> cancelRequest({required String requestId}) async {}
 
   @override
   Future<void> releaseModel({required String modelId}) async {}
