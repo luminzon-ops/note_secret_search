@@ -152,19 +152,29 @@ class OnnxEmbeddingRuntime(
                     }
 
                     session.run(inputs).use { outputs ->
-                        val selected = outputs.firstOrNull { it.key == spec.runtime.outputName }?.value
-                            ?: outputs.firstOrNull()?.value
-                            ?: throw OrtException("EMPTY_OUTPUT: no embedding output returned")
-
-                        val tokenVectors = extractTokenVectors(selected)
-                        val floats = when {
-                            tokenVectors != null -> EmbeddingVectorPostProcessor.pool(
-                                tokenVectors = tokenVectors,
+                        val selected = outputs.get(spec.runtime.outputName).orElseThrow {
+                            OrtException("EMPTY_OUTPUT: no embedding output returned")
+                        }
+                        val tensorInfo = selected.info as? TensorInfo
+                            ?: throw OrtException("INVALID_OUTPUT: embedding output is not a tensor")
+                        val decoded = EmbeddingTensorDecoder.decode(
+                            type = tensorInfo.type,
+                            shape = tensorInfo.shape,
+                            value = selected.value,
+                        )
+                        val floats = when (decoded.kind) {
+                            EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
+                                tokenVectors = decoded.tokenVectors,
                                 attentionMask = encoded.attentionMask,
                                 pooling = spec.runtime.pooling,
                             )
 
-                            else -> extractFloatValues(selected)
+                            EmbeddingTensorKind.SENTENCE -> {
+                                require(spec.runtime.pooling == "none") {
+                                    "INVALID_OUTPUT: sentence output requires pooling=none"
+                                }
+                                decoded.sentenceVector.map(Float::toDouble)
+                            }
                         }
                         if (floats.isEmpty()) {
                             throw OrtException("EMPTY_OUTPUT: embedding vector is empty")
@@ -187,40 +197,6 @@ class OnnxEmbeddingRuntime(
             lowercase = spec.lowercase,
             maxSequenceLength = spec.maxSequenceLength,
         )
-    }
-
-    private fun extractFloatValues(value: Any): List<Double> {
-        return when (value) {
-            is FloatArray -> value.map(Float::toDouble)
-            is Array<*> -> flattenArray(value)
-            else -> emptyList()
-        }
-    }
-
-    private fun extractTokenVectors(value: Any): Array<FloatArray>? {
-        return when (value) {
-            is Array<*> -> {
-                val first = value.firstOrNull()
-                when (first) {
-                    is FloatArray -> arrayOf(first)
-                    is Array<*> -> first.mapNotNull { it as? FloatArray }.toTypedArray().takeIf { it.isNotEmpty() }
-                    else -> null
-                }
-            }
-
-            else -> null
-        }
-    }
-
-    private fun flattenArray(value: Array<*>): List<Double> {
-        val flattened = mutableListOf<Double>()
-        value.forEach { item ->
-            when (item) {
-                is FloatArray -> flattened.addAll(item.map(Float::toDouble))
-                is Array<*> -> flattened.addAll(flattenArray(item))
-            }
-        }
-        return flattened
     }
 
     private fun validateSpec(session: OrtSession, spec: OnnxEmbeddingModelSpec) {

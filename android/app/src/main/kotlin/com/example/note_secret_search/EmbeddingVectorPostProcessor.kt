@@ -8,28 +8,68 @@ object EmbeddingVectorPostProcessor {
         attentionMask: LongArray,
         pooling: String,
     ): List<Double> {
-        if (tokenVectors.isEmpty()) {
-            return emptyList()
-        }
+        validateTokenVectors(tokenVectors, attentionMask)
 
         return when (pooling) {
-            "cls" -> tokenVectors.first().map(Float::toDouble)
+            "cls" -> {
+                val firstValid = attentionMask.indexOfFirst { it == 1L }
+                require(firstValid >= 0) {
+                    "INVALID_OUTPUT: attention mask has no valid tokens"
+                }
+                tokenVectors[firstValid].map(Float::toDouble)
+            }
             "mean" -> meanPool(tokenVectors, attentionMask)
-            else -> tokenVectors.first().map(Float::toDouble)
+            else -> throw IllegalArgumentException(
+                "INVALID_OUTPUT: unsupported embedding pooling",
+            )
         }
     }
 
     fun normalize(values: List<Double>, normalization: String): List<Double> {
-        if (normalization != "l2") {
-            return values
+        require(values.isNotEmpty()) {
+            "INVALID_OUTPUT: embedding vector is empty"
+        }
+        require(values.all(Double::isFinite)) {
+            "INVALID_OUTPUT: embedding vector contains non-finite values"
+        }
+        if (normalization == "none") {
+            return values.toList()
+        }
+        require(normalization == "l2") {
+            "INVALID_OUTPUT: unsupported embedding normalization"
         }
 
         val norm = sqrt(values.sumOf { it * it })
-        if (norm == 0.0) {
-            return values
+        require(norm.isFinite() && norm > 0.0) {
+            "INVALID_OUTPUT: embedding vector has zero or invalid norm"
         }
 
         return values.map { it / norm }
+    }
+
+    private fun validateTokenVectors(
+        tokenVectors: Array<FloatArray>,
+        attentionMask: LongArray,
+    ) {
+        require(tokenVectors.isNotEmpty()) {
+            "INVALID_OUTPUT: token output is empty"
+        }
+        require(attentionMask.size == tokenVectors.size) {
+            "INVALID_OUTPUT: attention mask does not match token output"
+        }
+        require(attentionMask.all { it == 0L || it == 1L }) {
+            "INVALID_OUTPUT: attention mask contains unsupported values"
+        }
+        val width = tokenVectors.first().size
+        require(width > 0) {
+            "INVALID_OUTPUT: token vector dimension is empty"
+        }
+        require(tokenVectors.all { row -> row.size == width }) {
+            "INVALID_OUTPUT: token output is ragged"
+        }
+        require(tokenVectors.all { row -> row.all(Float::isFinite) }) {
+            "INVALID_OUTPUT: token output contains non-finite values"
+        }
     }
 
     private fun meanPool(
@@ -52,7 +92,9 @@ object EmbeddingVectorPostProcessor {
         }
 
         if (counted == 0) {
-            return List(width) { 0.0 }
+            throw IllegalArgumentException(
+                "INVALID_OUTPUT: attention mask has no valid tokens",
+            )
         }
 
         return totals.map { it / counted }
