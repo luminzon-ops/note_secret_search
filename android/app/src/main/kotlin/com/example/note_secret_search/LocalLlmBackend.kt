@@ -28,12 +28,23 @@ data class LocalLlmGenerationConfig(
 interface LocalLlmBackend {
     fun inspect(file: File): LocalLlmInspectResult
     fun load(modelId: String, file: File): LocalLlmBackendSession
+    fun load(
+        modelId: String,
+        file: File,
+        config: LocalLlmGenerationConfig,
+    ): LocalLlmBackendSession {
+        return load(modelId, file)
+    }
+
     fun generate(
         session: LocalLlmBackendSession,
         prompt: String,
         maxTokens: Int,
         config: LocalLlmGenerationConfig = LocalLlmGenerationConfig(maxOutputTokens = maxTokens),
     ): LocalLlmGenerateResult
+
+    fun cancel(session: LocalLlmBackendSession) {
+    }
 
     fun release(session: LocalLlmBackendSession)
 }

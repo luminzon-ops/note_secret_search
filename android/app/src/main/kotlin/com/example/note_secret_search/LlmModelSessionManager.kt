@@ -8,25 +8,42 @@ class LlmModelSessionManager<T> {
         return if (activeModelId == modelId) activeSession else null
     }
 
-    fun replace(modelId: String, session: T, onDispose: (T) -> Unit) {
-        if (activeModelId != modelId) {
-            activeSession?.let(onDispose)
-        }
+    fun install(modelId: String, session: T): T? {
+        val previous = activeSession
         activeModelId = modelId
         activeSession = session
+        return previous
+    }
+
+    fun take(modelId: String): T? {
+        if (activeModelId != modelId) {
+            return null
+        }
+        val previous = activeSession
+        activeModelId = null
+        activeSession = null
+        return previous
+    }
+
+    fun takeAny(): T? {
+        val previous = activeSession
+        activeModelId = null
+        activeSession = null
+        return previous
+    }
+
+    fun replace(modelId: String, session: T, onDispose: (T) -> Unit) {
+        val previous = install(modelId, session)
+        if (previous != null) {
+            onDispose(previous)
+        }
     }
 
     fun release(modelId: String, onDispose: (T) -> Unit) {
-        if (activeModelId == modelId) {
-            activeSession?.let(onDispose)
-            activeModelId = null
-            activeSession = null
-        }
+        take(modelId)?.let(onDispose)
     }
 
     fun releaseAll(onDispose: (T) -> Unit) {
-        activeSession?.let(onDispose)
-        activeModelId = null
-        activeSession = null
+        takeAny()?.let(onDispose)
     }
 }
