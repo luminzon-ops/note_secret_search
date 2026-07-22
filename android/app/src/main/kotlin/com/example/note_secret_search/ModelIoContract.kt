@@ -71,23 +71,52 @@ object ModelIoContractBuilder {
         require(output.type == ModelTensorType.FLOAT) {
             "MODEL_SCHEMA_UNSUPPORTED: embedding output must be FLOAT"
         }
-        require(output.shape.size == 3) {
-            "MODEL_SCHEMA_UNSUPPORTED: embedding output must have shape [1, S, D]"
-        }
-        require(isBatchDimension(output.shape[0])) {
-            "MODEL_SCHEMA_UNSUPPORTED: embedding output batch must be 1 or dynamic"
-        }
-        require(isSequenceDimension(output.shape[1]) && output.shape[2] in 1..Int.MAX_VALUE.toLong()) {
-            "MODEL_SCHEMA_UNSUPPORTED: embedding output dimensions are invalid"
+        val outputSequenceDimension: Long?
+        val vectorDimension: Long
+        when (output.shape.size) {
+            2 -> {
+                require(runtime.pooling == "none") {
+                    "MODEL_SCHEMA_UNSUPPORTED: sentence output requires pooling=none"
+                }
+                require(
+                    isBatchDimension(output.shape[0]) &&
+                        output.shape[1] in 1..Int.MAX_VALUE.toLong(),
+                ) {
+                    "MODEL_SCHEMA_UNSUPPORTED: sentence output dimensions are invalid"
+                }
+                outputSequenceDimension = null
+                vectorDimension = output.shape[1]
+            }
+
+            3 -> {
+                require(runtime.pooling == "mean" || runtime.pooling == "cls") {
+                    "MODEL_SCHEMA_UNSUPPORTED: token output requires mean or cls pooling"
+                }
+                require(isBatchDimension(output.shape[0])) {
+                    "MODEL_SCHEMA_UNSUPPORTED: embedding output batch must be 1 or dynamic"
+                }
+                require(
+                    isSequenceDimension(output.shape[1]) &&
+                        output.shape[2] in 1..Int.MAX_VALUE.toLong(),
+                ) {
+                    "MODEL_SCHEMA_UNSUPPORTED: token output dimensions are invalid"
+                }
+                outputSequenceDimension = output.shape[1]
+                vectorDimension = output.shape[2]
+            }
+
+            else -> throw IllegalArgumentException(
+                "MODEL_SCHEMA_UNSUPPORTED: embedding output rank must be two or three",
+            )
         }
         val fixedInputSequenceLength = fixedSequenceDimensions.singleOrNull()
-        if (fixedInputSequenceLength != null && output.shape[1] > 0L) {
-            require(output.shape[1] == fixedInputSequenceLength) {
+        if (fixedInputSequenceLength != null && (outputSequenceDimension ?: -1L) > 0L) {
+            require(outputSequenceDimension == fixedInputSequenceLength) {
                 "MODEL_SCHEMA_UNSUPPORTED: embedding output sequence conflicts with inputs"
             }
         }
         val fixedSequenceLength = fixedInputSequenceLength
-            ?: output.shape[1].takeIf { it > 0L }
+            ?: outputSequenceDimension?.takeIf { it > 0L }
 
         return ModelIoContract(
             inputIds = inputIds,
@@ -95,7 +124,7 @@ object ModelIoContractBuilder {
             tokenTypeIds = tokenTypeIds,
             outputName = runtime.outputName,
             fixedSequenceLength = fixedSequenceLength?.toInt(),
-            vectorDimension = output.shape[2].toInt(),
+            vectorDimension = vectorDimension.toInt(),
         )
     }
 

@@ -97,6 +97,41 @@ class OnnxEmbeddingRuntimeTest {
     }
 
     @Test
+    fun `embed accepts rank two sentence output with pooling none`() {
+        val modelFile = temporaryFolder.newFile("sentence-model.onnx")
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph().copy(
+                outputs = mapOf(
+                    "sentence_embedding" to ModelTensorInfo(
+                        ModelTensorType.FLOAT,
+                        longArrayOf(1, 2),
+                    ),
+                ),
+            ),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 2),
+                values = floatArrayOf(3f, 4f),
+            ),
+        )
+
+        val result = runtime(FakeOnnxRuntimeAdapter(session)).embedText(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            text = "hello",
+            spec = modelSpec(
+                outputName = "sentence_embedding",
+                pooling = "none",
+            ),
+        )
+
+        val values = result.getValue("values") as List<*>
+        assertEquals(0.6, values[0] as Double, 1e-12)
+        assertEquals(0.8, values[1] as Double, 1e-12)
+        assertEquals(3, result["tokenCount"])
+        assertEquals(2, result["vectorDimension"])
+    }
+
+    @Test
     fun `inspect closes temporary sessions on success and schema failure`() {
         val modelFile = temporaryFolder.newFile("inspect-model.onnx")
         val validSession = FakeOnnxSessionHandle(
@@ -453,7 +488,10 @@ class OnnxEmbeddingRuntimeTest {
         )
     }
 
-    private fun modelSpec(): OnnxEmbeddingModelSpec {
+    private fun modelSpec(
+        outputName: String = "last_hidden_state",
+        pooling: String = "mean",
+    ): OnnxEmbeddingModelSpec {
         return OnnxEmbeddingModelSpec(
             tokenizer = OnnxEmbeddingModelSpec.TokenizerSpec(
                 format = "tokenizer_json",
@@ -465,8 +503,8 @@ class OnnxEmbeddingRuntimeTest {
                 inputIdsName = "input_ids",
                 attentionMaskName = "attention_mask",
                 tokenTypeIdsName = "token_type_ids",
-                outputName = "last_hidden_state",
-                pooling = "mean",
+                outputName = outputName,
+                pooling = pooling,
                 normalization = "l2",
             ),
         )

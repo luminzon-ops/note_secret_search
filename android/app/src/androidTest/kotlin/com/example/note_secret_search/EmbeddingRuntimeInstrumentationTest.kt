@@ -436,6 +436,7 @@ private fun instrumentationMethodCall(
     if (method == "embedText") {
         arguments["text"] = "test-only input"
         arguments["requestId"] = requestId
+        arguments["verifiedChecksum"] = "sha256:${"a".repeat(64)}"
     }
     return MethodCall(method, arguments)
 }

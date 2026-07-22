@@ -72,6 +72,30 @@ class ModelIoContractBuilderTest {
     }
 
     @Test
+    fun `build accepts rank two sentence output only with pooling none`() {
+        val contract = ModelIoContractBuilder.build(
+            graph = ModelGraphInfo(
+                inputs = mapOf(
+                    "input_ids" to tensor(ModelTensorType.INT64, 1, -1),
+                    "attention_mask" to tensor(ModelTensorType.INT64, 1, -1),
+                    "token_type_ids" to tensor(ModelTensorType.INT64, 1, -1),
+                ),
+                outputs = mapOf(
+                    "sentence_embedding" to tensor(ModelTensorType.FLOAT, 1, 4),
+                ),
+            ),
+            runtime = runtimeSpec().copy(
+                outputName = "sentence_embedding",
+                pooling = "none",
+            ),
+        )
+
+        assertNull(contract.fixedSequenceLength)
+        assertEquals(4, contract.vectorDimension)
+        assertEquals("sentence_embedding", contract.outputName)
+    }
+
+    @Test
     fun `build rejects duplicate runtime input names`() {
         val graph = ModelGraphInfo(
             inputs = mapOf(
