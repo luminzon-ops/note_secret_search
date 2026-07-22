@@ -14,7 +14,7 @@ class OnnxEmbeddingRuntime(
     private val contextPackage: String,
     private val executionSettings: OrtExecutionSettings = OrtExecutionSettings.controlled(),
     private val clock: () -> Long = System::currentTimeMillis,
-) {
+) : EmbeddingRuntimeContract {
     constructor(
         context: Context,
         sessionManager: EmbeddingModelSessionManager,
@@ -37,7 +37,7 @@ class OnnxEmbeddingRuntime(
         contextPackage = context.packageName,
     )
 
-    fun inspectModel(
+    override fun inspectModel(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
@@ -78,7 +78,7 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun ensureModelReady(
+    override fun ensureModelReady(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
@@ -121,7 +121,7 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun embedText(
+    override fun embedText(
         modelId: String,
         modelPath: String,
         text: String,
@@ -175,8 +175,12 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun releaseModel(modelId: String) {
+    override fun releaseModel(modelId: String) {
         sessionManager.release(modelId)
+    }
+
+    override fun releaseAll() {
+        sessionManager.releaseAll()
     }
 
     private fun openPreparedSession(
