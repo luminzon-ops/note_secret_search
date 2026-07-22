@@ -42,6 +42,13 @@ fun runEmbeddingInference(
     cancellation.throwIfCancelled(modelId)
     return try {
         val decoded = EmbeddingTensorDecoder.decode(output)
+        val actualVectorDimension = when (decoded.kind) {
+            EmbeddingTensorKind.TOKEN -> decoded.tokenVectors.first().size
+            EmbeddingTensorKind.SENTENCE -> decoded.sentenceVector.size
+        }
+        require(actualVectorDimension == contract.vectorDimension) {
+            "INVALID_OUTPUT: embedding output dimension changed after session inspection"
+        }
         val pooled = when (decoded.kind) {
             EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
                 tokenVectors = decoded.tokenVectors,

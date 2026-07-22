@@ -224,6 +224,34 @@ class OnnxEmbeddingRuntimeTest {
     }
 
     @Test
+    fun `inference output width must match the inspected model contract`() {
+        val modelFile = temporaryFolder.newFile("wrong-output-width.onnx")
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph(),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 3, 3),
+                values = floatArrayOf(
+                    1f, 0f, 0f,
+                    0f, 1f, 0f,
+                    0f, 0f, 1f,
+                ),
+            ),
+        )
+
+        val error = assertThrows(EmbeddingRuntimeException::class.java) {
+            runtime(FakeOnnxRuntimeAdapter(session)).embedText(
+                modelId = "embedding-model",
+                modelPath = modelFile.absolutePath,
+                text = "hello",
+                spec = modelSpec(),
+            )
+        }
+
+        assertEquals(EmbeddingRuntimeErrorCode.INVALID_OUTPUT, error.code)
+        assertEquals(EmbeddingRuntimeStage.OUTPUT, error.stage)
+    }
+
+    @Test
     fun `tokenizer load failures become typed tokenizer state`() {
         val modelFile = temporaryFolder.newFile("tokenizer-failure.onnx")
         val runtime = runtime(
