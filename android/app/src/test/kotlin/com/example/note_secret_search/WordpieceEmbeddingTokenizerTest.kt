@@ -36,6 +36,29 @@ class WordpieceEmbeddingTokenizerTest {
     }
 
     @Test
+    fun `encode rejects an overlong word even when the full token exists in vocab`() {
+        val overlongWord = "a".repeat(101)
+        val overlongTokenizer = WordpieceEmbeddingTokenizer(
+            definition = TokenizerDefinition.legacy(
+                vocab = mapOf(
+                    "[PAD]" to 0,
+                    "[UNK]" to 100,
+                    "[CLS]" to 101,
+                    "[SEP]" to 102,
+                    overlongWord to 2001,
+                ),
+                lowercase = false,
+            ),
+            maxSequenceLength = 8,
+        )
+
+        assertArrayEquals(
+            longArrayOf(101, 100, 102),
+            overlongTokenizer.encode(overlongWord, padToLength = null).inputIds,
+        )
+    }
+
+    @Test
     fun `catalog tokenizer matches Chinese and mixed punctuation golden corpus`() {
         val catalogTokenizer = catalogTokenizer()
 

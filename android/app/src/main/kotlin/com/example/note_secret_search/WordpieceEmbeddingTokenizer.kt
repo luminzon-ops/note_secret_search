@@ -248,14 +248,14 @@ class WordpieceEmbeddingTokenizer(
         if (word.isEmpty()) {
             return emptyList()
         }
-        val direct = definition.vocab[word]
-        if (direct != null) {
-            return listOf(direct.toLong())
-        }
         val offsets = codePointOffsets(word)
         val codePointCount = offsets.size - 1
         if (codePointCount > definition.maxInputCharsPerWord) {
             return listOf(definition.unknownTokenId.toLong())
+        }
+        val direct = definition.vocab[word]
+        if (direct != null) {
+            return listOf(direct.toLong())
         }
 
         val pieces = mutableListOf<Long>()
