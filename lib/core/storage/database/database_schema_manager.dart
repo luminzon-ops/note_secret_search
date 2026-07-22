@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/storage/database/database_schema_v5_obje
 import 'package:note_secret_search/core/storage/database/database_schema_v5_rebuild.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v6_migration.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v7_migration.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 abstract interface class DatabaseSchemaController {
@@ -43,6 +44,10 @@ enum DatabaseMigrationCheckpoint {
   v6SchemaObjectsCreated,
   v6PostconditionsValidated,
   v6LedgerWritten,
+  v7BaselineValidated,
+  v7SchemaObjectsCreated,
+  v7PostconditionsValidated,
+  v7LedgerWritten,
 }
 
 typedef DatabaseMigrationCheckpointCallback =
@@ -56,7 +61,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
            nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch),
        _onMigrationCheckpoint = onMigrationCheckpoint;
 
-  static const int latestVersion = 6;
+  static const int latestVersion = 7;
   static const String v5MigrationName = 'database_schema_v5';
   static const String v5MigrationChecksum =
       '72961f4e65faded09a0b1afdfdadee2b'
@@ -68,11 +73,18 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   static const String v6MigrationChecksum =
       'e91b4d4595beab7f2343439d177d28fa'
       '570300b27eb33de89f5f2447f1d14183';
-  static const String migrationName = v6MigrationName;
-  static const String migrationChecksum = v6MigrationChecksum;
-  static const String expectedFingerprint =
+  static const String v6ExpectedFingerprint =
       'cdcfbebdc3dff31920a81cb4e6890f12'
       '28fbdd4a18a226407e67a568d2e1ad41';
+  static const String v7MigrationName = 'database_schema_v7';
+  static const String v7MigrationChecksum =
+      'e153245d83136f5423a8f9500fd2d492'
+      'f4fb68b2e655b27c9267f38716be75b6';
+  static const String migrationName = v7MigrationName;
+  static const String migrationChecksum = v7MigrationChecksum;
+  static const String expectedFingerprint =
+      'c5e2ab18baf246a5e786d4689eb36e93'
+      '9ca929d15644fd496a3f5daf5a6cbaeb';
 
   final int Function() _nowMilliseconds;
   final DatabaseMigrationCheckpointCallback? _onMigrationCheckpoint;
@@ -112,7 +124,20 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       name: v6MigrationName,
       checksum: v6MigrationChecksum,
     );
+    await _validateV6Baseline(database);
     await _checkpoint(DatabaseMigrationCheckpoint.v6LedgerWritten);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7BaselineValidated);
+    await DatabaseSchemaV7Migration.apply(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7SchemaObjectsCreated);
+    await DatabaseSchemaV7Migration.validatePostconditions(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7PostconditionsValidated);
+    await _writeLedger(
+      database,
+      version: 7,
+      name: v7MigrationName,
+      checksum: v7MigrationChecksum,
+    );
+    await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
     await _validateTargetStructure(database);
   }
 
@@ -122,28 +147,46 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     int oldVersion,
     int newVersion,
   ) async {
-    if ((oldVersion != 4 && oldVersion != 5) || newVersion != latestVersion) {
+    if ((oldVersion != 4 && oldVersion != 5 && oldVersion != 6) ||
+        newVersion != latestVersion) {
       throw const DatabaseSchemaException('database_schema_unsupported');
     }
     if (oldVersion == 4) {
       await _upgradeV4ToV5(database);
-    } else {
+    } else if (oldVersion == 5) {
       await _validateV5Baseline(database);
     }
-    await _checkpoint(DatabaseMigrationCheckpoint.v6BaselineValidated);
-    await DatabaseSchemaV6Migration.apply(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v6SchemaObjectsCreated);
-    await DatabaseSchemaV6Migration.validateEmptyDerivedData(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v6PostconditionsValidated);
-    await database.execute(DatabaseSchemaV5.schemaMigrationsCreateStatement);
+    if (oldVersion <= 5) {
+      await _checkpoint(DatabaseMigrationCheckpoint.v6BaselineValidated);
+      await DatabaseSchemaV6Migration.apply(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v6SchemaObjectsCreated);
+      await DatabaseSchemaV6Migration.validateEmptyDerivedData(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v6PostconditionsValidated);
+      await database.execute(DatabaseSchemaV5.schemaMigrationsCreateStatement);
+      await _writeLedger(
+        database,
+        version: 6,
+        name: v6MigrationName,
+        checksum: v6MigrationChecksum,
+      );
+      await _validateV6Baseline(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v6LedgerWritten);
+    } else {
+      await _validateV6Baseline(database);
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.v7BaselineValidated);
+    await DatabaseSchemaV7Migration.apply(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7SchemaObjectsCreated);
+    await DatabaseSchemaV7Migration.validatePostconditions(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7PostconditionsValidated);
     await _writeLedger(
       database,
-      version: 6,
-      name: v6MigrationName,
-      checksum: v6MigrationChecksum,
+      version: 7,
+      name: v7MigrationName,
+      checksum: v7MigrationChecksum,
     );
     await _validateTargetStructure(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v6LedgerWritten);
+    await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
   }
 
   @override
@@ -278,25 +321,36 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     });
   }
 
-  Future<void> _validateLedger(DatabaseExecutor database) async {
+  Future<void> _validateLedgerThrough(
+    DatabaseExecutor database,
+    int throughVersion,
+  ) async {
     final rows = await database.query(
       'schema_migrations',
       orderBy: 'version ASC',
     );
-    if (rows.length != 2 ||
-        rows[0]['version'] != 5 ||
-        rows[0]['name'] != v5MigrationName ||
-        rows[0]['checksum'] != v5MigrationChecksum ||
-        rows[1]['version'] != 6 ||
-        rows[1]['name'] != v6MigrationName ||
-        rows[1]['checksum'] != v6MigrationChecksum) {
+    final expected = <(int, String, String)>[
+      (5, v5MigrationName, v5MigrationChecksum),
+      (6, v6MigrationName, v6MigrationChecksum),
+      (7, v7MigrationName, v7MigrationChecksum),
+    ].where((entry) => entry.$1 <= throughVersion).toList(growable: false);
+    if (rows.length != expected.length) {
       throw const DatabaseSchemaException('database_schema_invalid');
+    }
+    for (var index = 0; index < expected.length; index += 1) {
+      final entry = expected[index];
+      final row = rows[index];
+      if (row['version'] != entry.$1 ||
+          row['name'] != entry.$2 ||
+          row['checksum'] != entry.$3) {
+        throw const DatabaseSchemaException('database_schema_invalid');
+      }
     }
   }
 
   Future<void> _validateTargetStructure(DatabaseExecutor database) async {
     await _validateIntegrity(database);
-    await _validateLedger(database);
+    await _validateLedgerThrough(database, latestVersion);
     final defaults = await database.rawQuery('''
       SELECT COUNT(*) AS count
       FROM vaults
@@ -389,18 +443,16 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   }
 
   Future<void> _validateV5Baseline(Database database) async {
-    await _validateLedgerV5Only(database);
+    await _validateLedgerThrough(database, 5);
     if (await fingerprint(database) != v5ExpectedFingerprint) {
       throw const DatabaseSchemaException('database_schema_invalid');
     }
   }
 
-  Future<void> _validateLedgerV5Only(DatabaseExecutor database) async {
-    final rows = await database.query('schema_migrations');
-    if (rows.length != 1 ||
-        rows.single['version'] != 5 ||
-        rows.single['name'] != v5MigrationName ||
-        rows.single['checksum'] != v5MigrationChecksum) {
+  Future<void> _validateV6Baseline(Database database) async {
+    await _validateIntegrity(database);
+    await _validateLedgerThrough(database, 6);
+    if (await fingerprint(database) != v6ExpectedFingerprint) {
       throw const DatabaseSchemaException('database_schema_invalid');
     }
   }

@@ -12,7 +12,7 @@ void main() {
 
   for (final failingCheckpoint in DatabaseMigrationCheckpoint.values) {
     test(
-      'v4 to v6 upgrade rolls back at ${failingCheckpoint.name} and retries',
+      'v4 to v7 upgrade rolls back at ${failingCheckpoint.name} and retries',
       () async {
         final fixture = await createLegacyDatabaseFixture(
           LegacyFixtureVersion.upgradedV4,
@@ -65,7 +65,7 @@ void main() {
         addTearDown(upgraded.close);
 
         await retryManager.validate(upgraded);
-        expect(await _pragmaInt(upgraded, 'user_version'), 6);
+        expect(await _pragmaInt(upgraded, 'user_version'), 7);
       },
     );
   }

@@ -12,7 +12,7 @@ import '../../../support/legacy_database_fixture.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  test('fresh database creates and validates schema v6', () async {
+  test('fresh database creates and validates schema v7', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_v5_',
     );
@@ -28,7 +28,7 @@ void main() {
 
     await manager.validate(database);
 
-    expect(await _pragmaInt(database, 'user_version'), 6);
+    expect(await _pragmaInt(database, 'user_version'), 7);
     expect(await _pragmaInt(database, 'foreign_keys'), 1);
     expect(
       await database.query(
@@ -55,6 +55,12 @@ void main() {
           'checksum': DatabaseSchemaManager.v6MigrationChecksum,
           'applied_at': 1_800_000_000_000,
         },
+        <String, Object?>{
+          'version': 7,
+          'name': DatabaseSchemaManager.v7MigrationName,
+          'checksum': DatabaseSchemaManager.v7MigrationChecksum,
+          'applied_at': 1_800_000_000_000,
+        },
       ],
     );
     expect(
@@ -63,7 +69,7 @@ void main() {
     );
   });
 
-  test('upgraded v4 reaches v6 without business data loss', () async {
+  test('upgraded v4 reaches v7 without business data loss', () async {
     final fixture = await createLegacyDatabaseFixture(
       LegacyFixtureVersion.upgradedV4,
     );
@@ -76,7 +82,7 @@ void main() {
     addTearDown(database.close);
     await manager.validate(database);
 
-    expect(await _pragmaInt(database, 'user_version'), 6);
+    expect(await _pragmaInt(database, 'user_version'), 7);
     final model = (await database.query('model_registry')).single;
     expect(model['id'], 'model-1');
     expect(model['integrity_status'], 'unknown');
@@ -90,14 +96,14 @@ void main() {
     )).single;
     expect(secret['title'], 'Primary account');
     expect(secret['username_ciphertext'], utf8.encode('alice'));
-    expect(await database.query('schema_migrations'), hasLength(2));
+    expect(await database.query('schema_migrations'), hasLength(3));
     expect(
       await manager.fingerprint(database),
       DatabaseSchemaManager.expectedFingerprint,
     );
   });
 
-  test('reopening v6 validates without repeating bootstrap writes', () async {
+  test('reopening v7 validates without repeating bootstrap writes', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_reopen_',
     );
@@ -122,7 +128,7 @@ void main() {
     expect(await second.query('vaults'), originalVault);
   });
 
-  test('v6 rejects a mismatched migration ledger without mutation', () async {
+  test('v7 rejects a mismatched migration ledger without mutation', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_ledger_',
     );
@@ -137,7 +143,7 @@ void main() {
       'schema_migrations',
       <String, Object?>{'checksum': 'tampered'},
       where: 'version = ?',
-      whereArgs: const <Object>[6],
+      whereArgs: const <Object>[7],
     );
 
     await expectLater(
@@ -154,13 +160,13 @@ void main() {
       (await database.query(
         'schema_migrations',
         where: 'version = ?',
-        whereArgs: const <Object>[6],
+        whereArgs: const <Object>[7],
       )).single['checksum'],
       'tampered',
     );
   });
 
-  test('v6 rejects a mismatched schema fingerprint without repair', () async {
+  test('v7 rejects a mismatched schema fingerprint without repair', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_fingerprint_',
     );
@@ -186,7 +192,7 @@ void main() {
     expect(await _columnNames(database, 'vaults'), contains('rogue'));
   });
 
-  test('v6 rejects foreign key corruption without repair', () async {
+  test('v7 rejects foreign key corruption without repair', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_foreign_key_',
     );
@@ -230,7 +236,7 @@ void main() {
     );
   });
 
-  test('v6 rejects a failed quick check', () async {
+  test('v7 rejects a failed quick check', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_quick_check_',
     );
@@ -254,7 +260,7 @@ void main() {
     );
   });
 
-  test('v6 fingerprint includes table CHECK definitions', () async {
+  test('v7 fingerprint includes table CHECK definitions', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_check_fingerprint_',
     );
@@ -297,7 +303,7 @@ void main() {
     );
   });
 
-  test('v6 rejects a database with no default Vault', () async {
+  test('v7 rejects a database with no default Vault', () async {
     final directory = await Directory.systemTemp.createTemp(
       'note_secret_search_schema_default_vault_',
     );
@@ -361,7 +367,7 @@ void main() {
     );
     addTearDown(fixture.dispose);
     final raw = await databaseFactoryFfi.openDatabase(fixture.sourcePath);
-    await raw.execute('PRAGMA user_version = 7');
+    await raw.execute('PRAGMA user_version = 8');
     await raw.close();
     final before = sha256.convert(await File(fixture.sourcePath).readAsBytes());
 
@@ -382,7 +388,7 @@ void main() {
     );
     final database = await databaseFactoryFfi.openDatabase(fixture.sourcePath);
     addTearDown(database.close);
-    expect(await _pragmaInt(database, 'user_version'), 7);
+    expect(await _pragmaInt(database, 'user_version'), 8);
     expect(await _tableNames(database), isNot(contains('schema_migrations')));
   });
 }

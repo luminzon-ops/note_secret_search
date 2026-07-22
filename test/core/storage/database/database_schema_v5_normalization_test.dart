@@ -117,7 +117,7 @@ void main() {
       };
       expect(providers, <String, Object?>{
         'provider-1': 0,
-        'provider-latest': 1,
+        'provider-latest': 0,
       });
     },
   );

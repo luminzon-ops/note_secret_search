@@ -16,7 +16,7 @@ void main() {
 
   for (final testCase in _migrationCases) {
     test(
-      '${testCase.name} upgrades through frozen v4 into validated v6',
+      '${testCase.name} upgrades through frozen v4 into validated v7',
       () async {
         final fixture = await createPhase3DatabaseMigrationFixture(
           testCase.version,
@@ -51,7 +51,7 @@ void main() {
           fixture: fixture,
           testCase: testCase,
           protectedBytes: protectedBytes,
-          canonicalDigest: canonicalDigest,
+          expectedCanonicalDigest: testCase.expectedV7CanonicalDigest,
         );
         await _expectSchemaGate(v6, manager);
       },
@@ -102,12 +102,12 @@ Future<void> _expectBusinessData(
   required Phase3DatabaseMigrationFixture fixture,
   required _MigrationCase testCase,
   required Map<String, String?> protectedBytes,
-  required String canonicalDigest,
+  required String expectedCanonicalDigest,
 }) async {
   expect(await capturePhase3ProtectedBytes(database), protectedBytes);
   expect(
     await phase3CanonicalDataDigest(database, fixture.crypto),
-    canonicalDigest,
+    expectedCanonicalDigest,
   );
   expect(await _ids(database, 'vaults'), const <String>['vault-1']);
   expect(await _ids(database, 'categories'), const <String>['category-1']);
@@ -246,6 +246,7 @@ Future<void> _expectTimestamps(Database database) async {
   final provider = (await database.query('provider_configs')).single;
   expect(provider['created_at'], 1_700_000_000_000);
   expect(provider['updated_at'], 1_700_000_000_009);
+  expect(provider['enabled'], 0);
   final sync = (await database.query('sync_accounts')).single;
   expect(sync['last_sync_at'], 1_700_000_000_010);
   expect(sync['updated_at'], 1_700_000_000_011);
@@ -324,7 +325,7 @@ Future<void> _expectSchemaGate(
   Database database,
   DatabaseSchemaManager manager,
 ) async {
-  expect(await phase3PragmaInt(database, 'user_version'), 6);
+  expect(await phase3PragmaInt(database, 'user_version'), 7);
   expect(await phase3PragmaInt(database, 'foreign_keys'), 1);
   expect(
     (await database.rawQuery('PRAGMA quick_check')).single.values.single,
@@ -351,6 +352,12 @@ Future<void> _expectSchemaGate(
         'version': 6,
         'name': DatabaseSchemaManager.v6MigrationName,
         'checksum': DatabaseSchemaManager.v6MigrationChecksum,
+        'applied_at': 1_800_000_000_000,
+      },
+      <String, Object?>{
+        'version': 7,
+        'name': DatabaseSchemaManager.v7MigrationName,
+        'checksum': DatabaseSchemaManager.v7MigrationChecksum,
         'applied_at': 1_800_000_000_000,
       },
     ],
@@ -413,6 +420,7 @@ class _MigrationCase {
     required this.v5IntegrityStatus,
     required this.v5ArtifactPaths,
     required this.expectedCanonicalDigest,
+    required this.expectedV7CanonicalDigest,
   });
 
   final LegacyFixtureVersion version;
@@ -424,6 +432,7 @@ class _MigrationCase {
   final String v5IntegrityStatus;
   final List<Object?>? v5ArtifactPaths;
   final String expectedCanonicalDigest;
+  final String expectedV7CanonicalDigest;
 }
 
 const _structuredModelArtifact = <Object?>[
@@ -441,8 +450,9 @@ const _migrationCases = <_MigrationCase>[
     v5IntegrityStatus: 'unknown',
     v5ArtifactPaths: null,
     expectedCanonicalDigest:
-        'f17d452ee9d4022c9e9a932545675733'
-        'd3b1f51d513bce0f1bd6ea94ffab2b16',
+        'f17d452ee9d4022c9e9a932545675733d3b1f51d513bce0f1bd6ea94ffab2b16',
+    expectedV7CanonicalDigest:
+        '33a725d32febf78ae244a3e87f96520ce2873853084b44b974b6a8d34b70c922',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.v2,
@@ -454,8 +464,9 @@ const _migrationCases = <_MigrationCase>[
     v5IntegrityStatus: 'unknown',
     v5ArtifactPaths: null,
     expectedCanonicalDigest:
-        '292f3defcbc27c02e341f7eea25a7cff'
-        '2c2293896112f60091a78c76fe3a1985',
+        '292f3defcbc27c02e341f7eea25a7cff2c2293896112f60091a78c76fe3a1985',
+    expectedV7CanonicalDigest:
+        '9109343fa7b2bb193e360272e973720c0eaf12f39dfc868f41bf52960a69cfd5',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.upgradedV3,
@@ -467,8 +478,9 @@ const _migrationCases = <_MigrationCase>[
     v5IntegrityStatus: 'unknown',
     v5ArtifactPaths: _structuredModelArtifact,
     expectedCanonicalDigest:
-        'd20cdb0230f26d4f387d16add55c5a3'
-        'e09ce58784f61736eef5fa9729b4a2f82',
+        'd20cdb0230f26d4f387d16add55c5a3e09ce58784f61736eef5fa9729b4a2f82',
+    expectedV7CanonicalDigest:
+        '3ebe17bab1934a20d9d4bc1ba0c472343b4dd878ab815a2e1203e9aef1c13fc5',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.freshV3,
@@ -480,7 +492,8 @@ const _migrationCases = <_MigrationCase>[
     v5IntegrityStatus: 'valid',
     v5ArtifactPaths: _structuredModelArtifact,
     expectedCanonicalDigest:
-        'c4077e096892228b9a69c6562c1cbccf'
-        '5b8d9b8b9cf5a8cd98e404c57f076400',
+        'c4077e096892228b9a69c6562c1cbccf5b8d9b8b9cf5a8cd98e404c57f076400',
+    expectedV7CanonicalDigest:
+        '7b14c344ab8fce6b65fe7555a6442e3b3d6fda0f1f3350cd239723155520a7f5',
   ),
 ];

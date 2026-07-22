@@ -8,8 +8,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  test('fresh v6 installs the ownership constraint inventory', () async {
-    final database = await _openFreshV6();
+  test('fresh v7 installs the ownership constraint inventory', () async {
+    final database = await _openFreshV7();
     addTearDown(database.close);
 
     expect(
@@ -45,12 +45,12 @@ void main() {
       await _foreignKeyTargets(database, 'chat_messages'),
       const <String, String>{'session_id': 'chat_sessions:CASCADE'},
     );
-    expect(await _objectNames(database, 'index'), _requiredV6Indexes);
-    expect(await _objectNames(database, 'trigger'), _requiredV6Triggers);
+    expect(await _objectNames(database, 'index'), _requiredV7Indexes);
+    expect(await _objectNames(database, 'trigger'), _requiredV7Triggers);
   });
 
-  test('v6 checks and business uniqueness reject invalid rows', () async {
-    final database = await _openFreshV6();
+  test('v7 checks and business uniqueness reject invalid rows', () async {
+    final database = await _openFreshV7();
     addTearDown(database.close);
 
     await expectLater(
@@ -137,9 +137,9 @@ void main() {
   });
 
   test(
-    'v6 triggers preserve Vault ownership from every write direction',
+    'v7 triggers preserve Vault ownership from every write direction',
     () async {
-      final database = await _openFreshV6();
+      final database = await _openFreshV7();
       addTearDown(database.close);
       await _insertOwnershipRows(database);
 
@@ -225,9 +225,9 @@ void main() {
   );
 }
 
-Future<Database> _openFreshV6() async {
+Future<Database> _openFreshV7() async {
   final directory = await Directory.systemTemp.createTemp(
-    'note_secret_search_fresh_v6_',
+    'note_secret_search_fresh_v7_',
   );
   addTearDown(() => directory.delete(recursive: true));
   final manager = DatabaseSchemaManager();
@@ -330,7 +330,7 @@ Future<Set<String>> _objectNames(Database database, String type) async {
   return rows.map((row) => row['name']! as String).toSet();
 }
 
-const _requiredV6Indexes = <String>{
+const _requiredV7Indexes = <String>{
   'uq_vaults_single_default',
   'uq_categories_vault_name_nocase',
   'uq_tags_vault_name_nocase',
@@ -355,7 +355,7 @@ const _requiredV6Indexes = <String>{
   'idx_chat_messages_session_created',
 };
 
-const _requiredV6Triggers = <String>{
+const _requiredV7Triggers = <String>{
   'trg_secret_category_owner_insert',
   'trg_secret_category_owner_update',
   'trg_note_category_owner_insert',

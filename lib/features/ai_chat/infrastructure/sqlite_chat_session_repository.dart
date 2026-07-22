@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
@@ -68,6 +69,9 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
           message.manualContextItemIds,
         ),
         'related_source_ids_json': jsonEncode(message.relatedSourceIds),
+        'actual_backend': message.backendUsage?.actualBackend,
+        'actual_model': message.backendUsage?.actualModel,
+        'provider_fingerprint': message.backendUsage?.providerFingerprint,
         'created_at': message.createdAt.millisecondsSinceEpoch,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     });
@@ -94,7 +98,6 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
           allow_private_context = excluded.allow_private_context,
           last_model_id = excluded.last_model_id,
           archived = excluded.archived,
-          created_at = excluded.created_at,
           updated_at = excluded.updated_at
         ''',
         <Object?>[
@@ -140,7 +143,27 @@ class SqliteChatSessionRepository implements ChatSessionRepository {
       relatedSourceIds: _decodeStringList(
         row['related_source_ids_json'] as String?,
       ),
+      backendUsage: _mapBackendUsage(row),
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
+    );
+  }
+
+  ChatBackendUsage? _mapBackendUsage(Map<String, Object?> row) {
+    final actualBackend = row['actual_backend'] as String?;
+    final actualModel = row['actual_model'] as String?;
+    final providerFingerprint = row['provider_fingerprint'] as String?;
+    if (actualBackend == null &&
+        actualModel == null &&
+        providerFingerprint == null) {
+      return null;
+    }
+    if (actualBackend == null || actualModel == null) {
+      throw const FormatException('chat_backend_usage_invalid');
+    }
+    return ChatBackendUsage(
+      actualBackend: actualBackend,
+      actualModel: actualModel,
+      providerFingerprint: providerFingerprint,
     );
   }
 

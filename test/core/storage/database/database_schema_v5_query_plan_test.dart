@@ -8,9 +8,9 @@ void main() {
   setUpAll(sqfliteFfiInit);
 
   test(
-    'v6 production queries use target indexes without temporary sorting',
+    'v7 production queries use target indexes without temporary sorting',
     () async {
-      final database = await _openFreshV6();
+      final database = await _openFreshV7();
       addTearDown(database.close);
 
       for (final queryCase in _queryPlanCases) {
@@ -34,9 +34,9 @@ void main() {
   );
 }
 
-Future<Database> _openFreshV6() async {
+Future<Database> _openFreshV7() async {
   final directory = await Directory.systemTemp.createTemp(
-    'note_secret_search_query_plan_v6_',
+    'note_secret_search_query_plan_v7_',
   );
   addTearDown(() => directory.delete(recursive: true));
   final manager = DatabaseSchemaManager();
@@ -172,7 +172,7 @@ const _queryPlanCases = <_QueryPlanCase>[
       LIMIT 1
       ''',
     arguments: <Object?>[1],
-    indexName: 'idx_provider_configs_enabled_updated',
+    indexName: 'uq_provider_configs_enabled_type',
   ),
   _QueryPlanCase(
     sql: '''
