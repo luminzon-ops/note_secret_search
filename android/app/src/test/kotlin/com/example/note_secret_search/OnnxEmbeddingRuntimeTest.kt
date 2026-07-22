@@ -163,6 +163,29 @@ class OnnxEmbeddingRuntimeTest {
     }
 
     @Test
+    fun `fixed graph sequence length must fit the tokenizer contract`() {
+        val modelFile = temporaryFolder.newFile("oversized-fixed-model.onnx")
+        val session = FakeOnnxSessionHandle(
+            graph = fixedGraph(sequenceLength = 9),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 9, 2),
+                values = FloatArray(18) { 1f },
+            ),
+        )
+
+        val state = runtime(FakeOnnxRuntimeAdapter(session)).ensureModelReady(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            spec = modelSpec(),
+        )
+
+        assertEquals("degraded", state["status"])
+        assertEquals("MODEL_SCHEMA_UNSUPPORTED", state["reason"])
+        assertEquals("model_schema", state["errorStage"])
+        assertEquals(1, session.closeCount)
+    }
+
+    @Test
     fun `session load failures expose only stable typed metadata`() {
         val modelFile = temporaryFolder.newFile("private-model-path.onnx")
         val runtime = runtime(
@@ -469,17 +492,26 @@ class OnnxEmbeddingRuntimeTest {
         )
     }
 
-    private fun fixedGraph(): ModelGraphInfo {
+    private fun fixedGraph(sequenceLength: Long = 8): ModelGraphInfo {
         return ModelGraphInfo(
             inputs = mapOf(
-                "input_ids" to ModelTensorInfo(ModelTensorType.INT32, longArrayOf(1, 8)),
-                "attention_mask" to ModelTensorInfo(ModelTensorType.INT32, longArrayOf(1, 8)),
-                "token_type_ids" to ModelTensorInfo(ModelTensorType.INT32, longArrayOf(1, 8)),
+                "input_ids" to ModelTensorInfo(
+                    ModelTensorType.INT32,
+                    longArrayOf(1, sequenceLength),
+                ),
+                "attention_mask" to ModelTensorInfo(
+                    ModelTensorType.INT32,
+                    longArrayOf(1, sequenceLength),
+                ),
+                "token_type_ids" to ModelTensorInfo(
+                    ModelTensorType.INT32,
+                    longArrayOf(1, sequenceLength),
+                ),
             ),
             outputs = mapOf(
                 "last_hidden_state" to ModelTensorInfo(
                     ModelTensorType.FLOAT,
-                    longArrayOf(1, 8, 2),
+                    longArrayOf(1, sequenceLength, 2),
                 ),
             ),
         )

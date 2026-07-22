@@ -314,14 +314,20 @@ class OnnxEmbeddingRuntime(
         }
         return try {
             cancellation.throwIfCancelled(identity.modelId)
+            val contract = ModelIoContractBuilder.build(
+                graph = handle.graph,
+                runtime = identity.runtimeSpec,
+            )
+            contract.fixedSequenceLength?.let { sequenceLength ->
+                require(sequenceLength in 2..identity.tokenizerSpec.maxSequenceLength) {
+                    "MODEL_SCHEMA_UNSUPPORTED: fixed sequence length exceeds tokenizer contract"
+                }
+            }
             PreparedEmbeddingSession(
                 identity = identity,
                 tokenizer = loadedTokenizer.tokenizer,
                 handle = handle,
-                contract = ModelIoContractBuilder.build(
-                    graph = handle.graph,
-                    runtime = identity.runtimeSpec,
-                ),
+                contract = contract,
             )
         } catch (error: Throwable) {
             try {
