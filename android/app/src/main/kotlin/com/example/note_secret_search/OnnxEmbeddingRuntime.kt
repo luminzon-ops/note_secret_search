@@ -52,7 +52,7 @@ class OnnxEmbeddingRuntime(
         }
 
         return try {
-            tokenizerLoader.load(spec.tokenizer)
+            loadTokenizer(modelId, spec.tokenizer)
             val prepared = openPreparedSession(file, spec)
             prepared.use {
                 runtimeState(
@@ -63,10 +63,17 @@ class OnnxEmbeddingRuntime(
                 )
             }
         } catch (error: Throwable) {
+            val typed = normalizeFailure(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
+                stage = EmbeddingRuntimeStage.SESSION_LOAD,
+                modelId = modelId,
+            )
             runtimeState(
                 status = "degraded",
-                reason = "模型已安装但当前不可运行：${error.message ?: "unknown error"}",
+                reason = typed.code.wireName,
                 modelPath = modelPath,
+                error = typed,
             )
         }
     }
@@ -86,7 +93,7 @@ class OnnxEmbeddingRuntime(
         }
 
         return try {
-            tokenizerLoader.load(spec.tokenizer)
+            loadTokenizer(modelId, spec.tokenizer)
             val prepared = sessionManager.get(modelId)
                 ?: openPreparedSession(file, spec).also {
                     sessionManager.replace(modelId, it)
@@ -99,10 +106,17 @@ class OnnxEmbeddingRuntime(
             )
         } catch (error: Throwable) {
             sessionManager.release(modelId)
+            val typed = normalizeFailure(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
+                stage = EmbeddingRuntimeStage.SESSION_LOAD,
+                modelId = modelId,
+            )
             runtimeState(
                 status = "degraded",
-                reason = "模型已安装但当前不可运行：${error.message ?: "unknown error"}",
+                reason = typed.code.wireName,
                 modelPath = modelPath,
+                error = typed,
             )
         }
     }
@@ -113,28 +127,52 @@ class OnnxEmbeddingRuntime(
         text: String,
         spec: OnnxEmbeddingModelSpec,
     ): Map<String, Any?> {
-        require(text.isNotBlank()) { "Text for embedding must not be blank." }
-
-        val ready = ensureModelReady(modelId, modelPath, spec)
-        if (ready["status"] != "ready") {
-            throw IllegalStateException(
-                ready["reason"] as? String ?: "Embedding runtime is not ready.",
+        if (text.isBlank()) {
+            throw EmbeddingRuntimeException(
+                code = EmbeddingRuntimeErrorCode.INVALID_ARGUMENT,
+                stage = EmbeddingRuntimeStage.ARGUMENT,
+                modelId = modelId,
             )
         }
 
-        val prepared = sessionManager.get(modelId)
-            ?: throw IllegalStateException("Embedding session was not prepared.")
-        val tokenizer = tokenizerLoader.load(spec.tokenizer)
-        val encoded = tokenizer.encode(
-            text = text,
-            padToLength = prepared.contract.fixedSequenceLength,
-        )
-        val outputVector = runInference(prepared, encoded, spec.runtime)
-        return mapOf(
-            "values" to outputVector,
-            "tokenCount" to encoded.attentionMask.count { it == 1L },
-            "vectorDimension" to outputVector.size,
-        )
+        val file = File(modelPath)
+        if (!file.exists()) {
+            throw EmbeddingRuntimeException(
+                code = EmbeddingRuntimeErrorCode.MODEL_MISSING,
+                stage = EmbeddingRuntimeStage.MODEL_LOOKUP,
+                modelId = modelId,
+            )
+        }
+
+        return try {
+            val tokenizer = loadTokenizer(modelId, spec.tokenizer)
+            val prepared = sessionManager.get(modelId)
+                ?: openPreparedSession(file, spec).also {
+                    sessionManager.replace(modelId, it)
+                }
+            val encoded = tokenizer.encode(
+                text = text,
+                padToLength = prepared.contract.fixedSequenceLength,
+            )
+            val outputVector = runInference(
+                prepared = prepared,
+                encoded = encoded,
+                runtime = spec.runtime,
+                modelId = modelId,
+            )
+            mapOf(
+                "values" to outputVector,
+                "tokenCount" to encoded.attentionMask.count { it == 1L },
+                "vectorDimension" to outputVector.size,
+            )
+        } catch (error: Throwable) {
+            throw normalizeFailure(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
+                stage = EmbeddingRuntimeStage.INFERENCE,
+                modelId = modelId,
+            )
+        }
     }
 
     fun releaseModel(modelId: String) {
@@ -145,10 +183,18 @@ class OnnxEmbeddingRuntime(
         file: File,
         spec: OnnxEmbeddingModelSpec,
     ): PreparedEmbeddingSession {
-        val handle = adapter.openSession(
-            modelPath = file.absolutePath,
-            settings = executionSettings,
-        )
+        val handle = try {
+            adapter.openSession(
+                modelPath = file.absolutePath,
+                settings = executionSettings,
+            )
+        } catch (error: Throwable) {
+            throw EmbeddingRuntimeException.wrap(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
+                stage = EmbeddingRuntimeStage.SESSION_LOAD,
+            )
+        }
         return try {
             PreparedEmbeddingSession(
                 handle = handle,
@@ -158,8 +204,16 @@ class OnnxEmbeddingRuntime(
                 ),
             )
         } catch (error: Throwable) {
-            handle.close()
-            throw error
+            try {
+                handle.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            throw EmbeddingRuntimeException.wrap(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED,
+                stage = EmbeddingRuntimeStage.MODEL_SCHEMA,
+            )
         }
     }
 
@@ -167,6 +221,7 @@ class OnnxEmbeddingRuntime(
         prepared: PreparedEmbeddingSession,
         encoded: EncodedEmbeddingInput,
         runtime: OnnxEmbeddingModelSpec.RuntimeSpec,
+        modelId: String,
     ): List<Double> {
         val contract = prepared.contract
         val shape = longArrayOf(1, encoded.inputIds.size.toLong())
@@ -190,29 +245,99 @@ class OnnxEmbeddingRuntime(
             )
         }
 
-        val decoded = EmbeddingTensorDecoder.decode(
+        val output = try {
             prepared.handle.run(
                 inputs = inputs,
                 outputName = contract.outputName,
-            ),
-        )
-        val pooled = when (decoded.kind) {
-            EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
-                tokenVectors = decoded.tokenVectors,
-                attentionMask = encoded.attentionMask,
-                pooling = runtime.pooling,
             )
-
-            EmbeddingTensorKind.SENTENCE -> {
-                require(runtime.pooling == "none") {
-                    "INVALID_OUTPUT: sentence output requires pooling=none"
-                }
-                decoded.sentenceVector.map(Float::toDouble)
-            }
+        } catch (error: Throwable) {
+            throw classifyInferenceFailure(error, modelId)
         }
-        return EmbeddingVectorPostProcessor.normalize(
-            values = pooled,
-            normalization = runtime.normalization,
+        return try {
+            val decoded = EmbeddingTensorDecoder.decode(output)
+            val pooled = when (decoded.kind) {
+                EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
+                    tokenVectors = decoded.tokenVectors,
+                    attentionMask = encoded.attentionMask,
+                    pooling = runtime.pooling,
+                )
+
+                EmbeddingTensorKind.SENTENCE -> {
+                    require(runtime.pooling == "none") {
+                        "INVALID_OUTPUT: sentence output requires pooling=none"
+                    }
+                    decoded.sentenceVector.map(Float::toDouble)
+                }
+            }
+            EmbeddingVectorPostProcessor.normalize(
+                values = pooled,
+                normalization = runtime.normalization,
+            )
+        } catch (error: Throwable) {
+            throw EmbeddingRuntimeException.wrap(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.INVALID_OUTPUT,
+                stage = EmbeddingRuntimeStage.OUTPUT,
+                modelId = modelId,
+            )
+        }
+    }
+
+    private fun loadTokenizer(
+        modelId: String,
+        spec: OnnxEmbeddingModelSpec.TokenizerSpec,
+    ): WordpieceEmbeddingTokenizer {
+        return try {
+            tokenizerLoader.load(spec)
+        } catch (error: Throwable) {
+            throw EmbeddingRuntimeException.wrap(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.TOKENIZER_SCHEMA_UNSUPPORTED,
+                stage = EmbeddingRuntimeStage.TOKENIZER,
+                modelId = modelId,
+            )
+        }
+    }
+
+    private fun classifyInferenceFailure(
+        error: Throwable,
+        modelId: String,
+    ): EmbeddingRuntimeException {
+        if (error is EmbeddingRuntimeException) {
+            return error.withModelId(modelId)
+        }
+        val message = error.message.orEmpty()
+        val code = when {
+            message.startsWith("INVALID_OUTPUT:") -> EmbeddingRuntimeErrorCode.INVALID_OUTPUT
+            message.startsWith("MODEL_SCHEMA_UNSUPPORTED:") ->
+                EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED
+            else -> EmbeddingRuntimeErrorCode.ORT_FAILURE
+        }
+        val stage = when (code) {
+            EmbeddingRuntimeErrorCode.INVALID_OUTPUT -> EmbeddingRuntimeStage.OUTPUT
+            EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED ->
+                EmbeddingRuntimeStage.MODEL_SCHEMA
+            else -> EmbeddingRuntimeStage.INFERENCE
+        }
+        return EmbeddingRuntimeException.wrap(
+            error = error,
+            code = code,
+            stage = stage,
+            modelId = modelId,
+        )
+    }
+
+    private fun normalizeFailure(
+        error: Throwable,
+        code: EmbeddingRuntimeErrorCode,
+        stage: EmbeddingRuntimeStage,
+        modelId: String,
+    ): EmbeddingRuntimeException {
+        return EmbeddingRuntimeException.wrap(
+            error = error,
+            code = code,
+            stage = stage,
+            modelId = modelId,
         )
     }
 
@@ -221,11 +346,14 @@ class OnnxEmbeddingRuntime(
         reason: String,
         modelPath: String,
         vectorDimension: Int? = null,
+        error: EmbeddingRuntimeException? = null,
     ): Map<String, Any?> {
         return mapOf(
             "status" to status,
             "reason" to reason,
             "vectorDimension" to vectorDimension,
+            "errorCode" to error?.code?.wireName,
+            "errorStage" to error?.stage?.wireName,
             "checkedAt" to clock(),
             "modelPath" to modelPath,
             "runtime" to "onnx",

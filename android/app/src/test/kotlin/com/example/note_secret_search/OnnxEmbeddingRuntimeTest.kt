@@ -2,6 +2,8 @@ package com.example.note_secret_search
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -121,6 +123,98 @@ class OnnxEmbeddingRuntimeTest {
         assertEquals(1, invalidSession.closeCount)
     }
 
+    @Test
+    fun `session load failures expose only stable typed metadata`() {
+        val modelFile = temporaryFolder.newFile("private-model-path.onnx")
+        val runtime = runtime(
+            adapter = object : OnnxRuntimeAdapter {
+                override fun openSession(
+                    modelPath: String,
+                    settings: OrtExecutionSettings,
+                ): OnnxSessionHandle {
+                    throw IllegalStateException(
+                        "MODEL_PATH_SENTINEL=$modelPath TEXT_SENTINEL=secret",
+                    )
+                }
+            },
+        )
+
+        val state = runtime.ensureModelReady(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            spec = modelSpec(),
+        )
+
+        assertEquals("degraded", state["status"])
+        assertEquals("ORT_FAILURE", state["reason"])
+        assertEquals("ORT_FAILURE", state["errorCode"])
+        assertEquals("session_load", state["errorStage"])
+        assertFalse(state.toString().contains("MODEL_PATH_SENTINEL"))
+        assertFalse(state.toString().contains("TEXT_SENTINEL"))
+    }
+
+    @Test
+    fun `invalid inference output becomes typed output failure`() {
+        val modelFile = temporaryFolder.newFile("invalid-output.onnx")
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph(),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 3, 2),
+                values = floatArrayOf(
+                    Float.NaN, 0f,
+                    0f, 2f,
+                    1f, 2f,
+                ),
+            ),
+        )
+
+        val error = assertThrows(EmbeddingRuntimeException::class.java) {
+            runtime(FakeOnnxRuntimeAdapter(session)).embedText(
+                modelId = "embedding-model",
+                modelPath = modelFile.absolutePath,
+                text = "hello",
+                spec = modelSpec(),
+            )
+        }
+
+        assertEquals(EmbeddingRuntimeErrorCode.INVALID_OUTPUT, error.code)
+        assertEquals(EmbeddingRuntimeStage.OUTPUT, error.stage)
+        assertEquals("embedding-model", error.modelId)
+        assertEquals("INVALID_OUTPUT", error.message)
+    }
+
+    @Test
+    fun `tokenizer load failures become typed tokenizer state`() {
+        val modelFile = temporaryFolder.newFile("tokenizer-failure.onnx")
+        val runtime = runtime(
+            adapter = FakeOnnxRuntimeAdapter(
+                FakeOnnxSessionHandle(
+                    graph = dynamicGraph(),
+                    output = FloatTensorData(
+                        longArrayOf(1, 1, 2),
+                        floatArrayOf(1f, 1f),
+                    ),
+                ),
+            ),
+            tokenizerLoader = EmbeddingTokenizerLoader {
+                throw IllegalArgumentException(
+                    "TOKENIZER_SCHEMA_UNSUPPORTED: TOKEN_SENTINEL",
+                )
+            },
+        )
+
+        val state = runtime.ensureModelReady(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            spec = modelSpec(),
+        )
+
+        assertEquals("TOKENIZER_SCHEMA_UNSUPPORTED", state["reason"])
+        assertEquals("TOKENIZER_SCHEMA_UNSUPPORTED", state["errorCode"])
+        assertEquals("tokenizer", state["errorStage"])
+        assertFalse(state.toString().contains("TOKEN_SENTINEL"))
+    }
+
     private fun dynamicGraph(): ModelGraphInfo {
         return ModelGraphInfo(
             inputs = mapOf(
@@ -154,9 +248,12 @@ class OnnxEmbeddingRuntimeTest {
         )
     }
 
-    private fun runtime(adapter: OnnxRuntimeAdapter): OnnxEmbeddingRuntime {
+    private fun runtime(
+        adapter: OnnxRuntimeAdapter,
+        tokenizerLoader: EmbeddingTokenizerLoader = EmbeddingTokenizerLoader { tokenizer() },
+    ): OnnxEmbeddingRuntime {
         return OnnxEmbeddingRuntime(
-            tokenizerLoader = EmbeddingTokenizerLoader { tokenizer() },
+            tokenizerLoader = tokenizerLoader,
             sessionManager = EmbeddingModelSessionManager(),
             adapter = adapter,
             contextPackage = "test.package",
