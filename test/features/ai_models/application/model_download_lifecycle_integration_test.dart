@@ -17,7 +17,45 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
+
+const _embeddingCatalogEntry = ModelCatalogEntry(
+  id: 'model-1',
+  type: 'embedding',
+  tier: 'mvp',
+  displayName: 'Model',
+  description: 'Test model',
+  sizeBytes: 10,
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  sources: <ModelSourceEntry>[
+    ModelSourceEntry(
+      id: 'source-1',
+      label: 'Source',
+      url: 'https://example.com/model.onnx',
+      checksum: 'sha256:model',
+    ),
+  ],
+);
+
+const _missingEmbeddingRegistryEntry = ModelRegistryEntry(
+  id: 'model-1',
+  type: 'embedding',
+  provider: 'builtin_catalog',
+  name: 'Model',
+  version: '1.0.0',
+  sizeBytes: 10,
+  quantization: null,
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  localPath: '/support/models/model-1/model.onnx',
+  checksum: 'sha256:old-model',
+  enabled: false,
+  installedAt: null,
+  filePresent: false,
+  integrityStatus: ModelIntegrityStatus.unknown,
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -121,6 +159,68 @@ void main() {
     expect(lifecycleStore.commitCalls, 0);
     expect(registryRepository.entry, isNull);
   });
+
+  test(
+    'replacement releases cached embedding session when old file is missing',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository()
+        ..entry = _missingEmbeddingRegistryEntry;
+      final lifecycleStore = _RecordingLifecycleStore(
+        downloadRepository: downloadRepository,
+        registryRepository: registryRepository,
+      );
+      final downloadService = _SuccessfulDownloadService();
+      final writeFence = SearchIndexWriteFence();
+      var releaseBeforeDownload = false;
+      int? revisionObservedDuringRelease;
+      final bridge = _RecordingEmbeddingRuntimeBridge(
+        onRelease: (modelId) {
+          releaseBeforeDownload = !downloadService.downloaded;
+          revisionObservedDuringRelease = writeFence.revision;
+        },
+      );
+      final controllerProvider = Provider<ModelDownloadController>((ref) {
+        return ModelDownloadController(
+          ref: ref,
+          repository: downloadRepository,
+          registryRepository: registryRepository,
+          downloadService: downloadService,
+          lifecycleStore: lifecycleStore,
+          artifactStore: const _NoopArtifactStore(),
+          logger: const AppLogger(),
+        );
+      });
+      final container = ProviderContainer(
+        overrides: <Override>[
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelCatalogEntriesProvider.overrideWith(
+            (ref) async => const <ModelCatalogEntry>[_embeddingCatalogEntry],
+          ),
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelLifecycleStoreProvider.overrideWithValue(lifecycleStore),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          searchIndexWriteFenceProvider.overrideWithValue(writeFence),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(controllerProvider)
+          .startDownload(
+            entry: _embeddingCatalogEntry,
+            source: _embeddingCatalogEntry.sources.single,
+          );
+
+      expect(bridge.releasedModelIds, <String>['model-1']);
+      expect(releaseBeforeDownload, isTrue);
+      expect(revisionObservedDuringRelease, 1);
+      expect(lifecycleStore.commitCalls, 1);
+      expect(registryRepository.entry?.checksum, 'sha256:model');
+    },
+  );
 }
 
 class _MemoryDownloadRepository implements ModelDownloadRepository {
@@ -312,6 +412,62 @@ class _ThrowingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
 
   @override
   Future<void> releaseModel({required String modelId}) async {}
+}
+
+class _RecordingEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
+  _RecordingEmbeddingRuntimeBridge({required this.onRelease});
+
+  final FutureOr<void> Function(String modelId) onRelease;
+  final List<String> releasedModelIds = <String>[];
+
+  @override
+  Future<void> cancelRequest({required String requestId}) async {}
+
+  @override
+  Future<Map<String, dynamic>> embedText({
+    required String modelId,
+    required String modelPath,
+    required String text,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+    String? requestId,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Map<String, dynamic>> ensureModelReady({
+    required String modelId,
+    required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+  }) async {
+    return <String, dynamic>{
+      'ready': true,
+      'status': 'ready',
+      'reason': 'validated',
+      'modelPath': modelPath,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> inspectModel({
+    required String modelId,
+    required String modelPath,
+    EmbeddingTokenizerSpec? tokenizer,
+    EmbeddingRuntimeSpec? runtime,
+    String? verifiedChecksum,
+  }) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> releaseModel({required String modelId}) async {
+    releasedModelIds.add(modelId);
+    await onRelease(modelId);
+  }
 }
 
 class _NoopArtifactStore implements ModelArtifactStore {

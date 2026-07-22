@@ -49,6 +49,9 @@ class ModelDownloadController {
        _modelLifecycleController = ModelLifecycleController(
          lifecycleStore: lifecycleStore,
          artifactStore: artifactStore,
+         invalidateEmbeddingWrites: ref
+             .read(searchIndexWriteFenceProvider)
+             .invalidate,
          releaseEmbeddingModel: (modelId) {
            return ref
                .read(embeddingRuntimeBridgeProvider)
@@ -158,13 +161,13 @@ class ModelDownloadController {
         _ref.invalidate(modelRegistryEntriesProvider);
         return;
       }
+      if (existingRegistry.type == 'embedding') {
+        _ref.read(searchIndexWriteFenceProvider).invalidate();
+        await _ref
+            .read(embeddingRuntimeBridgeProvider)
+            .releaseModel(modelId: existingRegistry.id);
+      }
       if (filePresent) {
-        if (existingRegistry.type == 'embedding') {
-          _ref.read(searchIndexWriteFenceProvider).invalidate();
-          await _ref
-              .read(embeddingRuntimeBridgeProvider)
-              .releaseModel(modelId: existingRegistry.id);
-        }
         await _downloadService.deleteLocalFile(existingRegistry.localPath);
       }
     }

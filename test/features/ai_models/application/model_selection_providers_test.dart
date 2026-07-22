@@ -109,12 +109,24 @@ void main() {
 
   test('activeModelSelectionProvider self-heals when selected model disappears from registry', () async {
     SharedPreferences.setMockInitialValues({'ai.active_embedding_model_id': 'embed-1'});
+    final preferences = await SharedPreferences.getInstance();
+    final writeFence = SearchIndexWriteFence();
+    String? selectionObservedDuringRelease;
+    int? revisionObservedDuringRelease;
+    final bridge = _SelectionEmbeddingRuntimeBridge(
+      onRelease: (modelId) async {
+        selectionObservedDuringRelease = preferences.getString('ai.active_embedding_model_id');
+        revisionObservedDuringRelease = writeFence.revision;
+      },
+    );
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        sharedPreferencesProvider.overrideWith((ref) async => preferences),
         modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
         embeddingRuntimeStatesProvider.overrideWith((ref) async => const <String, EmbeddingEngineState>{}),
+        searchIndexWriteFenceProvider.overrideWithValue(writeFence),
+        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
       ],
     );
 
@@ -125,15 +137,22 @@ void main() {
 
     expect(model, isNull);
     expect(selection.activeEmbeddingModelId, isNull);
+    expect(bridge.releasedModelIds, <String>['embed-1']);
+    expect(revisionObservedDuringRelease, 1);
+    expect(selectionObservedDuringRelease, 'embed-1');
+    expect(preferences.getString('ai.active_embedding_model_id'), isNull);
   });
 
   test('activeModelSelectionProvider self-heals when selected model file is missing', () async {
     SharedPreferences.setMockInitialValues({'ai.active_embedding_model_id': 'embed-1'});
+    final preferences = await SharedPreferences.getInstance();
+    final writeFence = SearchIndexWriteFence();
+    final bridge = _SelectionEmbeddingRuntimeBridge(onRelease: (modelId) async {});
     final missingModel = _embeddingModel.copyWith(filePresent: false, enabled: false);
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
+        sharedPreferencesProvider.overrideWith((ref) async => preferences),
         modelRegistryEntriesProvider.overrideWith((ref) async => [missingModel]),
         embeddingRuntimeStatesProvider.overrideWith(
           (ref) async => {
@@ -144,6 +163,8 @@ void main() {
             ),
           },
         ),
+        searchIndexWriteFenceProvider.overrideWithValue(writeFence),
+        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
       ],
     );
 
@@ -154,6 +175,38 @@ void main() {
 
     expect(model, isNull);
     expect(selection.activeEmbeddingModelId, isNull);
+    expect(bridge.releasedModelIds, <String>['embed-1']);
+    expect(writeFence.revision, 1);
+    expect(preferences.getString('ai.active_embedding_model_id'), isNull);
+  });
+
+  test('activeModelSelectionProvider keeps selection when self-heal release fails', () async {
+    SharedPreferences.setMockInitialValues({'ai.active_embedding_model_id': 'embed-1'});
+    final preferences = await SharedPreferences.getInstance();
+    final writeFence = SearchIndexWriteFence();
+    final bridge = _SelectionEmbeddingRuntimeBridge(
+      onRelease: (modelId) async {
+        throw StateError('release_failed');
+      },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        sharedPreferencesProvider.overrideWith((ref) async => preferences),
+        modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
+        embeddingRuntimeStatesProvider.overrideWith((ref) async => const <String, EmbeddingEngineState>{}),
+        searchIndexWriteFenceProvider.overrideWithValue(writeFence),
+        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+      ],
+    );
+
+    addTearDown(container.dispose);
+
+    await expectLater(container.read(activeModelSelectionProvider.future), throwsStateError);
+
+    expect(bridge.releasedModelIds, <String>['embed-1']);
+    expect(writeFence.revision, 1);
+    expect(preferences.getString('ai.active_embedding_model_id'), 'embed-1');
   });
 
   test('activeLocalLlmModelProvider preserves selection when runtime is degraded (recoverable)', () async {

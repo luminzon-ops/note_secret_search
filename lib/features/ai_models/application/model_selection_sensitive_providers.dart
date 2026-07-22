@@ -12,6 +12,13 @@ final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((
       if (storedModelId == null || storedModelId.isEmpty) {
         return const ActiveModelSelection(activeEmbeddingModelId: null);
       }
+      Future<void> clearInvalidSelection() async {
+        ref.read(searchIndexWriteFenceProvider).invalidate();
+        await ref
+            .read(embeddingRuntimeBridgeProvider)
+            .releaseModel(modelId: storedModelId);
+        await preferences.remove(_activeEmbeddingModelIdKey);
+      }
 
       final entries = await ref.watch(modelRegistryEntriesProvider.future);
       final runtimeStates = await ref.watch(
@@ -23,7 +30,7 @@ final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((
           )
           .firstOrNull;
       if (selectedEntry == null) {
-        await preferences.remove(_activeEmbeddingModelIdKey);
+        await clearInvalidSelection();
         return const ActiveModelSelection(activeEmbeddingModelId: null);
       }
 
@@ -31,7 +38,7 @@ final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((
           runtimeStates[selectedEntry.id] ??
           _fallbackRuntimeState(selectedEntry);
       if (!selectedEntry.isInstalled || !runtimeState.ready) {
-        await preferences.remove(_activeEmbeddingModelIdKey);
+        await clearInvalidSelection();
         return const ActiveModelSelection(activeEmbeddingModelId: null);
       }
 

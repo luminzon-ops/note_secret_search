@@ -57,6 +57,7 @@ void main() {
     final events = <String>[];
     final lifecycleStore = _RecordingLifecycleStore(
       _registryEntry().copyWith(type: 'embedding'),
+      onPurge: () => events.add('purge'),
     );
     final artifactStore = _RecordingArtifactStore(
       fail: false,
@@ -65,6 +66,7 @@ void main() {
     final controller = ModelLifecycleController(
       lifecycleStore: lifecycleStore,
       artifactStore: artifactStore,
+      invalidateEmbeddingWrites: () => events.add('invalidate'),
       releaseEmbeddingModel: (modelId) async {
         events.add('release:$modelId');
       },
@@ -72,14 +74,54 @@ void main() {
 
     await controller.deleteInstalledModel('model-1');
 
-    expect(events, <String>['release:model-1', 'delete']);
+    expect(events, <String>[
+      'invalidate',
+      'release:model-1',
+      'delete',
+      'purge',
+    ]);
   });
+
+  test(
+    'keeps artifacts and database state when embedding release fails',
+    () async {
+      final events = <String>[];
+      final lifecycleStore = _RecordingLifecycleStore(
+        _registryEntry().copyWith(type: 'embedding'),
+        onPurge: () => events.add('purge'),
+      );
+      final artifactStore = _RecordingArtifactStore(
+        fail: false,
+        onDelete: () => events.add('delete'),
+      );
+      final controller = ModelLifecycleController(
+        lifecycleStore: lifecycleStore,
+        artifactStore: artifactStore,
+        invalidateEmbeddingWrites: () => events.add('invalidate'),
+        releaseEmbeddingModel: (modelId) async {
+          events.add('release:$modelId');
+          throw StateError('release_failed');
+        },
+      );
+
+      await expectLater(
+        controller.deleteInstalledModel('model-1'),
+        throwsStateError,
+      );
+
+      expect(events, <String>['invalidate', 'release:model-1']);
+      expect(artifactStore.deleteCalls, 0);
+      expect(lifecycleStore.purgeCalls, 0);
+      expect(lifecycleStore.manifest, isNotNull);
+    },
+  );
 }
 
 class _RecordingLifecycleStore implements ModelLifecycleStore {
-  _RecordingLifecycleStore(this.manifest);
+  _RecordingLifecycleStore(this.manifest, {this.onPurge});
 
   ModelRegistryEntry? manifest;
+  final void Function()? onPurge;
   int purgeCalls = 0;
 
   @override
@@ -95,6 +137,7 @@ class _RecordingLifecycleStore implements ModelLifecycleStore {
 
   @override
   Future<void> purgeModelData(String modelId) async {
+    onPurge?.call();
     purgeCalls += 1;
     if (manifest?.id == modelId) {
       manifest = null;
