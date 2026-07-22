@@ -4,7 +4,7 @@ import android.content.Context
 import java.io.File
 
 fun interface EmbeddingTokenizerLoader {
-    fun load(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer
+    fun load(spec: OnnxEmbeddingModelSpec.TokenizerSpec): LoadedEmbeddingTokenizer
 }
 
 class OnnxEmbeddingRuntime(
@@ -12,9 +12,14 @@ class OnnxEmbeddingRuntime(
     private val sessionManager: EmbeddingModelSessionManager,
     private val adapter: OnnxRuntimeAdapter,
     private val contextPackage: String,
+    private val checksumVerifier: EmbeddingModelChecksumVerifier =
+        Sha256EmbeddingModelChecksumVerifier(),
     private val executionSettings: OrtExecutionSettings = OrtExecutionSettings.controlled(),
     private val clock: () -> Long = System::currentTimeMillis,
 ) : EmbeddingRuntimeContract {
+    private var cachedTokenizerSpec: OnnxEmbeddingModelSpec.TokenizerSpec? = null
+    private var cachedTokenizer: LoadedEmbeddingTokenizer? = null
+
     constructor(
         context: Context,
         sessionManager: EmbeddingModelSessionManager,
@@ -22,14 +27,16 @@ class OnnxEmbeddingRuntime(
         tokenizerLoader = EmbeddingTokenizerLoader { spec ->
             val raw = context.assets
                 .open("flutter_assets/${spec.assetPath}")
-                .bufferedReader()
-                .use { it.readText() }
-            WordpieceEmbeddingTokenizer(
-                definition = TokenizerJsonParser.parse(
-                    rawJson = raw,
-                    expectedLowercase = spec.lowercase,
+                .use { it.readBytes() }
+            LoadedEmbeddingTokenizer(
+                tokenizer = WordpieceEmbeddingTokenizer(
+                    definition = TokenizerJsonParser.parse(
+                        rawJson = raw.toString(Charsets.UTF_8),
+                        expectedLowercase = spec.lowercase,
+                    ),
+                    maxSequenceLength = spec.maxSequenceLength,
                 ),
-                maxSequenceLength = spec.maxSequenceLength,
+                contentSha256 = sha256String(raw),
             )
         },
         sessionManager = sessionManager,
@@ -41,20 +48,24 @@ class OnnxEmbeddingRuntime(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
     ): Map<String, Any?> {
-        val file = File(modelPath)
-        if (!file.exists()) {
-            return runtimeState(
-                status = "missing",
-                reason = "当前本地 embedding 模型文件缺失，请重新下载或切换模型。",
-                modelPath = modelPath,
-            )
-        }
-
         return try {
-            loadTokenizer(modelId, spec.tokenizer)
-            val prepared = openPreparedSession(file, spec)
-            prepared.use {
+            val file = canonicalModelFile(modelId, modelPath)
+            val actualChecksum = checksumVerifier.verify(
+                file = file,
+                expectedChecksum = verifiedChecksum,
+                modelId = modelId,
+            )
+            val loadedTokenizer = loadTokenizer(modelId, spec.tokenizer)
+            val identity = sessionIdentity(
+                modelId = modelId,
+                file = file,
+                verifiedSha256 = actualChecksum,
+                spec = spec,
+                loadedTokenizer = loadedTokenizer,
+            )
+            openPreparedSession(file, identity, loadedTokenizer).use { prepared ->
                 runtimeState(
                     status = "ready",
                     reason = "本地 embedding runtime 已就绪。",
@@ -70,7 +81,11 @@ class OnnxEmbeddingRuntime(
                 modelId = modelId,
             )
             runtimeState(
-                status = "degraded",
+                status = if (typed.code == EmbeddingRuntimeErrorCode.MODEL_MISSING) {
+                    "missing"
+                } else {
+                    "degraded"
+                },
                 reason = typed.code.wireName,
                 modelPath = modelPath,
                 error = typed,
@@ -82,22 +97,15 @@ class OnnxEmbeddingRuntime(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
     ): Map<String, Any?> {
-        val file = File(modelPath)
-        if (!file.exists()) {
-            return runtimeState(
-                status = "missing",
-                reason = "当前本地 embedding 模型文件缺失，请重新下载或切换模型。",
-                modelPath = modelPath,
-            )
-        }
-
         return try {
-            loadTokenizer(modelId, spec.tokenizer)
-            val prepared = sessionManager.get(modelId)
-                ?: openPreparedSession(file, spec).also {
-                    sessionManager.replace(modelId, it)
-                }
+            val prepared = ensurePreparedSession(
+                modelId = modelId,
+                modelPath = modelPath,
+                spec = spec,
+                expectedChecksum = verifiedChecksum,
+            )
             runtimeState(
                 status = "ready",
                 reason = "本地 embedding runtime 已就绪。",
@@ -113,7 +121,11 @@ class OnnxEmbeddingRuntime(
                 modelId = modelId,
             )
             runtimeState(
-                status = "degraded",
+                status = if (typed.code == EmbeddingRuntimeErrorCode.MODEL_MISSING) {
+                    "missing"
+                } else {
+                    "degraded"
+                },
                 reason = typed.code.wireName,
                 modelPath = modelPath,
                 error = typed,
@@ -126,6 +138,8 @@ class OnnxEmbeddingRuntime(
         modelPath: String,
         text: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
+        requestId: String?,
     ): Map<String, Any?> {
         if (text.isBlank()) {
             throw EmbeddingRuntimeException(
@@ -135,36 +149,33 @@ class OnnxEmbeddingRuntime(
             )
         }
 
-        val file = File(modelPath)
-        if (!file.exists()) {
-            throw EmbeddingRuntimeException(
-                code = EmbeddingRuntimeErrorCode.MODEL_MISSING,
-                stage = EmbeddingRuntimeStage.MODEL_LOOKUP,
-                modelId = modelId,
-            )
-        }
-
         return try {
-            val tokenizer = loadTokenizer(modelId, spec.tokenizer)
-            val prepared = sessionManager.get(modelId)
-                ?: openPreparedSession(file, spec).also {
-                    sessionManager.replace(modelId, it)
-                }
-            val encoded = tokenizer.encode(
-                text = text,
-                padToLength = prepared.contract.fixedSequenceLength,
-            )
-            val outputVector = runInference(
-                prepared = prepared,
-                encoded = encoded,
-                runtime = spec.runtime,
+            val prepared = ensurePreparedSession(
                 modelId = modelId,
+                modelPath = modelPath,
+                spec = spec,
+                expectedChecksum = verifiedChecksum,
             )
-            mapOf(
-                "values" to outputVector,
-                "tokenCount" to encoded.attentionMask.count { it == 1L },
-                "vectorDimension" to outputVector.size,
-            )
+            sessionManager.run(
+                identity = prepared.identity,
+                requestId = requestId ?: "native-${clock()}",
+            ) { active ->
+                val encoded = active.tokenizer.encode(
+                    text = text,
+                    padToLength = active.contract.fixedSequenceLength,
+                )
+                val outputVector = runInference(
+                    prepared = active,
+                    encoded = encoded,
+                    runtime = spec.runtime,
+                    modelId = modelId,
+                )
+                mapOf(
+                    "values" to outputVector,
+                    "tokenCount" to encoded.attentionMask.count { it == 1L },
+                    "vectorDimension" to outputVector.size,
+                )
+            }
         } catch (error: Throwable) {
             throw normalizeFailure(
                 error = error,
@@ -183,13 +194,72 @@ class OnnxEmbeddingRuntime(
         sessionManager.releaseAll()
     }
 
+    private fun ensurePreparedSession(
+        modelId: String,
+        modelPath: String,
+        spec: OnnxEmbeddingModelSpec,
+        expectedChecksum: String?,
+    ): PreparedEmbeddingSession {
+        val file = canonicalModelFile(modelId, modelPath)
+        val current = sessionManager.currentIdentity
+        if (current != null && !current.matchesRequest(
+                modelId = modelId,
+                canonicalPath = file.path,
+                expectedChecksum = expectedChecksum,
+                spec = spec,
+                settings = executionSettings,
+            )
+        ) {
+            sessionManager.releaseAll()
+        }
+        if (!file.isFile || !file.canRead()) {
+            sessionManager.releaseAll()
+            throw EmbeddingRuntimeException(
+                code = EmbeddingRuntimeErrorCode.MODEL_MISSING,
+                stage = EmbeddingRuntimeStage.MODEL_LOOKUP,
+                modelId = modelId,
+            )
+        }
+
+        sessionManager.currentIdentity?.let { identity ->
+            if (identity.matchesRequest(
+                    modelId = modelId,
+                    canonicalPath = file.path,
+                    expectedChecksum = expectedChecksum,
+                    spec = spec,
+                    settings = executionSettings,
+                )
+            ) {
+                sessionManager.get(identity)?.let { return it }
+            }
+        }
+
+        val actualChecksum = checksumVerifier.verify(
+            file = file,
+            expectedChecksum = expectedChecksum,
+            modelId = modelId,
+        )
+        val loadedTokenizer = loadTokenizer(modelId, spec.tokenizer)
+        val identity = sessionIdentity(
+            modelId = modelId,
+            file = file,
+            verifiedSha256 = actualChecksum,
+            spec = spec,
+            loadedTokenizer = loadedTokenizer,
+        )
+        return sessionManager.getOrLoad(identity) {
+            openPreparedSession(file, identity, loadedTokenizer)
+        }
+    }
+
     private fun openPreparedSession(
         file: File,
-        spec: OnnxEmbeddingModelSpec,
+        identity: SessionIdentity,
+        loadedTokenizer: LoadedEmbeddingTokenizer,
     ): PreparedEmbeddingSession {
         val handle = try {
             adapter.openSession(
-                modelPath = file.absolutePath,
+                modelPath = file.path,
                 settings = executionSettings,
             )
         } catch (error: Throwable) {
@@ -197,14 +267,17 @@ class OnnxEmbeddingRuntime(
                 error = error,
                 code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
                 stage = EmbeddingRuntimeStage.SESSION_LOAD,
+                modelId = identity.modelId,
             )
         }
         return try {
             PreparedEmbeddingSession(
+                identity = identity,
+                tokenizer = loadedTokenizer.tokenizer,
                 handle = handle,
                 contract = ModelIoContractBuilder.build(
                     graph = handle.graph,
-                    runtime = spec.runtime,
+                    runtime = identity.runtimeSpec,
                 ),
             )
         } catch (error: Throwable) {
@@ -217,6 +290,7 @@ class OnnxEmbeddingRuntime(
                 error = error,
                 code = EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED,
                 stage = EmbeddingRuntimeStage.MODEL_SCHEMA,
+                modelId = identity.modelId,
             )
         }
     }
@@ -250,10 +324,7 @@ class OnnxEmbeddingRuntime(
         }
 
         val output = try {
-            prepared.handle.run(
-                inputs = inputs,
-                outputName = contract.outputName,
-            )
+            prepared.handle.run(inputs = inputs, outputName = contract.outputName)
         } catch (error: Throwable) {
             throw classifyInferenceFailure(error, modelId)
         }
@@ -265,7 +336,6 @@ class OnnxEmbeddingRuntime(
                     attentionMask = encoded.attentionMask,
                     pooling = runtime.pooling,
                 )
-
                 EmbeddingTensorKind.SENTENCE -> {
                     require(runtime.pooling == "none") {
                         "INVALID_OUTPUT: sentence output requires pooling=none"
@@ -290,14 +360,52 @@ class OnnxEmbeddingRuntime(
     private fun loadTokenizer(
         modelId: String,
         spec: OnnxEmbeddingModelSpec.TokenizerSpec,
-    ): WordpieceEmbeddingTokenizer {
+    ): LoadedEmbeddingTokenizer {
+        if (cachedTokenizerSpec == spec) {
+            cachedTokenizer?.let { return it }
+        }
         return try {
-            tokenizerLoader.load(spec)
+            tokenizerLoader.load(spec).also {
+                cachedTokenizerSpec = spec
+                cachedTokenizer = it
+            }
         } catch (error: Throwable) {
             throw EmbeddingRuntimeException.wrap(
                 error = error,
                 code = EmbeddingRuntimeErrorCode.TOKENIZER_SCHEMA_UNSUPPORTED,
                 stage = EmbeddingRuntimeStage.TOKENIZER,
+                modelId = modelId,
+            )
+        }
+    }
+
+    private fun sessionIdentity(
+        modelId: String,
+        file: File,
+        verifiedSha256: String,
+        spec: OnnxEmbeddingModelSpec,
+        loadedTokenizer: LoadedEmbeddingTokenizer,
+    ): SessionIdentity {
+        return SessionIdentity(
+            modelId = modelId,
+            canonicalModelPath = file.path,
+            verifiedSha256 = verifiedSha256,
+            tokenizerSpec = spec.tokenizer,
+            tokenizerJsonSha256 = loadedTokenizer.contentSha256,
+            runtimeSpec = spec.runtime,
+            executionSettings = executionSettings,
+            runtimeImplementationVersion = RUNTIME_IMPLEMENTATION_VERSION,
+        )
+    }
+
+    private fun canonicalModelFile(modelId: String, modelPath: String): File {
+        return try {
+            File(modelPath).canonicalFile
+        } catch (error: Throwable) {
+            throw EmbeddingRuntimeException.wrap(
+                error = error,
+                code = EmbeddingRuntimeErrorCode.MODEL_MISSING,
+                stage = EmbeddingRuntimeStage.MODEL_LOOKUP,
                 modelId = modelId,
             )
         }
@@ -312,7 +420,8 @@ class OnnxEmbeddingRuntime(
         }
         val message = error.message.orEmpty()
         val code = when {
-            message.startsWith("INVALID_OUTPUT:") -> EmbeddingRuntimeErrorCode.INVALID_OUTPUT
+            message.startsWith("INVALID_OUTPUT:") ->
+                EmbeddingRuntimeErrorCode.INVALID_OUTPUT
             message.startsWith("MODEL_SCHEMA_UNSUPPORTED:") ->
                 EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED
             else -> EmbeddingRuntimeErrorCode.ORT_FAILURE
@@ -364,5 +473,26 @@ class OnnxEmbeddingRuntime(
             "supportsEmbedding" to (status == "ready"),
             "contextPackage" to contextPackage,
         )
+    }
+
+    private fun SessionIdentity.matchesRequest(
+        modelId: String,
+        canonicalPath: String,
+        expectedChecksum: String?,
+        spec: OnnxEmbeddingModelSpec,
+        settings: OrtExecutionSettings,
+    ): Boolean {
+        return this.modelId == modelId &&
+            canonicalModelPath == canonicalPath &&
+            (expectedChecksum == null ||
+                verifiedSha256.equals(expectedChecksum, ignoreCase = true)) &&
+            tokenizerSpec == spec.tokenizer &&
+            runtimeSpec == spec.runtime &&
+            executionSettings == settings &&
+            runtimeImplementationVersion == RUNTIME_IMPLEMENTATION_VERSION
+    }
+
+    companion object {
+        private const val RUNTIME_IMPLEMENTATION_VERSION = 1
     }
 }

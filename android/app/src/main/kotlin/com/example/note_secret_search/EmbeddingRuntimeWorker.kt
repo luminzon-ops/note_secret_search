@@ -10,12 +10,14 @@ interface EmbeddingRuntimeContract {
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String? = null,
     ): Map<String, Any?>
 
     fun ensureModelReady(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String? = null,
     ): Map<String, Any?>
 
     fun embedText(
@@ -23,6 +25,8 @@ interface EmbeddingRuntimeContract {
         modelPath: String,
         text: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String? = null,
+        requestId: String? = null,
     ): Map<String, Any?>
 
     fun releaseModel(modelId: String)

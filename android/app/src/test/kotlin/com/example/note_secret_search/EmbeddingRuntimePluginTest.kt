@@ -198,12 +198,14 @@ private class FakeEmbeddingRuntime(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
     ): Map<String, Any?> = inspect()
 
     override fun ensureModelReady(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
     ): Map<String, Any?> = ensure()
 
     override fun embedText(
@@ -211,6 +213,8 @@ private class FakeEmbeddingRuntime(
         modelPath: String,
         text: String,
         spec: OnnxEmbeddingModelSpec,
+        verifiedChecksum: String?,
+        requestId: String?,
     ): Map<String, Any?> = embed()
 
     override fun releaseModel(modelId: String) {

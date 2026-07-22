@@ -32,11 +32,13 @@ class EmbeddingRuntimePlugin(
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
                     val spec = readSpec(call)
+                    val verifiedChecksum = optionalString(call, "verifiedChecksum")
                     runAsync(modelId, completion) {
                         runtime.inspectModel(
                             modelId = modelId,
                             modelPath = modelPath,
                             spec = spec,
+                            verifiedChecksum = verifiedChecksum,
                         )
                     }
                 }
@@ -45,11 +47,13 @@ class EmbeddingRuntimePlugin(
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
                     val spec = readSpec(call)
+                    val verifiedChecksum = optionalString(call, "verifiedChecksum")
                     runAsync(modelId, completion) {
                         runtime.ensureModelReady(
                             modelId = modelId,
                             modelPath = modelPath,
                             spec = spec,
+                            verifiedChecksum = verifiedChecksum,
                         )
                     }
                 }
@@ -59,12 +63,16 @@ class EmbeddingRuntimePlugin(
                     val modelPath = requiredString(call, "modelPath")
                     val text = requiredString(call, "text")
                     val spec = readSpec(call)
+                    val verifiedChecksum = optionalString(call, "verifiedChecksum")
+                    val requestId = optionalString(call, "requestId")
                     runAsync(modelId, completion) {
                         runtime.embedText(
                             modelId = modelId,
                             modelPath = modelPath,
                             text = text,
                             spec = spec,
+                            verifiedChecksum = verifiedChecksum,
+                            requestId = requestId,
                         )
                     }
                 }
@@ -161,6 +169,10 @@ class EmbeddingRuntimePlugin(
                 stage = EmbeddingRuntimeStage.ARGUMENT,
                 modelId = call.argument<String>("modelId"),
             )
+    }
+
+    private fun optionalString(call: MethodCall, name: String): String? {
+        return call.argument<String>(name)?.takeIf { it.isNotBlank() }
     }
 
     @Suppress("UNCHECKED_CAST")

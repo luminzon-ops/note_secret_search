@@ -250,7 +250,12 @@ class OnnxEmbeddingRuntimeTest {
 
     private fun runtime(
         adapter: OnnxRuntimeAdapter,
-        tokenizerLoader: EmbeddingTokenizerLoader = EmbeddingTokenizerLoader { tokenizer() },
+        tokenizerLoader: EmbeddingTokenizerLoader = EmbeddingTokenizerLoader {
+            LoadedEmbeddingTokenizer(
+                tokenizer = tokenizer(),
+                contentSha256 = "sha256:${"c".repeat(64)}",
+            )
+        },
     ): OnnxEmbeddingRuntime {
         return OnnxEmbeddingRuntime(
             tokenizerLoader = tokenizerLoader,
