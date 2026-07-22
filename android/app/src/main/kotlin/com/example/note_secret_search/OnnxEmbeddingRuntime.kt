@@ -9,7 +9,6 @@ import ai.onnxruntime.TensorInfo
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
-import org.json.JSONObject
 
 class OnnxEmbeddingRuntime(
     private val context: Context,
@@ -191,10 +190,11 @@ class OnnxEmbeddingRuntime(
 
     private fun loadTokenizer(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer {
         val raw = context.assets.open("flutter_assets/${spec.assetPath}").bufferedReader().use { it.readText() }
-        val vocab = extractVocabulary(raw)
         return WordpieceEmbeddingTokenizer(
-            vocab = vocab,
-            lowercase = spec.lowercase,
+            definition = TokenizerJsonParser.parse(
+                rawJson = raw,
+                expectedLowercase = spec.lowercase,
+            ),
             maxSequenceLength = spec.maxSequenceLength,
         )
     }
@@ -218,22 +218,6 @@ class OnnxEmbeddingRuntime(
         require(session.outputInfo.containsKey(spec.runtime.outputName)) {
             "MODEL_SCHEMA_UNSUPPORTED: missing output ${spec.runtime.outputName}"
         }
-    }
-
-    private fun extractVocabulary(rawJson: String): Map<String, Int> {
-        val root = JSONObject(rawJson)
-        val model = root.optJSONObject("model")
-        val vocabObject = model?.optJSONObject("vocab")
-            ?: root.optJSONObject("vocab")
-            ?: throw IllegalArgumentException("TOKENIZER_SCHEMA_UNSUPPORTED: vocab not found")
-
-        val vocab = mutableMapOf<String, Int>()
-        val keys = vocabObject.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            vocab[key] = vocabObject.getInt(key)
-        }
-        return vocab
     }
 
     private fun runtimeState(
