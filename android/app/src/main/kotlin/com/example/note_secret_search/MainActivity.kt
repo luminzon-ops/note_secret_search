@@ -58,6 +58,9 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        if (this::embeddingRuntimePlugin.isInitialized) {
+            embeddingRuntimePlugin.detachFromEngine()
+        }
         if (this::nativeSecurityPlugin.isInitialized) {
             nativeSecurityPlugin.detachFromEngine()
         }

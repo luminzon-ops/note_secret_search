@@ -21,15 +21,20 @@ fun interface EmbeddingModelChecksumVerifier {
         file: File,
         expectedChecksum: String?,
         modelId: String,
+        cancellation: CancellationHandle,
     ): String
 }
 
-class Sha256EmbeddingModelChecksumVerifier : EmbeddingModelChecksumVerifier {
+class Sha256EmbeddingModelChecksumVerifier(
+    private val inputStreamFactory: (File) -> java.io.InputStream = File::inputStream,
+) : EmbeddingModelChecksumVerifier {
     override fun verify(
         file: File,
         expectedChecksum: String?,
         modelId: String,
+        cancellation: CancellationHandle,
     ): String {
+        cancellation.throwIfCancelled(modelId)
         if (!file.isFile || !file.canRead()) {
             throw EmbeddingRuntimeException(
                 code = EmbeddingRuntimeErrorCode.MODEL_MISSING,
@@ -41,10 +46,11 @@ class Sha256EmbeddingModelChecksumVerifier : EmbeddingModelChecksumVerifier {
             normalizeSha256(it, modelId)
         }
         val actual = try {
-            file.inputStream().buffered(HASH_BUFFER_BYTES).use { input ->
+            inputStreamFactory(file).buffered(HASH_BUFFER_BYTES).use { input ->
                 val digest = MessageDigest.getInstance("SHA-256")
                 val buffer = ByteArray(HASH_BUFFER_BYTES)
                 while (true) {
+                    cancellation.throwIfCancelled(modelId)
                     val read = input.read(buffer)
                     if (read < 0) {
                         break
@@ -53,9 +59,11 @@ class Sha256EmbeddingModelChecksumVerifier : EmbeddingModelChecksumVerifier {
                         digest.update(buffer, 0, read)
                     }
                 }
+                cancellation.throwIfCancelled(modelId)
                 digest.digest().toSha256String()
             }
         } catch (error: Throwable) {
+            cancellation.errorOrNull(modelId)?.let { throw it }
             throw EmbeddingRuntimeException.wrap(
                 error = error,
                 code = EmbeddingRuntimeErrorCode.ORT_FAILURE,

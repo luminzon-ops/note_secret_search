@@ -8,6 +8,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class OnnxEmbeddingRuntimeTest {
     @get:Rule
@@ -131,6 +135,7 @@ class OnnxEmbeddingRuntimeTest {
                 override fun openSession(
                     modelPath: String,
                     settings: OrtExecutionSettings,
+                    cancellation: CancellationHandle,
                 ): OnnxSessionHandle {
                     throw IllegalStateException(
                         "MODEL_PATH_SENTINEL=$modelPath TEXT_SENTINEL=secret",
@@ -213,6 +218,175 @@ class OnnxEmbeddingRuntimeTest {
         assertEquals("TOKENIZER_SCHEMA_UNSUPPORTED", state["errorCode"])
         assertEquals("tokenizer", state["errorStage"])
         assertFalse(state.toString().contains("TOKEN_SENTINEL"))
+    }
+
+    @Test
+    fun `running cancellation preserves session for the next inference`() {
+        val modelFile = temporaryFolder.newFile("cancellable-model.onnx")
+        val inferenceStarted = CountDownLatch(1)
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph(),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 3, 2),
+                values = floatArrayOf(
+                    1f, 0f,
+                    0f, 1f,
+                    1f, 1f,
+                ),
+            ),
+            onRun = { cancellation, runCount ->
+                if (runCount == 1) {
+                    inferenceStarted.countDown()
+                    cancellation.awaitCancellation()
+                    cancellation.throwIfCancelled("embedding-model")
+                }
+            },
+        )
+        val adapter = FakeOnnxRuntimeAdapter(session)
+        val runtime = runtime(adapter)
+        val cancellation = CancellationHandle()
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            val first = executor.submit<Map<String, Any?>> {
+                runtime.embedText(
+                    modelId = "embedding-model",
+                    modelPath = modelFile.absolutePath,
+                    text = "hello",
+                    spec = modelSpec(),
+                    requestId = "request-1",
+                    cancellation = cancellation,
+                )
+            }
+            assertTrue(inferenceStarted.await(1, TimeUnit.SECONDS))
+            cancellation.cancel(
+                EmbeddingRuntimeException(
+                    code = EmbeddingRuntimeErrorCode.CANCELLED,
+                    stage = EmbeddingRuntimeStage.LIFECYCLE,
+                    modelId = "embedding-model",
+                ),
+            )
+
+            val failure = assertThrows(ExecutionException::class.java) {
+                first.get(1, TimeUnit.SECONDS)
+            }.cause as EmbeddingRuntimeException
+            assertEquals(EmbeddingRuntimeErrorCode.CANCELLED, failure.code)
+
+            val second = runtime.embedText(
+                modelId = "embedding-model",
+                modelPath = modelFile.absolutePath,
+                text = "hello",
+                spec = modelSpec(),
+                requestId = "request-2",
+            )
+
+            assertEquals(2, session.runCount)
+            assertEquals(1, adapter.openCount)
+            assertEquals(0, session.closeCount)
+            assertEquals(2, second["vectorDimension"])
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `cancellation after session creation closes partial load`() {
+        val modelFile = temporaryFolder.newFile("cancel-load.onnx")
+        val loadStarted = CountDownLatch(1)
+        val cancellation = CancellationHandle()
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph(),
+            output = FloatTensorData(
+                longArrayOf(1, 3, 2),
+                FloatArray(6) { 1f },
+            ),
+        )
+        val adapter = object : OnnxRuntimeAdapter {
+            override fun openSession(
+                modelPath: String,
+                settings: OrtExecutionSettings,
+                cancellation: CancellationHandle,
+            ): OnnxSessionHandle {
+                loadStarted.countDown()
+                cancellation.awaitCancellation()
+                return session
+            }
+        }
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            val loading = executor.submit<Map<String, Any?>> {
+                runtime(adapter).ensureModelReady(
+                    modelId = "embedding-model",
+                    modelPath = modelFile.absolutePath,
+                    spec = modelSpec(),
+                    cancellation = cancellation,
+                )
+            }
+            assertTrue(loadStarted.await(1, TimeUnit.SECONDS))
+            cancellation.cancel(
+                EmbeddingRuntimeException(
+                    code = EmbeddingRuntimeErrorCode.CANCELLED,
+                    stage = EmbeddingRuntimeStage.LIFECYCLE,
+                    modelId = "embedding-model",
+                ),
+            )
+
+            val failure = assertThrows(ExecutionException::class.java) {
+                loading.get(1, TimeUnit.SECONDS)
+            }.cause as EmbeddingRuntimeException
+
+            assertEquals(EmbeddingRuntimeErrorCode.CANCELLED, failure.code)
+            assertEquals(1, session.closeCount)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `cancelled repeated ensure preserves the ready session`() {
+        val modelFile = temporaryFolder.newFile("ready-model.onnx")
+        val session = FakeOnnxSessionHandle(
+            graph = dynamicGraph(),
+            output = FloatTensorData(
+                shape = longArrayOf(1, 3, 2),
+                values = FloatArray(6) { 1f },
+            ),
+        )
+        val adapter = FakeOnnxRuntimeAdapter(session)
+        val runtime = runtime(adapter)
+        runtime.ensureModelReady(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            spec = modelSpec(),
+        )
+        val cancellation = CancellationHandle()
+        cancellation.cancel(
+            EmbeddingRuntimeException(
+                code = EmbeddingRuntimeErrorCode.CANCELLED,
+                stage = EmbeddingRuntimeStage.LIFECYCLE,
+                modelId = "embedding-model",
+            ),
+        )
+
+        val error = assertThrows(EmbeddingRuntimeException::class.java) {
+            runtime.ensureModelReady(
+                modelId = "embedding-model",
+                modelPath = modelFile.absolutePath,
+                spec = modelSpec(),
+                cancellation = cancellation,
+            )
+        }
+
+        assertEquals(EmbeddingRuntimeErrorCode.CANCELLED, error.code)
+        assertEquals(0, session.closeCount)
+        runtime.embedText(
+            modelId = "embedding-model",
+            modelPath = modelFile.absolutePath,
+            text = "hello",
+            spec = modelSpec(),
+        )
+        assertEquals(1, adapter.openCount)
     }
 
     private fun dynamicGraph(): ModelGraphInfo {
@@ -303,11 +477,14 @@ private class FakeOnnxRuntimeAdapter(
     private val session: FakeOnnxSessionHandle,
 ) : OnnxRuntimeAdapter {
     var lastSettings: OrtExecutionSettings? = null
+    var openCount = 0
 
     override fun openSession(
         modelPath: String,
         settings: OrtExecutionSettings,
+        cancellation: CancellationHandle,
     ): OnnxSessionHandle {
+        openCount += 1
         lastSettings = settings
         return session
     }
@@ -316,15 +493,20 @@ private class FakeOnnxRuntimeAdapter(
 private class FakeOnnxSessionHandle(
     override val graph: ModelGraphInfo,
     private val output: FloatTensorData,
+    private val onRun: ((CancellationHandle, Int) -> Unit)? = null,
 ) : OnnxSessionHandle {
     var lastInputs: Map<String, IntegralTensorData> = emptyMap()
     var lastOutputName: String? = null
     var closeCount = 0
+    var runCount = 0
 
     override fun run(
         inputs: Map<String, IntegralTensorData>,
         outputName: String,
+        cancellation: CancellationHandle,
     ): FloatTensorData {
+        runCount += 1
+        onRun?.invoke(cancellation, runCount)
         lastInputs = inputs
         lastOutputName = outputName
         return output

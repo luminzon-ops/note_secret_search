@@ -248,6 +248,7 @@ private class SessionManagerFakeHandle(
     override fun run(
         inputs: Map<String, IntegralTensorData>,
         outputName: String,
+        cancellation: CancellationHandle,
     ): FloatTensorData {
         throw AssertionError("run should not be called")
     }

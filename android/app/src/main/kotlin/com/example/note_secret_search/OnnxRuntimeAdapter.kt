@@ -77,6 +77,7 @@ interface OnnxRuntimeAdapter {
     fun openSession(
         modelPath: String,
         settings: OrtExecutionSettings,
+        cancellation: CancellationHandle = CancellationHandle(),
     ): OnnxSessionHandle
 }
 
@@ -86,6 +87,7 @@ interface OnnxSessionHandle : AutoCloseable {
     fun run(
         inputs: Map<String, IntegralTensorData>,
         outputName: String,
+        cancellation: CancellationHandle = CancellationHandle(),
     ): FloatTensorData
 }
 
@@ -95,16 +97,25 @@ class OrtOnnxRuntimeAdapter(
     override fun openSession(
         modelPath: String,
         settings: OrtExecutionSettings,
+        cancellation: CancellationHandle,
     ): OnnxSessionHandle {
+        cancellation.throwIfCancelled()
         val options = OrtSession.SessionOptions()
         return try {
             options.setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL)
             options.setInterOpNumThreads(settings.interOpThreads)
             options.setIntraOpNumThreads(settings.intraOpThreads)
-            OrtOnnxSessionHandle(
-                environment = environment,
-                session = environment.createSession(modelPath, options),
-            )
+            val session = environment.createSession(modelPath, options)
+            try {
+                cancellation.throwIfCancelled()
+                OrtOnnxSessionHandle(
+                    environment = environment,
+                    session = session,
+                )
+            } catch (error: Throwable) {
+                session.close()
+                throw error
+            }
         } finally {
             options.close()
         }
@@ -125,10 +136,13 @@ private class OrtOnnxSessionHandle(
     override fun run(
         inputs: Map<String, IntegralTensorData>,
         outputName: String,
+        cancellation: CancellationHandle,
     ): FloatTensorData {
+        cancellation.throwIfCancelled()
         val tensors = linkedMapOf<String, OnnxTensor>()
         try {
             inputs.forEach { (name, input) ->
+                cancellation.throwIfCancelled()
                 tensors[name] = when (input.type) {
                     IntegralTensorType.INT64 -> OnnxTensor.createTensor(
                         environment,
@@ -154,22 +168,34 @@ private class OrtOnnxSessionHandle(
             }
 
             OrtSession.RunOptions().use { runOptions ->
-                session.run(tensors, setOf(outputName), runOptions).use { result ->
-                    val selected = result.get(outputName).orElseThrow {
-                        IllegalArgumentException(
-                            "INVALID_OUTPUT: configured embedding output was not returned",
-                        )
+                cancellation.registerTerminator {
+                    runOptions.setTerminate(true)
+                }.use {
+                    cancellation.throwIfCancelled()
+                    try {
+                        session.run(tensors, setOf(outputName), runOptions).use { result ->
+                            cancellation.throwIfCancelled()
+                            val selected = result.get(outputName).orElseThrow {
+                                IllegalArgumentException(
+                                    "INVALID_OUTPUT: configured embedding output was not returned",
+                                )
+                            }
+                            val info = selected.info as? TensorInfo
+                                ?: throw IllegalArgumentException(
+                                    "INVALID_OUTPUT: embedding output is not a tensor",
+                                )
+                            val decoded = EmbeddingTensorDecoder.decode(
+                                type = info.type.toModelTensorType(),
+                                shape = info.shape,
+                                value = selected.value,
+                            )
+                            cancellation.throwIfCancelled()
+                            return FloatTensorData.fromDecoded(decoded)
+                        }
+                    } catch (error: Throwable) {
+                        cancellation.throwIfCancelled()
+                        throw error
                     }
-                    val info = selected.info as? TensorInfo
-                        ?: throw IllegalArgumentException(
-                            "INVALID_OUTPUT: embedding output is not a tensor",
-                        )
-                    val decoded = EmbeddingTensorDecoder.decode(
-                        type = info.type.toModelTensorType(),
-                        shape = info.shape,
-                        value = selected.value,
-                    )
-                    return FloatTensorData.fromDecoded(decoded)
                 }
             }
         } finally {

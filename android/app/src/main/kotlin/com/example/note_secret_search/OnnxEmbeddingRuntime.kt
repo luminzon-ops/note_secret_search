@@ -49,15 +49,22 @@ class OnnxEmbeddingRuntime(
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
+        cancellation: CancellationHandle,
     ): Map<String, Any?> {
         return try {
+            cancellation.throwIfCancelled(modelId)
             val file = canonicalModelFile(modelId, modelPath)
             val actualChecksum = checksumVerifier.verify(
                 file = file,
                 expectedChecksum = verifiedChecksum,
                 modelId = modelId,
+                cancellation = cancellation,
             )
-            val loadedTokenizer = loadTokenizer(modelId, spec.tokenizer)
+            val loadedTokenizer = loadTokenizer(
+                modelId = modelId,
+                spec = spec.tokenizer,
+                cancellation = cancellation,
+            )
             val identity = sessionIdentity(
                 modelId = modelId,
                 file = file,
@@ -65,7 +72,13 @@ class OnnxEmbeddingRuntime(
                 spec = spec,
                 loadedTokenizer = loadedTokenizer,
             )
-            openPreparedSession(file, identity, loadedTokenizer).use { prepared ->
+            openPreparedSession(
+                file = file,
+                identity = identity,
+                loadedTokenizer = loadedTokenizer,
+                cancellation = cancellation,
+            ).use { prepared ->
+                cancellation.throwIfCancelled(modelId)
                 runtimeState(
                     status = "ready",
                     reason = "本地 embedding runtime 已就绪。",
@@ -80,6 +93,7 @@ class OnnxEmbeddingRuntime(
                 stage = EmbeddingRuntimeStage.SESSION_LOAD,
                 modelId = modelId,
             )
+            throwIfCancellation(typed)
             runtimeState(
                 status = if (typed.code == EmbeddingRuntimeErrorCode.MODEL_MISSING) {
                     "missing"
@@ -98,6 +112,7 @@ class OnnxEmbeddingRuntime(
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
+        cancellation: CancellationHandle,
     ): Map<String, Any?> {
         return try {
             val prepared = ensurePreparedSession(
@@ -105,6 +120,7 @@ class OnnxEmbeddingRuntime(
                 modelPath = modelPath,
                 spec = spec,
                 expectedChecksum = verifiedChecksum,
+                cancellation = cancellation,
             )
             runtimeState(
                 status = "ready",
@@ -113,13 +129,14 @@ class OnnxEmbeddingRuntime(
                 vectorDimension = prepared.contract.vectorDimension,
             )
         } catch (error: Throwable) {
-            sessionManager.release(modelId)
             val typed = normalizeFailure(
                 error = error,
                 code = EmbeddingRuntimeErrorCode.ORT_FAILURE,
                 stage = EmbeddingRuntimeStage.SESSION_LOAD,
                 modelId = modelId,
             )
+            throwIfCancellation(typed)
+            sessionManager.release(modelId)
             runtimeState(
                 status = if (typed.code == EmbeddingRuntimeErrorCode.MODEL_MISSING) {
                     "missing"
@@ -140,7 +157,9 @@ class OnnxEmbeddingRuntime(
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
         requestId: String?,
+        cancellation: CancellationHandle,
     ): Map<String, Any?> {
+        cancellation.throwIfCancelled(modelId)
         if (text.isBlank()) {
             throw EmbeddingRuntimeException(
                 code = EmbeddingRuntimeErrorCode.INVALID_ARGUMENT,
@@ -155,6 +174,7 @@ class OnnxEmbeddingRuntime(
                 modelPath = modelPath,
                 spec = spec,
                 expectedChecksum = verifiedChecksum,
+                cancellation = cancellation,
             )
             sessionManager.run(
                 identity = prepared.identity,
@@ -163,13 +183,16 @@ class OnnxEmbeddingRuntime(
                 val encoded = active.tokenizer.encode(
                     text = text,
                     padToLength = active.contract.fixedSequenceLength,
+                    cancellation = cancellation,
                 )
-                val outputVector = runInference(
+                val outputVector = runEmbeddingInference(
                     prepared = active,
                     encoded = encoded,
                     runtime = spec.runtime,
                     modelId = modelId,
+                    cancellation = cancellation,
                 )
+                cancellation.throwIfCancelled(modelId)
                 mapOf(
                     "values" to outputVector,
                     "tokenCount" to encoded.attentionMask.count { it == 1L },
@@ -194,12 +217,18 @@ class OnnxEmbeddingRuntime(
         sessionManager.releaseAll()
     }
 
+    override fun close() {
+        sessionManager.close()
+    }
+
     private fun ensurePreparedSession(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
         expectedChecksum: String?,
+        cancellation: CancellationHandle,
     ): PreparedEmbeddingSession {
+        cancellation.throwIfCancelled(modelId)
         val file = canonicalModelFile(modelId, modelPath)
         val current = sessionManager.currentIdentity
         if (current != null && !current.matchesRequest(
@@ -238,8 +267,13 @@ class OnnxEmbeddingRuntime(
             file = file,
             expectedChecksum = expectedChecksum,
             modelId = modelId,
+            cancellation = cancellation,
         )
-        val loadedTokenizer = loadTokenizer(modelId, spec.tokenizer)
+        val loadedTokenizer = loadTokenizer(
+            modelId = modelId,
+            spec = spec.tokenizer,
+            cancellation = cancellation,
+        )
         val identity = sessionIdentity(
             modelId = modelId,
             file = file,
@@ -248,7 +282,12 @@ class OnnxEmbeddingRuntime(
             loadedTokenizer = loadedTokenizer,
         )
         return sessionManager.getOrLoad(identity) {
-            openPreparedSession(file, identity, loadedTokenizer)
+            openPreparedSession(
+                file = file,
+                identity = identity,
+                loadedTokenizer = loadedTokenizer,
+                cancellation = cancellation,
+            )
         }
     }
 
@@ -256,11 +295,14 @@ class OnnxEmbeddingRuntime(
         file: File,
         identity: SessionIdentity,
         loadedTokenizer: LoadedEmbeddingTokenizer,
+        cancellation: CancellationHandle,
     ): PreparedEmbeddingSession {
+        cancellation.throwIfCancelled(identity.modelId)
         val handle = try {
             adapter.openSession(
                 modelPath = file.path,
                 settings = executionSettings,
+                cancellation = cancellation,
             )
         } catch (error: Throwable) {
             throw EmbeddingRuntimeException.wrap(
@@ -271,6 +313,7 @@ class OnnxEmbeddingRuntime(
             )
         }
         return try {
+            cancellation.throwIfCancelled(identity.modelId)
             PreparedEmbeddingSession(
                 identity = identity,
                 tokenizer = loadedTokenizer.tokenizer,
@@ -295,77 +338,18 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    private fun runInference(
-        prepared: PreparedEmbeddingSession,
-        encoded: EncodedEmbeddingInput,
-        runtime: OnnxEmbeddingModelSpec.RuntimeSpec,
-        modelId: String,
-    ): List<Double> {
-        val contract = prepared.contract
-        val shape = longArrayOf(1, encoded.inputIds.size.toLong())
-        val inputs = linkedMapOf(
-            contract.inputIds.name to IntegralTensorData(
-                type = contract.inputIds.type,
-                shape = shape,
-                values = encoded.inputIds,
-            ),
-            contract.attentionMask.name to IntegralTensorData(
-                type = contract.attentionMask.type,
-                shape = shape,
-                values = encoded.attentionMask,
-            ),
-        )
-        contract.tokenTypeIds?.let { input ->
-            inputs[input.name] = IntegralTensorData(
-                type = input.type,
-                shape = shape,
-                values = encoded.tokenTypeIds,
-            )
-        }
-
-        val output = try {
-            prepared.handle.run(inputs = inputs, outputName = contract.outputName)
-        } catch (error: Throwable) {
-            throw classifyInferenceFailure(error, modelId)
-        }
-        return try {
-            val decoded = EmbeddingTensorDecoder.decode(output)
-            val pooled = when (decoded.kind) {
-                EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
-                    tokenVectors = decoded.tokenVectors,
-                    attentionMask = encoded.attentionMask,
-                    pooling = runtime.pooling,
-                )
-                EmbeddingTensorKind.SENTENCE -> {
-                    require(runtime.pooling == "none") {
-                        "INVALID_OUTPUT: sentence output requires pooling=none"
-                    }
-                    decoded.sentenceVector.map(Float::toDouble)
-                }
-            }
-            EmbeddingVectorPostProcessor.normalize(
-                values = pooled,
-                normalization = runtime.normalization,
-            )
-        } catch (error: Throwable) {
-            throw EmbeddingRuntimeException.wrap(
-                error = error,
-                code = EmbeddingRuntimeErrorCode.INVALID_OUTPUT,
-                stage = EmbeddingRuntimeStage.OUTPUT,
-                modelId = modelId,
-            )
-        }
-    }
-
     private fun loadTokenizer(
         modelId: String,
         spec: OnnxEmbeddingModelSpec.TokenizerSpec,
+        cancellation: CancellationHandle,
     ): LoadedEmbeddingTokenizer {
+        cancellation.throwIfCancelled(modelId)
         if (cachedTokenizerSpec == spec) {
             cachedTokenizer?.let { return it }
         }
         return try {
             tokenizerLoader.load(spec).also {
+                cancellation.throwIfCancelled(modelId)
                 cachedTokenizerSpec = spec
                 cachedTokenizer = it
             }
@@ -411,35 +395,6 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    private fun classifyInferenceFailure(
-        error: Throwable,
-        modelId: String,
-    ): EmbeddingRuntimeException {
-        if (error is EmbeddingRuntimeException) {
-            return error.withModelId(modelId)
-        }
-        val message = error.message.orEmpty()
-        val code = when {
-            message.startsWith("INVALID_OUTPUT:") ->
-                EmbeddingRuntimeErrorCode.INVALID_OUTPUT
-            message.startsWith("MODEL_SCHEMA_UNSUPPORTED:") ->
-                EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED
-            else -> EmbeddingRuntimeErrorCode.ORT_FAILURE
-        }
-        val stage = when (code) {
-            EmbeddingRuntimeErrorCode.INVALID_OUTPUT -> EmbeddingRuntimeStage.OUTPUT
-            EmbeddingRuntimeErrorCode.MODEL_SCHEMA_UNSUPPORTED ->
-                EmbeddingRuntimeStage.MODEL_SCHEMA
-            else -> EmbeddingRuntimeStage.INFERENCE
-        }
-        return EmbeddingRuntimeException.wrap(
-            error = error,
-            code = code,
-            stage = stage,
-            modelId = modelId,
-        )
-    }
-
     private fun normalizeFailure(
         error: Throwable,
         code: EmbeddingRuntimeErrorCode,
@@ -452,6 +407,15 @@ class OnnxEmbeddingRuntime(
             stage = stage,
             modelId = modelId,
         )
+    }
+
+    private fun throwIfCancellation(error: EmbeddingRuntimeException) {
+        if (
+            error.code == EmbeddingRuntimeErrorCode.CANCELLED ||
+            error.code == EmbeddingRuntimeErrorCode.RUNTIME_CLOSED
+        ) {
+            throw error
+        }
     }
 
     private fun runtimeState(

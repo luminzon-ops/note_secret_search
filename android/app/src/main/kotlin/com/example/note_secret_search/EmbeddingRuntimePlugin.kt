@@ -24,6 +24,13 @@ class EmbeddingRuntimePlugin(
         channel.setMethodCallHandler(this)
     }
 
+    fun detachFromEngine() {
+        if (this::channel.isInitialized) {
+            channel.setMethodCallHandler(null)
+        }
+        worker.shutdown(runtime::close)
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         val completion = EmbeddingMethodCompletion(result, resultDispatcher)
         try {
@@ -33,12 +40,13 @@ class EmbeddingRuntimePlugin(
                     val modelPath = requiredString(call, "modelPath")
                     val spec = readSpec(call)
                     val verifiedChecksum = optionalString(call, "verifiedChecksum")
-                    runAsync(modelId, completion) {
+                    runAsync(modelId, null, completion) { cancellation ->
                         runtime.inspectModel(
                             modelId = modelId,
                             modelPath = modelPath,
                             spec = spec,
                             verifiedChecksum = verifiedChecksum,
+                            cancellation = cancellation,
                         )
                     }
                 }
@@ -48,12 +56,13 @@ class EmbeddingRuntimePlugin(
                     val modelPath = requiredString(call, "modelPath")
                     val spec = readSpec(call)
                     val verifiedChecksum = optionalString(call, "verifiedChecksum")
-                    runAsync(modelId, completion) {
+                    runAsync(modelId, null, completion) { cancellation ->
                         runtime.ensureModelReady(
                             modelId = modelId,
                             modelPath = modelPath,
                             spec = spec,
                             verifiedChecksum = verifiedChecksum,
+                            cancellation = cancellation,
                         )
                     }
                 }
@@ -65,7 +74,7 @@ class EmbeddingRuntimePlugin(
                     val spec = readSpec(call)
                     val verifiedChecksum = optionalString(call, "verifiedChecksum")
                     val requestId = optionalString(call, "requestId")
-                    runAsync(modelId, completion) {
+                    runAsync(modelId, requestId, completion) { cancellation ->
                         runtime.embedText(
                             modelId = modelId,
                             modelPath = modelPath,
@@ -73,13 +82,20 @@ class EmbeddingRuntimePlugin(
                             spec = spec,
                             verifiedChecksum = verifiedChecksum,
                             requestId = requestId,
+                            cancellation = cancellation,
                         )
                     }
                 }
 
+                "cancelRequest" -> {
+                    val requestId = requiredString(call, "requestId")
+                    worker.cancelRequest(requestId)
+                    completion.success(null)
+                }
+
                 "releaseModel" -> {
                     val modelId = requiredString(call, "modelId")
-                    runAsync(modelId, completion) {
+                    runRelease(modelId, completion) {
                         runtime.releaseModel(modelId)
                         null
                     }
@@ -98,6 +114,40 @@ class EmbeddingRuntimePlugin(
     }
 
     private fun runAsync(
+        modelId: String,
+        requestId: String?,
+        completion: EmbeddingMethodCompletion,
+        block: (CancellationHandle) -> Any?,
+    ) {
+        val cancellation = CancellationHandle()
+        val item = EmbeddingWorkItem(
+            modelId = modelId,
+            requestId = requestId,
+            cancellation = cancellation,
+            execute = {
+                try {
+                    val payload = block(cancellation)
+                    cancellation.throwIfCancelled(modelId)
+                    completion.success(payload)
+                } catch (error: Throwable) {
+                    completion.error(
+                        normalizePluginFailure(
+                            error = error,
+                            modelId = modelId,
+                        ),
+                    )
+                }
+            },
+            onDropped = completion::error,
+        )
+        completeSubmission(
+            submission = worker.submit(item),
+            modelId = modelId,
+            completion = completion,
+        )
+    }
+
+    private fun runRelease(
         modelId: String,
         completion: EmbeddingMethodCompletion,
         block: () -> Any?,
@@ -118,7 +168,19 @@ class EmbeddingRuntimePlugin(
             },
             onDropped = completion::error,
         )
-        when (worker.submit(item)) {
+        completeSubmission(
+            submission = worker.submitRelease(item),
+            modelId = modelId,
+            completion = completion,
+        )
+    }
+
+    private fun completeSubmission(
+        submission: EmbeddingWorkSubmission,
+        modelId: String,
+        completion: EmbeddingMethodCompletion,
+    ) {
+        when (submission) {
             EmbeddingWorkSubmission.ACCEPTED -> Unit
             EmbeddingWorkSubmission.BUSY -> completion.error(
                 EmbeddingRuntimeException(

@@ -156,6 +156,140 @@ class EmbeddingRuntimePluginTest {
         }
     }
 
+    @Test
+    fun `cancelRequest removes queued embedding and completes both calls once`() {
+        val runningStarted = CountDownLatch(1)
+        val allowRunning = CountDownLatch(1)
+        val runtime = FakeEmbeddingRuntime(
+            inspect = {
+                runningStarted.countDown()
+                allowRunning.await(2, TimeUnit.SECONDS)
+                mapOf("status" to "ready")
+            },
+        )
+        val worker = testWorker(capacity = 2)
+        val runningResult = EmbeddingRecordingResult()
+        val embeddingResult = EmbeddingRecordingResult()
+        val cancelResult = EmbeddingRecordingResult()
+
+        try {
+            val plugin = EmbeddingRuntimePlugin(
+                runtime = runtime,
+                worker = worker,
+                resultDispatcher = EmbeddingImmediateDispatcher(),
+            )
+            plugin.onMethodCall(methodCall("inspectModel"), runningResult)
+            assertTrue(runningStarted.await(1, TimeUnit.SECONDS))
+            plugin.onMethodCall(
+                methodCall("embedText", requestId = "queued-request"),
+                embeddingResult,
+            )
+
+            plugin.onMethodCall(
+                MethodCall(
+                    "cancelRequest",
+                    mapOf("requestId" to "queued-request"),
+                ),
+                cancelResult,
+            )
+
+            assertTrue(embeddingResult.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("CANCELLED", embeddingResult.errorCode)
+            assertTrue(cancelResult.successLatch.await(1, TimeUnit.SECONDS))
+            assertEquals(1, embeddingResult.callbackCount.get())
+            assertEquals(1, cancelResult.callbackCount.get())
+        } finally {
+            allowRunning.countDown()
+            worker.close()
+        }
+    }
+
+    @Test
+    fun `releaseModel cancels running inference before releasing session`() {
+        val inferenceStarted = CountDownLatch(1)
+        val releaseFinished = CountDownLatch(1)
+        val events = mutableListOf<String>()
+        val runtime = FakeEmbeddingRuntime(
+            embed = { cancellation ->
+                events += "embed-start"
+                inferenceStarted.countDown()
+                cancellation.awaitCancellation()
+                cancellation.throwIfCancelled("embedding-model")
+                error("unreachable")
+            },
+            release = {
+                events += "release"
+                releaseFinished.countDown()
+            },
+        )
+        val worker = testWorker()
+        val embedResult = EmbeddingRecordingResult()
+        val releaseResult = EmbeddingRecordingResult()
+
+        try {
+            val plugin = EmbeddingRuntimePlugin(
+                runtime = runtime,
+                worker = worker,
+                resultDispatcher = EmbeddingImmediateDispatcher(),
+            )
+            plugin.onMethodCall(
+                methodCall("embedText", requestId = "running-request"),
+                embedResult,
+            )
+            assertTrue(inferenceStarted.await(1, TimeUnit.SECONDS))
+
+            plugin.onMethodCall(methodCall("releaseModel"), releaseResult)
+
+            assertTrue(embedResult.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("CANCELLED", embedResult.errorCode)
+            assertTrue(releaseFinished.await(1, TimeUnit.SECONDS))
+            assertTrue(releaseResult.successLatch.await(1, TimeUnit.SECONDS))
+            assertEquals(listOf("embed-start", "release"), events)
+        } finally {
+            worker.close()
+        }
+    }
+
+    @Test
+    fun `detach returns promptly and closes runtime on the worker`() {
+        val inferenceStarted = CountDownLatch(1)
+        val runtimeClosed = CountDownLatch(1)
+        var closeThread: String? = null
+        val runtime = FakeEmbeddingRuntime(
+            embed = { cancellation ->
+                inferenceStarted.countDown()
+                cancellation.awaitCancellation()
+                cancellation.throwIfCancelled("embedding-model")
+                error("unreachable")
+            },
+            closeRuntime = {
+                closeThread = Thread.currentThread().name
+                runtimeClosed.countDown()
+            },
+        )
+        val worker = testWorker()
+        val plugin = EmbeddingRuntimePlugin(
+            runtime = runtime,
+            worker = worker,
+            resultDispatcher = EmbeddingImmediateDispatcher(),
+        )
+        plugin.onMethodCall(
+            methodCall("embedText", requestId = "running-request"),
+            EmbeddingRecordingResult(),
+        )
+        assertTrue(inferenceStarted.await(1, TimeUnit.SECONDS))
+
+        val startedAt = System.nanoTime()
+        plugin.detachFromEngine()
+        plugin.detachFromEngine()
+        val elapsedMillis =
+            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+        assertTrue(elapsedMillis < 100)
+        assertTrue(runtimeClosed.await(1, TimeUnit.SECONDS))
+        assertEquals("embedding-runtime-worker", closeThread)
+    }
+
     private fun testWorker(capacity: Int = 8): EmbeddingRuntimeWorker {
         return EmbeddingRuntimeWorker(
             capacity = capacity,
@@ -163,7 +297,10 @@ class EmbeddingRuntimePluginTest {
         )
     }
 
-    private fun methodCall(method: String): MethodCall {
+    private fun methodCall(
+        method: String,
+        requestId: String = "request-1",
+    ): MethodCall {
         val arguments = mutableMapOf<String, Any?>(
             "modelId" to "embedding-model",
             "modelPath" to "/private/MODEL_PATH_SENTINEL.onnx",
@@ -184,6 +321,7 @@ class EmbeddingRuntimePluginTest {
         )
         if (method == "embedText") {
             arguments["text"] = "TEXT_SENTINEL"
+            arguments["requestId"] = requestId
         }
         return MethodCall(method, arguments)
     }
@@ -192,13 +330,16 @@ class EmbeddingRuntimePluginTest {
 private class FakeEmbeddingRuntime(
     private val inspect: () -> Map<String, Any?> = { unsupported() },
     private val ensure: () -> Map<String, Any?> = { unsupported() },
-    private val embed: () -> Map<String, Any?> = { unsupported() },
+    private val embed: (CancellationHandle) -> Map<String, Any?> = { unsupported() },
+    private val release: () -> Unit = {},
+    private val closeRuntime: () -> Unit = {},
 ) : EmbeddingRuntimeContract {
     override fun inspectModel(
         modelId: String,
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
+        cancellation: CancellationHandle,
     ): Map<String, Any?> = inspect()
 
     override fun ensureModelReady(
@@ -206,6 +347,7 @@ private class FakeEmbeddingRuntime(
         modelPath: String,
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
+        cancellation: CancellationHandle,
     ): Map<String, Any?> = ensure()
 
     override fun embedText(
@@ -215,12 +357,18 @@ private class FakeEmbeddingRuntime(
         spec: OnnxEmbeddingModelSpec,
         verifiedChecksum: String?,
         requestId: String?,
-    ): Map<String, Any?> = embed()
+        cancellation: CancellationHandle,
+    ): Map<String, Any?> = embed(cancellation)
 
     override fun releaseModel(modelId: String) {
+        release()
     }
 
     override fun releaseAll() {
+    }
+
+    override fun close() {
+        closeRuntime()
     }
 
     companion object {

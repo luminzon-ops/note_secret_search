@@ -184,6 +184,7 @@ class OnnxEmbeddingRuntimeSessionIdentityTest {
             file: File,
             expectedChecksum: String?,
             modelId: String,
+            cancellation: CancellationHandle,
         ): String {
             verifyCount += 1
             failure?.let { throw it }
@@ -228,6 +229,7 @@ class OnnxEmbeddingRuntimeSessionIdentityTest {
         override fun openSession(
             modelPath: String,
             settings: OrtExecutionSettings,
+            cancellation: CancellationHandle,
         ): OnnxSessionHandle {
             openFailure?.let { throw it }
             return RecordingSession().also(sessions::add)
@@ -241,6 +243,7 @@ class OnnxEmbeddingRuntimeSessionIdentityTest {
         override fun run(
             inputs: Map<String, IntegralTensorData>,
             outputName: String,
+            cancellation: CancellationHandle,
         ): FloatTensorData {
             return FloatTensorData(
                 shape = longArrayOf(1, 3, 2),

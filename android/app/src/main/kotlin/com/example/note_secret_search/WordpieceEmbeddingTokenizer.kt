@@ -31,13 +31,15 @@ class WordpieceEmbeddingTokenizer(
     fun encode(
         text: String,
         padToLength: Int? = maxSequenceLength,
+        cancellation: CancellationHandle = CancellationHandle(),
     ): EncodedEmbeddingInput {
+        cancellation.throwIfCancelled()
         val sequenceLimit = padToLength ?: maxSequenceLength
         require(sequenceLimit in 2..maxSequenceLength) {
             "TOKENIZER_SCHEMA_UNSUPPORTED: invalid target sequence length"
         }
 
-        val sequenceIds = tokenizeSequence(text)
+        val sequenceIds = tokenizeSequence(text, cancellation)
         val specialCount = definition.singleTemplate.sumOf { part ->
             when (part) {
                 is TokenizerTemplatePart.Sequence -> 0
@@ -52,6 +54,7 @@ class WordpieceEmbeddingTokenizer(
         val tokenIds = mutableListOf<Long>()
         val tokenTypeIds = mutableListOf<Long>()
         definition.singleTemplate.forEach { part ->
+            cancellation.throwIfCancelled()
             when (part) {
                 is TokenizerTemplatePart.SpecialToken -> {
                     part.ids.forEach { id ->
@@ -72,6 +75,7 @@ class WordpieceEmbeddingTokenizer(
         val attentionMask = MutableList(tokenIds.size) { 1L }
         val targetLength = padToLength
         while (targetLength != null && tokenIds.size < targetLength) {
+            cancellation.throwIfCancelled()
             tokenIds.add(definition.padTokenId.toLong())
             attentionMask.add(0L)
             tokenTypeIds.add(0L)
@@ -84,23 +88,29 @@ class WordpieceEmbeddingTokenizer(
         )
     }
 
-    private fun tokenizeSequence(text: String): List<Long> {
+    private fun tokenizeSequence(
+        text: String,
+        cancellation: CancellationHandle,
+    ): List<Long> {
         val tokenIds = mutableListOf<Long>()
         val specialTokens = definition.addedTokens
             .filter { it.special && !it.normalized && !it.singleWord }
             .sortedByDescending { it.content.length }
         var cursor = 0
         while (cursor < text.length) {
+            cancellation.throwIfCancelled()
             val next = nextSpecialToken(text, cursor, specialTokens)
             if (next == null) {
-                tokenIds.addAll(tokenizeOrdinaryText(text.substring(cursor)))
+                tokenIds.addAll(
+                    tokenizeOrdinaryText(text.substring(cursor), cancellation),
+                )
                 break
             }
             var ordinary = text.substring(cursor, next.index)
             if (next.token.lstrip) {
                 ordinary = ordinary.trimEnd()
             }
-            tokenIds.addAll(tokenizeOrdinaryText(ordinary))
+            tokenIds.addAll(tokenizeOrdinaryText(ordinary, cancellation))
             tokenIds.add(next.token.id.toLong())
             cursor = next.index + next.token.content.length
             if (next.token.rstrip) {
@@ -141,17 +151,25 @@ class WordpieceEmbeddingTokenizer(
         return best
     }
 
-    private fun tokenizeOrdinaryText(text: String): List<Long> {
+    private fun tokenizeOrdinaryText(
+        text: String,
+        cancellation: CancellationHandle,
+    ): List<Long> {
         if (text.isEmpty()) {
             return emptyList()
         }
-        return preTokenize(normalize(text)).flatMap(::tokenizeWord)
+        return preTokenize(normalize(text, cancellation), cancellation)
+            .flatMap { word -> tokenizeWord(word, cancellation) }
     }
 
-    private fun normalize(text: String): String {
+    private fun normalize(
+        text: String,
+        cancellation: CancellationHandle,
+    ): String {
         val builder = StringBuilder()
         var index = 0
         while (index < text.length) {
+            cancellation.throwIfCancelled()
             val codePoint = text.codePointAt(index)
             index += Character.charCount(codePoint)
             when {
@@ -178,6 +196,7 @@ class WordpieceEmbeddingTokenizer(
             val withoutAccents = StringBuilder()
             var offset = 0
             while (offset < decomposed.length) {
+                cancellation.throwIfCancelled()
                 val codePoint = decomposed.codePointAt(offset)
                 offset += Character.charCount(codePoint)
                 if (Character.getType(codePoint) != Character.NON_SPACING_MARK.toInt()) {
@@ -189,7 +208,10 @@ class WordpieceEmbeddingTokenizer(
         return normalized
     }
 
-    private fun preTokenize(text: String): List<String> {
+    private fun preTokenize(
+        text: String,
+        cancellation: CancellationHandle,
+    ): List<String> {
         val tokens = mutableListOf<String>()
         val current = StringBuilder()
         fun flush() {
@@ -201,6 +223,7 @@ class WordpieceEmbeddingTokenizer(
 
         var index = 0
         while (index < text.length) {
+            cancellation.throwIfCancelled()
             val codePoint = text.codePointAt(index)
             index += Character.charCount(codePoint)
             when {
@@ -217,7 +240,11 @@ class WordpieceEmbeddingTokenizer(
         return tokens
     }
 
-    private fun tokenizeWord(word: String): List<Long> {
+    private fun tokenizeWord(
+        word: String,
+        cancellation: CancellationHandle,
+    ): List<Long> {
+        cancellation.throwIfCancelled()
         if (word.isEmpty()) {
             return emptyList()
         }
@@ -234,9 +261,11 @@ class WordpieceEmbeddingTokenizer(
         val pieces = mutableListOf<Long>()
         var start = 0
         while (start < codePointCount) {
+            cancellation.throwIfCancelled()
             var end = codePointCount
             var matched: Int? = null
             while (end > start) {
+                cancellation.throwIfCancelled()
                 val rawPiece = word.substring(offsets[start], offsets[end])
                 val candidate = if (start == 0) {
                     rawPiece
