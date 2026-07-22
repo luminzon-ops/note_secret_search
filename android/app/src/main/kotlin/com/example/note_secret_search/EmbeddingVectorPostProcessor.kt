@@ -32,6 +32,9 @@ object EmbeddingVectorPostProcessor {
         require(values.all(Double::isFinite)) {
             "INVALID_OUTPUT: embedding vector contains non-finite values"
         }
+        require(values.any { it != 0.0 }) {
+            "INVALID_OUTPUT: embedding vector has zero norm"
+        }
         if (normalization == "none") {
             return values.toList()
         }

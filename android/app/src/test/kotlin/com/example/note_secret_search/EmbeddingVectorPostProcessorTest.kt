@@ -125,4 +125,14 @@ class EmbeddingVectorPostProcessorTest {
             )
         }
     }
+
+    @Test
+    fun `normalization none still rejects a zero vector`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            EmbeddingVectorPostProcessor.normalize(
+                values = listOf(0.0, -0.0),
+                normalization = "none",
+            )
+        }
+    }
 }
