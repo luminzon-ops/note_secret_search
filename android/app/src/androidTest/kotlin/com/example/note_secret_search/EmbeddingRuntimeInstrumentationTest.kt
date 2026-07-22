@@ -55,15 +55,17 @@ class EmbeddingRuntimeInstrumentationTest {
             spec = modelSpec(),
             requestId = "numeric-request",
         )
-        val values = result["values"] as FloatArray
+        val values = (result["values"] as List<*>)
+            .map { value -> (value as Number).toDouble() }
+            .toDoubleArray()
 
         assertArrayEquals(
-            floatArrayOf(
-                (2.0 / sqrt(13.0)).toFloat(),
-                (3.0 / sqrt(13.0)).toFloat(),
+            doubleArrayOf(
+                2.0 / sqrt(13.0),
+                3.0 / sqrt(13.0),
             ),
             values,
-            1e-6f,
+            1e-6,
         )
         assertEquals(3, result["tokenCount"])
         assertEquals(2, result["vectorDimension"])
@@ -73,12 +75,12 @@ class EmbeddingRuntimeInstrumentationTest {
 
         assertEquals(1, adapter.handles.single().closeCount)
         assertArrayEquals(
-            floatArrayOf(
-                (2.0 / sqrt(13.0)).toFloat(),
-                (3.0 / sqrt(13.0)).toFloat(),
+            doubleArrayOf(
+                2.0 / sqrt(13.0),
+                3.0 / sqrt(13.0),
             ),
             values,
-            1e-6f,
+            1e-6,
         )
     }
 

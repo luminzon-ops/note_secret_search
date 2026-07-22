@@ -12,6 +12,38 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class EmbeddingRuntimePluginTest {
     @Test
+    fun `ensure and embed require a verified checksum`() {
+        val runtime = FakeEmbeddingRuntime()
+        val worker = testWorker()
+        val ensureResult = EmbeddingRecordingResult()
+        val embedResult = EmbeddingRecordingResult()
+
+        try {
+            val plugin = EmbeddingRuntimePlugin(
+                runtime = runtime,
+                worker = worker,
+                resultDispatcher = EmbeddingImmediateDispatcher(),
+            )
+
+            plugin.onMethodCall(
+                methodCall("ensureModelReady", includeVerifiedChecksum = false),
+                ensureResult,
+            )
+            plugin.onMethodCall(
+                methodCall("embedText", includeVerifiedChecksum = false),
+                embedResult,
+            )
+
+            assertTrue(ensureResult.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("INVALID_ARGUMENT", ensureResult.errorCode)
+            assertTrue(embedResult.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("INVALID_ARGUMENT", embedResult.errorCode)
+        } finally {
+            worker.close()
+        }
+    }
+
+    @Test
     fun `inspectModel runs off the method call thread`() {
         val workerStarted = CountDownLatch(1)
         val allowCompletion = CountDownLatch(1)
@@ -300,6 +332,7 @@ class EmbeddingRuntimePluginTest {
     private fun methodCall(
         method: String,
         requestId: String = "request-1",
+        includeVerifiedChecksum: Boolean = true,
     ): MethodCall {
         val arguments = mutableMapOf<String, Any?>(
             "modelId" to "embedding-model",
@@ -319,6 +352,9 @@ class EmbeddingRuntimePluginTest {
                 "normalization" to "l2",
             ),
         )
+        if (includeVerifiedChecksum) {
+            arguments["verifiedChecksum"] = "sha256:${"a".repeat(64)}"
+        }
         if (method == "embedText") {
             arguments["text"] = "TEXT_SENTINEL"
             arguments["requestId"] = requestId

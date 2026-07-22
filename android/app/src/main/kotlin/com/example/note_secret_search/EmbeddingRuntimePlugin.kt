@@ -55,7 +55,7 @@ class EmbeddingRuntimePlugin(
                     val modelId = requiredString(call, "modelId")
                     val modelPath = requiredString(call, "modelPath")
                     val spec = readSpec(call)
-                    val verifiedChecksum = optionalString(call, "verifiedChecksum")
+                    val verifiedChecksum = requiredString(call, "verifiedChecksum")
                     runAsync(modelId, null, completion) { cancellation ->
                         runtime.ensureModelReady(
                             modelId = modelId,
@@ -72,7 +72,7 @@ class EmbeddingRuntimePlugin(
                     val modelPath = requiredString(call, "modelPath")
                     val text = requiredString(call, "text")
                     val spec = readSpec(call)
-                    val verifiedChecksum = optionalString(call, "verifiedChecksum")
+                    val verifiedChecksum = requiredString(call, "verifiedChecksum")
                     val requestId = optionalString(call, "requestId")
                     runAsync(modelId, requestId, completion) { cancellation ->
                         runtime.embedText(
