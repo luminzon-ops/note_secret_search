@@ -1,22 +1,47 @@
 package com.example.note_secret_search
 
 import android.content.Context
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtEnvironment
-import ai.onnxruntime.OrtException
-import ai.onnxruntime.OrtSession
-import ai.onnxruntime.TensorInfo
 import java.io.File
-import java.nio.FloatBuffer
-import java.nio.LongBuffer
+
+fun interface EmbeddingTokenizerLoader {
+    fun load(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer
+}
 
 class OnnxEmbeddingRuntime(
-    private val context: Context,
+    private val tokenizerLoader: EmbeddingTokenizerLoader,
     private val sessionManager: EmbeddingModelSessionManager,
+    private val adapter: OnnxRuntimeAdapter,
+    private val contextPackage: String,
+    private val executionSettings: OrtExecutionSettings = OrtExecutionSettings.controlled(),
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val environment: OrtEnvironment = OrtEnvironment.getEnvironment()
+    constructor(
+        context: Context,
+        sessionManager: EmbeddingModelSessionManager,
+    ) : this(
+        tokenizerLoader = EmbeddingTokenizerLoader { spec ->
+            val raw = context.assets
+                .open("flutter_assets/${spec.assetPath}")
+                .bufferedReader()
+                .use { it.readText() }
+            WordpieceEmbeddingTokenizer(
+                definition = TokenizerJsonParser.parse(
+                    rawJson = raw,
+                    expectedLowercase = spec.lowercase,
+                ),
+                maxSequenceLength = spec.maxSequenceLength,
+            )
+        },
+        sessionManager = sessionManager,
+        adapter = OrtOnnxRuntimeAdapter(),
+        contextPackage = context.packageName,
+    )
 
-    fun inspectModel(modelId: String, modelPath: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
+    fun inspectModel(
+        modelId: String,
+        modelPath: String,
+        spec: OnnxEmbeddingModelSpec,
+    ): Map<String, Any?> {
         val file = File(modelPath)
         if (!file.exists()) {
             return runtimeState(
@@ -27,16 +52,16 @@ class OnnxEmbeddingRuntime(
         }
 
         return try {
-            val session = createSession(file)
-            validateSpec(session, spec)
-            val vectorDimension = inferVectorDimension(session)
-            session.close()
-            runtimeState(
-                status = "ready",
-                reason = "本地 embedding runtime 已就绪。",
-                modelPath = modelPath,
-                vectorDimension = vectorDimension,
-            )
+            tokenizerLoader.load(spec.tokenizer)
+            val prepared = openPreparedSession(file, spec)
+            prepared.use {
+                runtimeState(
+                    status = "ready",
+                    reason = "本地 embedding runtime 已就绪。",
+                    modelPath = modelPath,
+                    vectorDimension = prepared.contract.vectorDimension,
+                )
+            }
         } catch (error: Throwable) {
             runtimeState(
                 status = "degraded",
@@ -46,7 +71,11 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun ensureModelReady(modelId: String, modelPath: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
+    fun ensureModelReady(
+        modelId: String,
+        modelPath: String,
+        spec: OnnxEmbeddingModelSpec,
+    ): Map<String, Any?> {
         val file = File(modelPath)
         if (!file.exists()) {
             return runtimeState(
@@ -57,15 +86,16 @@ class OnnxEmbeddingRuntime(
         }
 
         return try {
-            val existing = sessionManager.get(modelId)
-            val session = existing ?: createSession(file).also { sessionManager.replace(modelId, it) }
-            validateSpec(session, spec)
-            val vectorDimension = inferVectorDimension(session)
+            tokenizerLoader.load(spec.tokenizer)
+            val prepared = sessionManager.get(modelId)
+                ?: openPreparedSession(file, spec).also {
+                    sessionManager.replace(modelId, it)
+                }
             runtimeState(
                 status = "ready",
                 reason = "本地 embedding runtime 已就绪。",
                 modelPath = modelPath,
-                vectorDimension = vectorDimension,
+                vectorDimension = prepared.contract.vectorDimension,
             )
         } catch (error: Throwable) {
             sessionManager.release(modelId)
@@ -77,19 +107,29 @@ class OnnxEmbeddingRuntime(
         }
     }
 
-    fun embedText(modelId: String, modelPath: String, text: String, spec: OnnxEmbeddingModelSpec): Map<String, Any?> {
+    fun embedText(
+        modelId: String,
+        modelPath: String,
+        text: String,
+        spec: OnnxEmbeddingModelSpec,
+    ): Map<String, Any?> {
         require(text.isNotBlank()) { "Text for embedding must not be blank." }
 
         val ready = ensureModelReady(modelId, modelPath, spec)
         if (ready["status"] != "ready") {
-            throw IllegalStateException(ready["reason"] as? String ?: "Embedding runtime is not ready.")
+            throw IllegalStateException(
+                ready["reason"] as? String ?: "Embedding runtime is not ready.",
+            )
         }
 
-        val session = sessionManager.get(modelId)
+        val prepared = sessionManager.get(modelId)
             ?: throw IllegalStateException("Embedding session was not prepared.")
-
-        val encoded = loadTokenizer(spec.tokenizer).encode(text)
-        val outputVector = runMinimalInference(session, encoded, spec)
+        val tokenizer = tokenizerLoader.load(spec.tokenizer)
+        val encoded = tokenizer.encode(
+            text = text,
+            padToLength = prepared.contract.fixedSequenceLength,
+        )
+        val outputVector = runInference(prepared, encoded, spec.runtime)
         return mapOf(
             "values" to outputVector,
             "tokenCount" to encoded.attentionMask.count { it == 1L },
@@ -101,123 +141,79 @@ class OnnxEmbeddingRuntime(
         sessionManager.release(modelId)
     }
 
-    private fun createSession(file: File): OrtSession {
-        val sessionOptions = OrtSession.SessionOptions()
-        return try {
-            environment.createSession(file.absolutePath, sessionOptions)
-        } finally {
-            sessionOptions.close()
-        }
-    }
-
-    private fun inferVectorDimension(session: OrtSession): Int? {
-        val outputInfo = session.outputInfo.values.firstOrNull() ?: return null
-        val tensorInfo = outputInfo.info as? TensorInfo ?: return null
-        val positiveDims = tensorInfo.shape.filter { it > 0L }
-        return positiveDims.lastOrNull()?.toInt()
-    }
-
-    private fun runMinimalInference(
-        session: OrtSession,
-        encoded: EncodedEmbeddingInput,
+    private fun openPreparedSession(
+        file: File,
         spec: OnnxEmbeddingModelSpec,
+    ): PreparedEmbeddingSession {
+        val handle = adapter.openSession(
+            modelPath = file.absolutePath,
+            settings = executionSettings,
+        )
+        return try {
+            PreparedEmbeddingSession(
+                handle = handle,
+                contract = ModelIoContractBuilder.build(
+                    graph = handle.graph,
+                    runtime = spec.runtime,
+                ),
+            )
+        } catch (error: Throwable) {
+            handle.close()
+            throw error
+        }
+    }
+
+    private fun runInference(
+        prepared: PreparedEmbeddingSession,
+        encoded: EncodedEmbeddingInput,
+        runtime: OnnxEmbeddingModelSpec.RuntimeSpec,
     ): List<Double> {
-        val sequenceLength = encoded.inputIds.size.toLong()
-        val shape = longArrayOf(1, sequenceLength)
-
-        val inputIdsTensor = OnnxTensor.createTensor(
-            environment,
-            LongBuffer.wrap(encoded.inputIds),
-            shape,
-        )
-        val attentionMaskTensor = OnnxTensor.createTensor(
-            environment,
-            LongBuffer.wrap(encoded.attentionMask),
-            shape,
-        )
-        val tokenTypeIdsTensor = spec.runtime.tokenTypeIdsName?.let {
-            OnnxTensor.createTensor(environment, LongBuffer.wrap(encoded.tokenTypeIds), shape)
-        }
-
-        inputIdsTensor.use { ids ->
-            attentionMaskTensor.use { mask ->
-                tokenTypeIdsTensor.use { tokenTypes ->
-                    val inputs = mutableMapOf<String, OnnxTensor>(
-                        spec.runtime.inputIdsName to ids,
-                        spec.runtime.attentionMaskName to mask,
-                    )
-                    if (spec.runtime.tokenTypeIdsName != null && tokenTypes != null) {
-                        inputs[spec.runtime.tokenTypeIdsName] = tokenTypes
-                    }
-
-                    session.run(inputs).use { outputs ->
-                        val selected = outputs.get(spec.runtime.outputName).orElseThrow {
-                            OrtException("EMPTY_OUTPUT: no embedding output returned")
-                        }
-                        val tensorInfo = selected.info as? TensorInfo
-                            ?: throw OrtException("INVALID_OUTPUT: embedding output is not a tensor")
-                        val decoded = EmbeddingTensorDecoder.decode(
-                            type = tensorInfo.type,
-                            shape = tensorInfo.shape,
-                            value = selected.value,
-                        )
-                        val floats = when (decoded.kind) {
-                            EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
-                                tokenVectors = decoded.tokenVectors,
-                                attentionMask = encoded.attentionMask,
-                                pooling = spec.runtime.pooling,
-                            )
-
-                            EmbeddingTensorKind.SENTENCE -> {
-                                require(spec.runtime.pooling == "none") {
-                                    "INVALID_OUTPUT: sentence output requires pooling=none"
-                                }
-                                decoded.sentenceVector.map(Float::toDouble)
-                            }
-                        }
-                        if (floats.isEmpty()) {
-                            throw OrtException("EMPTY_OUTPUT: embedding vector is empty")
-                        }
-                        return EmbeddingVectorPostProcessor.normalize(
-                            values = floats,
-                            normalization = spec.runtime.normalization,
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun loadTokenizer(spec: OnnxEmbeddingModelSpec.TokenizerSpec): WordpieceEmbeddingTokenizer {
-        val raw = context.assets.open("flutter_assets/${spec.assetPath}").bufferedReader().use { it.readText() }
-        return WordpieceEmbeddingTokenizer(
-            definition = TokenizerJsonParser.parse(
-                rawJson = raw,
-                expectedLowercase = spec.lowercase,
+        val contract = prepared.contract
+        val shape = longArrayOf(1, encoded.inputIds.size.toLong())
+        val inputs = linkedMapOf(
+            contract.inputIds.name to IntegralTensorData(
+                type = contract.inputIds.type,
+                shape = shape,
+                values = encoded.inputIds,
             ),
-            maxSequenceLength = spec.maxSequenceLength,
+            contract.attentionMask.name to IntegralTensorData(
+                type = contract.attentionMask.type,
+                shape = shape,
+                values = encoded.attentionMask,
+            ),
         )
-    }
-
-    private fun validateSpec(session: OrtSession, spec: OnnxEmbeddingModelSpec) {
-        context.assets.open("flutter_assets/${spec.tokenizer.assetPath}").close()
-
-        val inputNames = session.inputNames
-        require(inputNames.contains(spec.runtime.inputIdsName)) {
-            "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.inputIdsName}"
+        contract.tokenTypeIds?.let { input ->
+            inputs[input.name] = IntegralTensorData(
+                type = input.type,
+                shape = shape,
+                values = encoded.tokenTypeIds,
+            )
         }
-        require(inputNames.contains(spec.runtime.attentionMaskName)) {
-            "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.attentionMaskName}"
-        }
-        if (spec.runtime.tokenTypeIdsName != null) {
-            require(inputNames.contains(spec.runtime.tokenTypeIdsName)) {
-                "MODEL_SCHEMA_UNSUPPORTED: missing input ${spec.runtime.tokenTypeIdsName}"
+
+        val decoded = EmbeddingTensorDecoder.decode(
+            prepared.handle.run(
+                inputs = inputs,
+                outputName = contract.outputName,
+            ),
+        )
+        val pooled = when (decoded.kind) {
+            EmbeddingTensorKind.TOKEN -> EmbeddingVectorPostProcessor.pool(
+                tokenVectors = decoded.tokenVectors,
+                attentionMask = encoded.attentionMask,
+                pooling = runtime.pooling,
+            )
+
+            EmbeddingTensorKind.SENTENCE -> {
+                require(runtime.pooling == "none") {
+                    "INVALID_OUTPUT: sentence output requires pooling=none"
+                }
+                decoded.sentenceVector.map(Float::toDouble)
             }
         }
-
-        require(session.outputInfo.containsKey(spec.runtime.outputName)) {
-            "MODEL_SCHEMA_UNSUPPORTED: missing output ${spec.runtime.outputName}"
-        }
+        return EmbeddingVectorPostProcessor.normalize(
+            values = pooled,
+            normalization = runtime.normalization,
+        )
     }
 
     private fun runtimeState(
@@ -230,11 +226,11 @@ class OnnxEmbeddingRuntime(
             "status" to status,
             "reason" to reason,
             "vectorDimension" to vectorDimension,
-            "checkedAt" to System.currentTimeMillis(),
+            "checkedAt" to clock(),
             "modelPath" to modelPath,
             "runtime" to "onnx",
             "supportsEmbedding" to (status == "ready"),
-            "contextPackage" to context.packageName,
+            "contextPackage" to contextPackage,
         )
     }
 }

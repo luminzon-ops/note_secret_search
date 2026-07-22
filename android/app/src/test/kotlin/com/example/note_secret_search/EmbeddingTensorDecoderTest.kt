@@ -1,6 +1,5 @@
 package com.example.note_secret_search
 
-import ai.onnxruntime.OnnxJavaType
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -17,7 +16,7 @@ class EmbeddingTensorDecoderTest {
         )
 
         val decoded = EmbeddingTensorDecoder.decode(
-            type = OnnxJavaType.FLOAT,
+            type = ModelTensorType.FLOAT,
             shape = longArrayOf(1, 2, 2),
             value = source,
         )
@@ -33,7 +32,7 @@ class EmbeddingTensorDecoderTest {
         val source = arrayOf(floatArrayOf(0.25f, 0.75f))
 
         val decoded = EmbeddingTensorDecoder.decode(
-            type = OnnxJavaType.FLOAT,
+            type = ModelTensorType.FLOAT,
             shape = longArrayOf(1, 2),
             value = source,
         )
@@ -47,21 +46,21 @@ class EmbeddingTensorDecoderTest {
     fun `rejects non float output unsupported rank and shape mismatch`() {
         assertThrows(IllegalArgumentException::class.java) {
             EmbeddingTensorDecoder.decode(
-                type = OnnxJavaType.INT64,
+                type = ModelTensorType.INT64,
                 shape = longArrayOf(1, 2),
                 value = arrayOf(floatArrayOf(1f, 2f)),
             )
         }
         assertThrows(IllegalArgumentException::class.java) {
             EmbeddingTensorDecoder.decode(
-                type = OnnxJavaType.FLOAT,
+                type = ModelTensorType.FLOAT,
                 shape = longArrayOf(2),
                 value = floatArrayOf(1f, 2f),
             )
         }
         assertThrows(IllegalArgumentException::class.java) {
             EmbeddingTensorDecoder.decode(
-                type = OnnxJavaType.FLOAT,
+                type = ModelTensorType.FLOAT,
                 shape = longArrayOf(1, 3, 2),
                 value = arrayOf(
                     arrayOf(
@@ -77,7 +76,7 @@ class EmbeddingTensorDecoderTest {
     fun `rejects ragged and non finite output carriers`() {
         assertThrows(IllegalArgumentException::class.java) {
             EmbeddingTensorDecoder.decode(
-                type = OnnxJavaType.FLOAT,
+                type = ModelTensorType.FLOAT,
                 shape = longArrayOf(1, 2, 2),
                 value = arrayOf(
                     arrayOf(
@@ -89,7 +88,7 @@ class EmbeddingTensorDecoderTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             EmbeddingTensorDecoder.decode(
-                type = OnnxJavaType.FLOAT,
+                type = ModelTensorType.FLOAT,
                 shape = longArrayOf(1, 2),
                 value = arrayOf(floatArrayOf(Float.POSITIVE_INFINITY, 2f)),
             )

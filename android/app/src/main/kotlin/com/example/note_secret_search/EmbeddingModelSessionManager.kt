@@ -1,16 +1,23 @@
 package com.example.note_secret_search
 
-import ai.onnxruntime.OrtSession
+data class PreparedEmbeddingSession(
+    val handle: OnnxSessionHandle,
+    val contract: ModelIoContract,
+) : AutoCloseable {
+    override fun close() {
+        handle.close()
+    }
+}
 
 class EmbeddingModelSessionManager {
     private var activeModelId: String? = null
-    private var activeSession: OrtSession? = null
+    private var activeSession: PreparedEmbeddingSession? = null
 
-    fun get(modelId: String): OrtSession? {
+    fun get(modelId: String): PreparedEmbeddingSession? {
         return if (activeModelId == modelId) activeSession else null
     }
 
-    fun replace(modelId: String, session: OrtSession) {
+    fun replace(modelId: String, session: PreparedEmbeddingSession) {
         if (activeModelId != modelId) {
             activeSession?.close()
         }
