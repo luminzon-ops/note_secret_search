@@ -58,6 +58,9 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        if (this::llmRuntimePlugin.isInitialized) {
+            llmRuntimePlugin.detachFromEngine()
+        }
         if (this::embeddingRuntimePlugin.isInitialized) {
             embeddingRuntimePlugin.detachFromEngine()
         }

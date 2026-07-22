@@ -200,9 +200,12 @@ class LlmRuntimePluginTest {
             )
 
             assertTrue("result.error should be invoked from async worker failures.", result.errorLatch.await(1, TimeUnit.SECONDS))
-            assertEquals("RUNTIME_NOT_READY", result.errorCode)
-            assertEquals("Local LLM runtime is not ready.", result.errorMessage)
-            assertNull(result.errorDetails)
+            assertEquals("GENERATION_FAILED", result.errorCode)
+            assertEquals("GENERATION_FAILED", result.errorMessage)
+            val details = result.errorDetails as Map<*, *>
+            assertEquals("generation", details["stage"])
+            assertEquals("qwen2_5_0_5b_instruct_q4_k_m", details["modelId"])
+            assertTrue((details["requestId"] as String).startsWith("native-"))
         } finally {
             executor.shutdownNow()
         }
@@ -229,8 +232,8 @@ class LlmRuntimePluginTest {
         )
 
         assertEquals("INVALID_ARGUMENT", result.errorCode)
-        assertEquals("Invalid LLM runtime request.", result.errorMessage)
-        assertNull(result.errorDetails)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
     }
 
     @Test
@@ -262,9 +265,15 @@ class LlmRuntimePluginTest {
             )
 
             assertTrue(result.errorLatch.await(1, TimeUnit.SECONDS))
-            assertEquals("LLM_RUNTIME_ERROR", result.errorCode)
-            assertEquals("Local LLM runtime failed.", result.errorMessage)
-            assertNull(result.errorDetails)
+            assertEquals("LOAD_FAILED", result.errorCode)
+            assertEquals("LOAD_FAILED", result.errorMessage)
+            assertEquals(
+                mapOf(
+                    "stage" to "model_lookup",
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                ),
+                result.errorDetails,
+            )
         } finally {
             executor.shutdownNow()
         }
@@ -344,92 +353,9 @@ class LlmRuntimePluginTest {
         }
     }
 
-    @Test
-    fun `ensureMultimodalModelReady returns unsupported before reading arguments or calling runtime`() {
-        val result = RecordingResult()
-        var runtimeCalls = 0
-        val multimodalRuntime = object : MultimodalLlmRuntimeContract {
-            override fun ensureModelReady(modelId: String, modelPath: String, mmprojPath: String): Map<String, Any?> {
-                runtimeCalls++
-                return emptyMap()
-            }
-
-            override fun generateMultimodalText(
-                modelId: String,
-                modelPath: String,
-                mmprojPath: String,
-                imagePath: String,
-                prompt: String,
-                config: LocalLlmGenerationConfig,
-                reasoningEnabled: Boolean,
-            ): Map<String, Any?> {
-                runtimeCalls++
-                return emptyMap()
-            }
-        }
-
-        val plugin = LlmRuntimePlugin(
-            runtime = throwingTextRuntime(),
-            multimodalRuntime = multimodalRuntime,
-            resultDispatcher = ImmediateResultDispatcher(),
-        )
-
-        plugin.onMethodCall(
-            MethodCall("ensureMultimodalModelReady", ThrowingArgumentsMap()),
-            result,
-        )
-
-        assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
-        assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
-        assertNull(result.errorDetails)
-        assertEquals(1, result.callbackCount.get())
-        assertEquals(0, runtimeCalls)
-    }
-
-    @Test
-    fun `generateMultimodalText returns unsupported before reading arguments or calling runtime`() {
-        val result = RecordingResult()
-        var runtimeCalls = 0
-        val multimodalRuntime = object : MultimodalLlmRuntimeContract {
-            override fun ensureModelReady(modelId: String, modelPath: String, mmprojPath: String): Map<String, Any?> {
-                runtimeCalls++
-                return emptyMap()
-            }
-
-            override fun generateMultimodalText(
-                modelId: String,
-                modelPath: String,
-                mmprojPath: String,
-                imagePath: String,
-                prompt: String,
-                config: LocalLlmGenerationConfig,
-                reasoningEnabled: Boolean,
-            ): Map<String, Any?> {
-                runtimeCalls++
-                return emptyMap()
-            }
-        }
-
-        val plugin = LlmRuntimePlugin(
-            runtime = throwingTextRuntime(),
-            multimodalRuntime = multimodalRuntime,
-            resultDispatcher = ImmediateResultDispatcher(),
-        )
-
-        plugin.onMethodCall(
-            MethodCall("generateMultimodalText", ThrowingArgumentsMap()),
-            result,
-        )
-
-        assertEquals("UNSUPPORTED_CAPABILITY", result.errorCode)
-        assertEquals("UNSUPPORTED_CAPABILITY", result.errorMessage)
-        assertNull(result.errorDetails)
-        assertEquals(1, result.callbackCount.get())
-        assertEquals(0, runtimeCalls)
-    }
 }
 
-private fun throwingTextRuntime(): LocalLlmRuntimeContract {
+internal fun throwingTextRuntime(): LocalLlmRuntimeContract {
     return object : LocalLlmRuntimeContract {
         override fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
             throw UnsupportedOperationException("text runtime should not be called in this test.")
@@ -454,22 +380,13 @@ private fun throwingTextRuntime(): LocalLlmRuntimeContract {
     }
 }
 
-private class ImmediateResultDispatcher : ResultDispatcher {
+internal class ImmediateResultDispatcher : ResultDispatcher {
     override fun dispatch(block: () -> Unit) {
         block()
     }
 }
 
-private class ThrowingArgumentsMap : AbstractMap<String, Any?>() {
-    override val entries: Set<Map.Entry<String, Any?>>
-        get() = throw AssertionError("Multimodal arguments must not be inspected.")
-
-    override fun get(key: String): Any? {
-        throw AssertionError("Multimodal argument '$key' must not be read.")
-    }
-}
-
-private class RecordingResult : MethodChannel.Result {
+internal class RecordingResult : MethodChannel.Result {
     val successLatch = CountDownLatch(1)
     val errorLatch = CountDownLatch(1)
     val callbackCount = AtomicInteger(0)

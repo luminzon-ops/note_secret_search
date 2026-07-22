@@ -85,6 +85,20 @@ class GgufLlamaCppBackendTest {
     }
 
     @Test
+    fun `backend cancellation delegates directly to native abort`() {
+        val fixture = createGgufBackendTestFixture(
+            predictionEvents = listOf(LlamaRuntimeEvent.Done("unused")),
+        )
+        try {
+            fixture.backend.cancel(fixture.session)
+
+            assertEquals(1, fixture.client.abortCalls)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `awaitLoadedContextId waits for asynchronous load callback`() = runBlocking {
         val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {

@@ -67,6 +67,18 @@ class GgufLlamaCppBackend internal constructor(
     }
 
     override fun load(modelId: String, file: File): LocalLlmBackendSession {
+        return load(
+            modelId = modelId,
+            file = file,
+            config = LocalLlmGenerationConfig(),
+        )
+    }
+
+    override fun load(
+        modelId: String,
+        file: File,
+        config: LocalLlmGenerationConfig,
+    ): LocalLlmBackendSession {
         val contextId = runBlocking {
             awaitLoadedContextId(
                 timeoutMillis = LLM_MODEL_LOAD_TIMEOUT_MS,
@@ -77,7 +89,7 @@ class GgufLlamaCppBackend internal constructor(
             ) { onLoaded ->
                 client.load(
                     file = file,
-                    contextLength = HUAWEI_SAFE_CONTEXT_LENGTH,
+                    contextLength = config.contextLength,
                     onLoaded = onLoaded,
                 )
             }
@@ -152,6 +164,10 @@ class GgufLlamaCppBackend internal constructor(
 
     override fun release(session: LocalLlmBackendSession) {
         releaseCoordinator.requestRelease()
+    }
+
+    override fun cancel(session: LocalLlmBackendSession) {
+        client.abort()
     }
 }
 

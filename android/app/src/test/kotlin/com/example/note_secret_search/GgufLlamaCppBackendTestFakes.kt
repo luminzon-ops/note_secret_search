@@ -17,6 +17,7 @@ internal class RecordingLlamaContextClient(
     var lastContextLength: Int = 0
     var lastRequestedMaxTokens: Int = 0
     var lastPrompt: String = ""
+    var abortCalls: Int = 0
 
     override fun load(file: File, contextLength: Int, onLoaded: (Long) -> Unit) {
         lastContextLength = contextLength
@@ -38,6 +39,7 @@ internal class RecordingLlamaContextClient(
     }
 
     override fun abort() {
+        abortCalls += 1
     }
 
     override fun release() {
