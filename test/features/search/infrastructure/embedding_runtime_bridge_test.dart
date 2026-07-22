@@ -100,4 +100,31 @@ void main() {
       ),
     );
   });
+
+  test('ignores non-string native error details', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(
+        code: 'ORT_FAILURE',
+        details: <String, Object?>{
+          'stage': 42,
+          'modelId': <String>['embed-1'],
+        },
+      );
+    });
+    final bridge = MethodChannelEmbeddingRuntimeBridge(channel: channel);
+
+    await expectLater(
+      bridge.ensureModelReady(
+        modelId: 'embed-1',
+        modelPath: '/models/embed-1.onnx',
+        verifiedChecksum: 'sha256:verified',
+      ),
+      throwsA(
+        isA<EmbeddingRuntimeException>()
+            .having((error) => error.code, 'code', 'ORT_FAILURE')
+            .having((error) => error.stage, 'stage', isNull)
+            .having((error) => error.modelId, 'modelId', isNull),
+      ),
+    );
+  });
 }

@@ -28,17 +28,24 @@ class EmbeddingRuntimeException implements Exception {
     final code = _knownErrorCodes.contains(error.code)
         ? error.code
         : 'ORT_FAILURE';
+    final stage = _stringDetail(details, 'stage');
+    final modelId = _stringDetail(details, 'modelId');
     if (code == 'CANCELLED') {
-      return EmbeddingRuntimeCancelledException(
-        stage: details is Map ? details['stage'] as String? : null,
-        modelId: details is Map ? details['modelId'] as String? : null,
-      );
+      return EmbeddingRuntimeCancelledException(stage: stage, modelId: modelId);
     }
     return EmbeddingRuntimeException(
       code: code,
-      stage: details is Map ? details['stage'] as String? : null,
-      modelId: details is Map ? details['modelId'] as String? : null,
+      stage: stage,
+      modelId: modelId,
     );
+  }
+
+  static String? _stringDetail(Object? details, String name) {
+    if (details is! Map) {
+      return null;
+    }
+    final value = details[name];
+    return value is String ? value : null;
   }
 
   static const _knownErrorCodes = <String>{
