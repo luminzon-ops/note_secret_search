@@ -6,6 +6,8 @@ import 'package:note_secret_search/features/ai_providers/domain/external_provide
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -50,6 +52,11 @@ void main() {
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           externalProviderRepositoryProvider.overrideWithValue(repository),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults().copyWith(
+              allowExternalProviderAccess: true,
+            ),
+          ),
         ],
       );
 
@@ -86,13 +93,39 @@ void main() {
   );
 
   test(
-    'external provider consent fingerprint canonicalizes endpoint and excludes secrets',
+    'externalProviderStatusProvider reports unavailable before global opt-in',
+    () async {
+      final repository = _MemoryExternalProviderRepository(
+        configs: const [_provider],
+      );
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          externalProviderRepositoryProvider.overrideWithValue(repository),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final status = await container.read(
+        externalProviderStatusProvider.future,
+      );
+      expect(status.available, isFalse);
+      expect(status.reason, contains('尚未允许外部 AI 访问'));
+      expect(status.config?.id, _provider.id);
+    },
+  );
+
+  test(
+    'external provider consent fingerprint canonicalizes endpoint and ignores display metadata',
     () {
       final equivalent = _provider.copyWith(
-        id: 'provider-renamed',
         displayName: 'Renamed',
         baseUrl: ' HTTPS://EXAMPLE.COM/v1/// ',
-        apiKey: 'rotated-key',
+        updatedAt: DateTime(2026, 7, 22),
       );
 
       expect(
@@ -131,12 +164,45 @@ void main() {
       );
       expect(
         externalProviderConsentFingerprint(
-          _provider.copyWith(allowSensitiveFields: true),
+          _provider.copyWith(id: 'provider-2'),
+        ),
+        isNot(baseline),
+      );
+      expect(
+        externalProviderConsentFingerprint(
+          _provider.copyWith(apiKey: 'rotated-key'),
         ),
         isNot(baseline),
       );
     },
   );
+
+  test('private policy changes invalidate only private consent', () {
+    final changed = _provider.copyWith(allowSensitiveFields: true);
+
+    expect(
+      externalProviderConsentFingerprint(
+        changed,
+        scope: ExternalProviderConsentScope.standard,
+      ),
+      externalProviderConsentFingerprint(
+        _provider,
+        scope: ExternalProviderConsentScope.standard,
+      ),
+    );
+    expect(
+      externalProviderConsentFingerprint(
+        changed,
+        scope: ExternalProviderConsentScope.privateContext,
+      ),
+      isNot(
+        externalProviderConsentFingerprint(
+          _provider,
+          scope: ExternalProviderConsentScope.privateContext,
+        ),
+      ),
+    );
+  });
 
   test(
     'external privacy confirmation is bound to the current config fingerprint',
@@ -217,7 +283,7 @@ void main() {
             (ref) async => SharedPreferences.getInstance(),
           ),
           externalProviderRepositoryProvider.overrideWithValue(repository),
-          externalProviderClientProvider.overrideWithValue(client),
+          externalProviderClientRouterProvider.overrideWithValue(client),
         ],
       );
 
@@ -264,6 +330,201 @@ void main() {
       expect(client.lastTested?.baseUrl, 'https://example.com/v1');
     },
   );
+
+  test('display metadata changes preserve both consent scopes', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repository = _MemoryExternalProviderRepository(
+      configs: const [_provider],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        sharedPreferencesProvider.overrideWith(
+          (ref) async => SharedPreferences.getInstance(),
+        ),
+        externalProviderRepositoryProvider.overrideWithValue(repository),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final confirmation = container.read(
+      externalPrivacyConfirmationControllerProvider,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: false,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: true,
+    );
+
+    final renamed = _provider.copyWith(displayName: 'Renamed provider');
+    await container
+        .read(externalProviderSettingsControllerProvider)
+        .save(renamed);
+
+    expect(
+      await confirmation.hasAcknowledged(
+        renamed,
+        includesPrivateContext: false,
+      ),
+      isTrue,
+    );
+    expect(
+      await confirmation.hasAcknowledged(renamed, includesPrivateContext: true),
+      isTrue,
+    );
+  });
+
+  test('private policy changes revoke only private consent', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repository = _MemoryExternalProviderRepository(
+      configs: const [_provider],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        sharedPreferencesProvider.overrideWith(
+          (ref) async => SharedPreferences.getInstance(),
+        ),
+        externalProviderRepositoryProvider.overrideWithValue(repository),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final confirmation = container.read(
+      externalPrivacyConfirmationControllerProvider,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: false,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: true,
+    );
+
+    final changed = _provider.copyWith(allowSensitiveFields: true);
+    await container
+        .read(externalProviderSettingsControllerProvider)
+        .save(changed);
+
+    expect(
+      await confirmation.hasAcknowledged(
+        changed,
+        includesPrivateContext: false,
+      ),
+      isTrue,
+    );
+    expect(
+      await confirmation.hasAcknowledged(changed, includesPrivateContext: true),
+      isFalse,
+    );
+  });
+
+  test('explicit revoke clears both consent scopes', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repository = _MemoryExternalProviderRepository(
+      configs: const [_provider],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        sharedPreferencesProvider.overrideWith(
+          (ref) async => SharedPreferences.getInstance(),
+        ),
+        externalProviderRepositoryProvider.overrideWithValue(repository),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final confirmation = container.read(
+      externalPrivacyConfirmationControllerProvider,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: false,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: true,
+    );
+
+    await container
+        .read(externalProviderSettingsControllerProvider)
+        .revokeConsent(_provider);
+
+    expect(
+      await confirmation.hasAcknowledged(
+        _provider,
+        includesPrivateContext: false,
+      ),
+      isFalse,
+    );
+    expect(
+      await confirmation.hasAcknowledged(
+        _provider,
+        includesPrivateContext: true,
+      ),
+      isFalse,
+    );
+  });
+
+  test('explicit revoke reloads the persisted fingerprint by config id', () async {
+    SharedPreferences.setMockInitialValues({});
+    final repository = _MemoryExternalProviderRepository(
+      configs: const [_provider],
+    );
+    final container = ProviderContainer(
+      overrides: [
+        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+        sharedPreferencesProvider.overrideWith(
+          (ref) async => SharedPreferences.getInstance(),
+        ),
+        externalProviderRepositoryProvider.overrideWithValue(repository),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final confirmation = container.read(
+      externalPrivacyConfirmationControllerProvider,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: false,
+    );
+    await confirmation.markAcknowledged(
+      _provider,
+      includesPrivateContext: true,
+    );
+
+    await container
+        .read(externalProviderSettingsControllerProvider)
+        .revokeConsent(
+          _provider.copyWith(
+            providerType: ExternalProviderType.ollama,
+            baseUrl: 'http://localhost:11434',
+            apiKey: '',
+            modelName: 'unsaved-model',
+          ),
+        );
+
+    expect(
+      await confirmation.hasAcknowledged(
+        _provider,
+        includesPrivateContext: false,
+      ),
+      isFalse,
+    );
+    expect(
+      await confirmation.hasAcknowledged(
+        _provider,
+        includesPrivateContext: true,
+      ),
+      isFalse,
+    );
+  });
 }
 
 class _MemoryExternalProviderRepository implements ExternalProviderRepository {

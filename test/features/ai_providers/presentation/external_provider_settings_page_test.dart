@@ -16,164 +16,377 @@ import 'package:note_secret_search/features/ai_providers/presentation/external_p
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 
 void main() {
-  testWidgets('settings page exposes external provider entry and route renders config page', (
-    tester,
-  ) async {
-    final container = ProviderContainer(
-      overrides: [
-        lockSessionControllerProvider.overrideWith(
-          (ref) => LockSessionController()
-            ..markUnlocked(UnlockMethod.biometric),
-        ),
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        localLlmReadinessProvider.overrideWith(
-          (ref) async => const LocalLlmReadiness(
-            ready: false,
-            reason: '尚未选择本地 LLM 模型。',
-            activeModel: null,
-            runtimeState: null,
-          ),
-        ),
-        semanticSearchReadinessProvider.overrideWith(
-          (ref) async => const SemanticSearchReadiness(
-            ready: false,
-            reason: '尚未选择本地 embedding 模型。',
-          ),
-        ),
-        chatSessionRepositoryProvider.overrideWithValue(const _FakeChatSessionRepository()),
-        externalProviderRepositoryProvider.overrideWithValue(_MemoryExternalProviderRepository()),
-        externalProviderClientProvider.overrideWithValue(_RecordingExternalProviderClient()),
-      ],
-    );
-
-    final router = container.read(appRouterProvider);
-    router.go('/settings');
-
-    addTearDown(container.dispose);
-
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp.router(routerConfig: router),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('外部模型'), findsOneWidget);
-    await tester.tap(find.text('外部模型'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('外部模型配置'), findsOneWidget);
-    expect(find.text('OpenAI 兼容接口'), findsOneWidget);
-  });
-
-  testWidgets('external provider settings page renders form and tests connection', (tester) async {
-    final repository = _MemoryExternalProviderRepository();
-    final client = _RecordingExternalProviderClient();
-
-    await tester.pumpWidget(
-      ProviderScope(
+  testWidgets(
+    'settings page exposes external provider entry and route renders config page',
+    (tester) async {
+      final container = ProviderContainer(
         overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) =>
+                LockSessionController()..markUnlocked(UnlockMethod.biometric),
+          ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-          externalProviderRepositoryProvider.overrideWithValue(repository),
-          externalProviderClientProvider.overrideWithValue(client),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: false,
+              reason: '尚未选择本地 LLM 模型。',
+              activeModel: null,
+              runtimeState: null,
+            ),
+          ),
+          semanticSearchReadinessProvider.overrideWith(
+            (ref) async => const SemanticSearchReadiness(
+              ready: false,
+              reason: '尚未选择本地 embedding 模型。',
+            ),
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(
+            const _FakeChatSessionRepository(),
+          ),
+          externalProviderRepositoryProvider.overrideWithValue(
+            _MemoryExternalProviderRepository(),
+          ),
+          externalProviderClientRouterProvider.overrideWithValue(
+            _RecordingExternalProviderClient(),
+          ),
         ],
-        child: const MaterialApp(
-          home: Scaffold(body: Placeholder()),
+      );
+
+      final router = container.read(appRouterProvider);
+      router.go('/settings');
+
+      addTearDown(container.dispose);
+
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp.router(routerConfig: router),
         ),
-      ),
-    );
+      );
+      await tester.pumpAndSettle();
 
-    final context = tester.element(find.byType(Placeholder));
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => const ExternalProviderSettingsPage(),
-      ),
-    );
-    await tester.pumpAndSettle();
+      expect(find.text('外部模型'), findsOneWidget);
+      await tester.tap(find.text('外部模型'));
+      await tester.pumpAndSettle();
 
-    await tester.enterText(find.widgetWithText(TextFormField, '配置名称'), '我的 OpenAI 兼容服务');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Base URL'), 'https://example.com/v1');
-    await tester.enterText(find.widgetWithText(TextFormField, 'API Key'), 'secret-key');
-    await tester.enterText(find.widgetWithText(TextFormField, '聊天模型'), 'gpt-4.1-mini');
-    await tester.enterText(find.widgetWithText(TextFormField, 'Embedding 模型'), 'text-embedding-3-small');
+      expect(find.text('外部模型配置'), findsOneWidget);
+      expect(find.text('OpenAI 兼容接口'), findsOneWidget);
+    },
+  );
 
-    await tester.tap(find.text('测试连接'));
-    await tester.pumpAndSettle();
-    expect(client.lastTested?.baseUrl, 'https://example.com/v1');
+  testWidgets(
+    'external provider settings page renders form and tests connection',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _MemoryExternalProviderRepository();
+      final client = _RecordingExternalProviderClient();
 
-    expect(find.widgetWithText(FilledButton, '保存配置'), findsOneWidget);
-
-    final controller = ProviderScope.containerOf(context).read(
-      externalProviderSettingsControllerProvider,
-    );
-    await controller.save(
-      const ExternalProviderConfig(
-        id: 'openai-compatible-default',
-        providerType: ExternalProviderType.openAiCompatible,
-        displayName: '我的 OpenAI 兼容服务',
-        baseUrl: 'https://example.com/v1',
-        apiKey: 'secret-key',
-        modelName: 'gpt-4.1-mini',
-        embeddingModelName: 'text-embedding-3-small',
-        enabled: true,
-        allowSensitiveFields: false,
-      ),
-    );
-
-    expect(repository.saved.single.displayName, '我的 OpenAI 兼容服务');
-    expect(repository.saved.single.enabled, isTrue);
-  });
-
-  testWidgets('external provider settings page preloads saved config into the form', (tester) async {
-    final repository = _MemoryExternalProviderRepository(
-      configs: const [
-        ExternalProviderConfig(
-          id: 'openai-compatible-default',
-          providerType: ExternalProviderType.openAiCompatible,
-          displayName: '我的 OpenAI 兼容服务',
-          baseUrl: 'https://example.com/v1',
-          apiKey: 'secret-key',
-          modelName: 'gpt-4.1-mini',
-          embeddingModelName: 'text-embedding-3-small',
-          enabled: true,
-          allowSensitiveFields: true,
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderRepositoryProvider.overrideWithValue(repository),
+            externalProviderClientRouterProvider.overrideWithValue(client),
+          ],
+          child: const MaterialApp(home: Scaffold(body: Placeholder())),
         ),
-      ],
-    );
+      );
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-          externalProviderRepositoryProvider.overrideWithValue(repository),
-          externalProviderClientProvider.overrideWithValue(_RecordingExternalProviderClient()),
+      final context = tester.element(find.byType(Placeholder));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const ExternalProviderSettingsPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, '配置名称'),
+        '我的 OpenAI 兼容服务',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Base URL'),
+        'https://example.com/v1',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'API Key'),
+        'secret-key',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, '聊天模型'),
+        'gpt-4.1-mini',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Embedding 模型'),
+        'text-embedding-3-small',
+      );
+
+      await tester.tap(find.text('测试连接'));
+      await tester.pumpAndSettle();
+      expect(client.lastTested?.baseUrl, 'https://example.com/v1');
+
+      expect(find.widgetWithText(FilledButton, '保存配置'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SwitchListTile &&
+              widget.title is Text &&
+              (widget.title as Text).data == '启用外部 AI' &&
+              !widget.value,
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('保存配置'));
+      await tester.pumpAndSettle();
+      expect(repository.saved.last.enabled, isFalse);
+
+      await tester.tap(find.text('启用外部 AI'));
+      await tester.tap(find.text('保存配置'));
+      await tester.pumpAndSettle();
+      expect(repository.saved.last.displayName, '我的 OpenAI 兼容服务');
+      expect(repository.saved.last.enabled, isTrue);
+    },
+  );
+
+  testWidgets(
+    'saved provider can be explicitly disabled and consent can be revoked',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _MemoryExternalProviderRepository(
+        configs: const [
+          ExternalProviderConfig(
+            id: 'openai-compatible-default',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'Enabled provider',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: null,
+            enabled: true,
+            allowSensitiveFields: false,
+          ),
         ],
-        child: const MaterialApp(home: ExternalProviderSettingsPage()),
-      ),
-    );
+      );
 
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderRepositoryProvider.overrideWithValue(repository),
+            externalProviderClientRouterProvider.overrideWithValue(
+              _RecordingExternalProviderClient(),
+            ),
+          ],
+          child: const MaterialApp(home: ExternalProviderSettingsPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(TextFormField, '我的 OpenAI 兼容服务'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, 'https://example.com/v1'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, 'gpt-4.1-mini'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, 'text-embedding-3-small'), findsOneWidget);
-    expect(find.byWidgetPredicate((widget) {
-      return widget is SwitchListTile && widget.value;
-    }), findsOneWidget);
-  });
+      expect(find.text('停用外部 AI'), findsOneWidget);
+      expect(find.text('撤销发送确认'), findsOneWidget);
+
+      await tester.tap(find.text('停用外部 AI'));
+      await tester.pumpAndSettle();
+      expect(repository.saved.last.enabled, isFalse);
+    },
+  );
+
+  testWidgets(
+    'disable targets the persisted provider while form edits remain unsaved',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _MemoryExternalProviderRepository(
+        configs: const [
+          ExternalProviderConfig(
+            id: 'persisted-provider-id',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'Persisted provider',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: null,
+            enabled: true,
+            allowSensitiveFields: false,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderRepositoryProvider.overrideWithValue(repository),
+            externalProviderClientRouterProvider.overrideWithValue(
+              _RecordingExternalProviderClient(),
+            ),
+          ],
+          child: const MaterialApp(home: ExternalProviderSettingsPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenAI 兼容接口'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ollama 本地服务').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, '配置名称'),
+        'Unsaved Ollama edit',
+      );
+
+      await tester.tap(find.text('停用外部 AI'));
+      await tester.pumpAndSettle();
+
+      expect(repository.saved.last.id, 'persisted-provider-id');
+      expect(
+        repository.saved.last.providerType,
+        ExternalProviderType.openAiCompatible,
+      );
+      expect(repository.saved.last.displayName, 'Persisted provider');
+      expect(repository.saved.last.enabled, isFalse);
+    },
+  );
+
+  testWidgets(
+    'external provider settings page preloads saved config into the form',
+    (tester) async {
+      final repository = _MemoryExternalProviderRepository(
+        configs: const [
+          ExternalProviderConfig(
+            id: 'openai-compatible-default',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: '我的 OpenAI 兼容服务',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            enabled: true,
+            allowSensitiveFields: true,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderRepositoryProvider.overrideWithValue(repository),
+            externalProviderClientRouterProvider.overrideWithValue(
+              _RecordingExternalProviderClient(),
+            ),
+          ],
+          child: const MaterialApp(home: ExternalProviderSettingsPage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(TextFormField, '我的 OpenAI 兼容服务'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(TextFormField, 'https://example.com/v1'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(TextFormField, 'gpt-4.1-mini'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(TextFormField, 'text-embedding-3-small'),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SwitchListTile &&
+              widget.title is Text &&
+              (widget.title as Text).data == '启用外部 AI' &&
+              widget.value,
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'settings page prefers the enabled provider over newer disabled configs',
+    (tester) async {
+      final repository = _MemoryExternalProviderRepository(
+        configs: const [
+          ExternalProviderConfig(
+            id: 'disabled-newer',
+            providerType: ExternalProviderType.ollama,
+            displayName: 'Disabled newer config',
+            baseUrl: 'http://localhost:11434',
+            apiKey: '',
+            modelName: 'llama3',
+            embeddingModelName: null,
+            enabled: false,
+            allowSensitiveFields: false,
+          ),
+          ExternalProviderConfig(
+            id: 'enabled-provider',
+            providerType: ExternalProviderType.openAiCompatible,
+            displayName: 'Enabled provider',
+            baseUrl: 'https://example.com/v1',
+            apiKey: 'secret-key',
+            modelName: 'gpt-4.1-mini',
+            embeddingModelName: null,
+            enabled: true,
+            allowSensitiveFields: false,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderRepositoryProvider.overrideWithValue(repository),
+            externalProviderClientRouterProvider.overrideWithValue(
+              _RecordingExternalProviderClient(),
+            ),
+          ],
+          child: const MaterialApp(home: ExternalProviderSettingsPage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.widgetWithText(TextFormField, 'Enabled provider'),
+        findsOneWidget,
+      );
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SwitchListTile &&
+              widget.title is Text &&
+              (widget.title as Text).data == '启用外部 AI' &&
+              widget.value,
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 }
 
 class _MemoryExternalProviderRepository implements ExternalProviderRepository {
-  _MemoryExternalProviderRepository({List<ExternalProviderConfig> configs = const <ExternalProviderConfig>[]})
-      : _configs = List<ExternalProviderConfig>.from(configs);
+  _MemoryExternalProviderRepository({
+    List<ExternalProviderConfig> configs = const <ExternalProviderConfig>[],
+  }) : _configs = List<ExternalProviderConfig>.from(configs);
 
   final List<ExternalProviderConfig> _configs;
   final List<ExternalProviderConfig> saved = <ExternalProviderConfig>[];
 
   @override
-  Future<List<ExternalProviderConfig>> loadAll() async => List<ExternalProviderConfig>.from(_configs);
+  Future<List<ExternalProviderConfig>> loadAll() async =>
+      List<ExternalProviderConfig>.from(_configs);
 
   @override
   Future<ExternalProviderConfig?> loadById(String id) async {
@@ -228,7 +441,8 @@ class _FakeChatSessionRepository implements ChatSessionRepository {
   Future<ChatSession?> getSession(String sessionId) async => null;
 
   @override
-  Future<List<ChatStoredMessage>> listMessages(String sessionId) async => const <ChatStoredMessage>[];
+  Future<List<ChatStoredMessage>> listMessages(String sessionId) async =>
+      const <ChatStoredMessage>[];
 
   @override
   Future<List<ChatSession>> listSessions() async => const <ChatSession>[];

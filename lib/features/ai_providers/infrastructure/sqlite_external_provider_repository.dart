@@ -78,8 +78,8 @@ class SqliteExternalProviderRepository implements ExternalProviderRepository {
               'enabled': 0,
               'updated_at': now.millisecondsSinceEpoch,
             },
-            where: 'provider_type = ?',
-            whereArgs: <Object>[normalized.providerType.name],
+            where: 'id <> ?',
+            whereArgs: <Object>[normalized.id],
           );
         }
 

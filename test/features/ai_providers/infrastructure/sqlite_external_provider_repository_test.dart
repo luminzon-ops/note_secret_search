@@ -100,4 +100,39 @@ void main() {
       ),
     );
   });
+
+  test('enabling a provider disables every other provider type', () async {
+    const openAi = ExternalProviderConfig(
+      id: 'openai-provider',
+      providerType: ExternalProviderType.openAiCompatible,
+      displayName: 'OpenAI compatible',
+      baseUrl: 'https://provider.example/v1',
+      apiKey: 'openai-key',
+      modelName: 'openai-model',
+      embeddingModelName: null,
+      enabled: true,
+      allowSensitiveFields: false,
+    );
+    const ollama = ExternalProviderConfig(
+      id: 'ollama-provider',
+      providerType: ExternalProviderType.ollama,
+      displayName: 'Ollama',
+      baseUrl: 'http://localhost:11434',
+      apiKey: '',
+      modelName: 'ollama-model',
+      embeddingModelName: null,
+      enabled: true,
+      allowSensitiveFields: false,
+    );
+
+    await repository.save(openAi);
+    await repository.save(ollama);
+
+    final configs = await repository.loadAll();
+    expect(
+      configs.where((config) => config.enabled).map((config) => config.id),
+      <String>['ollama-provider'],
+    );
+    expect((await repository.loadEnabled())?.id, 'ollama-provider');
+  });
 }
