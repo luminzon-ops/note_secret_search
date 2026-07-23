@@ -156,6 +156,11 @@ internal class LlmLifecycleActor(
             val future = CompletableFuture<Unit>()
             closeFuture = future
             closeRequested.set(true)
+            if (lifecycleState == LlmLifecycleState.Closed) {
+                closeFailure?.let(future::completeExceptionally)
+                    ?: future.complete(Unit)
+                return future
+            }
             postLifecycle(
                 onFailure = future::completeExceptionally,
                 block = ::handleClose,
@@ -198,6 +203,14 @@ internal class LlmLifecycleActor(
                 val operation = pendingLoad
                 if (state.identity == identity && operation != null) {
                     operation.ensureWaiters += future
+                } else if (operation?.generation != null) {
+                    queueReadinessSwitch(
+                        generation = operation.generation!!,
+                        identity = identity,
+                        file = file,
+                        config = config,
+                        future = future,
+                    )
                 } else {
                     future.completeExceptionally(llmBusyError(identity.modelId))
                 }
@@ -228,10 +241,34 @@ internal class LlmLifecycleActor(
                         ),
                     )
                 } else {
-                    future.completeExceptionally(llmBusyError(identity.modelId))
+                    val generation = activeGeneration
+                    if (generation == null) {
+                        future.completeExceptionally(llmBusyError(identity.modelId))
+                    } else {
+                        queueReadinessSwitch(
+                            generation = generation,
+                            identity = identity,
+                            file = file,
+                            config = config,
+                            future = future,
+                        )
+                    }
                 }
             }
-            is LlmLifecycleState.Cancelling,
+            is LlmLifecycleState.Cancelling -> {
+                val generation = activeGeneration
+                if (generation == null || state.identity == identity) {
+                    future.completeExceptionally(llmBusyError(identity.modelId))
+                } else {
+                    queueReadinessSwitch(
+                        generation = generation,
+                        identity = identity,
+                        file = file,
+                        config = config,
+                        future = future,
+                    )
+                }
+            }
             is LlmLifecycleState.Releasing,
             LlmLifecycleState.Closed,
             -> future.completeExceptionally(llmBusyError(identity.modelId))
@@ -347,6 +384,35 @@ internal class LlmLifecycleActor(
         }
     }
 
+    private fun queueReadinessSwitch(
+        generation: LlmGenerationOperation,
+        identity: LlmSessionIdentity,
+        file: File,
+        config: LocalLlmGenerationConfig,
+        future: CompletableFuture<Map<String, Any?>>,
+    ) {
+        val queuedSwitch = generation.readinessSwitch
+        when {
+            queuedSwitch?.identity == identity -> {
+                queuedSwitch.ensureWaiters += future
+            }
+            queuedSwitch != null -> {
+                future.completeExceptionally(llmBusyError(identity.modelId))
+            }
+            else -> {
+                generation.readinessSwitch = LlmLoadOperation(
+                    identity = identity,
+                    file = file,
+                    config = config,
+                    epoch = sessionEpoch + 1,
+                    ensureWaiters = mutableListOf(future),
+                )
+                generation.releaseRequested = true
+                requestCancellation(generation)
+            }
+        }
+    }
+
     internal fun readyState(identity: LlmSessionIdentity): Map<String, Any?> {
         val session = sessionManager.get(identity.modelId)
         return runtimeState(
@@ -387,7 +453,10 @@ internal class LlmLifecycleActor(
         postLifecycle(
             onFailure = { error ->
                 future.completeExceptionally(
-                    if (closeRequested.get()) {
+                    if (
+                        closeRequested.get() ||
+                        lifecycleState == LlmLifecycleState.Closed
+                    ) {
                         llmClosedError(modelId, requestId)
                     } else {
                         LlmRuntimeException.wrap(

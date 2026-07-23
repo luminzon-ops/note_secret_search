@@ -170,19 +170,25 @@ internal fun LlmLifecycleActor.finishRelease(
         return
     }
     releaseOperation = null
-    lifecycleState = LlmLifecycleState.Empty
     if (error == null) {
+        lifecycleState = LlmLifecycleState.Empty
         operation.waiters.forEach { it.complete(Unit) }
         operation.continuations.forEach { it.onSuccess() }
     } else {
+        lifecycleState = LlmLifecycleState.Closed
+        nativeExecutor.shutdown()
+        controlExecutor.shutdown()
+        lifecycleExecutor.shutdown()
         operation.waiters.forEach { it.completeExceptionally(error) }
         operation.continuations.forEach { it.onFailure(error) }
-        if (closeRequested.get()) {
-            closeFailure = closeFailure ?: error
-        }
+        closeFailure = closeFailure ?: error
     }
     if (closeRequested.get() && pendingLoad == null && activeGeneration == null) {
-        finishClosed()
+        if (error == null) {
+            finishClosed()
+        } else {
+            completeCloseFuture()
+        }
     }
 }
 
@@ -219,6 +225,8 @@ internal fun LlmLifecycleActor.finishCancelledGenerationAfterLoad(
     generation.releaseRequested = true
     val waiters = generation.releaseWaiters.toList()
     generation.releaseWaiters.clear()
+    val readinessSwitch = generation.readinessSwitch
+    generation.readinessSwitch = null
     startReleaseForCurrent(
         waiters = waiters,
         continuation = LlmReleaseContinuation(
@@ -227,12 +235,26 @@ internal fun LlmLifecycleActor.finishCancelledGenerationAfterLoad(
                 generation.future.completeExceptionally(
                     llmCancelledError(generation.identity.modelId, generation.requestId),
                 )
+                if (readinessSwitch != null && !closeRequested.get()) {
+                    startLoad(readinessSwitch)
+                } else if (readinessSwitch != null) {
+                    readinessSwitch.ensureWaiters.forEach {
+                        it.completeExceptionally(
+                            llmClosedError(readinessSwitch.identity.modelId),
+                        )
+                    }
+                }
             },
-            onFailure = {
+            onFailure = { releaseError ->
                 activeGeneration = null
                 generation.future.completeExceptionally(
-                    llmCancelledError(generation.identity.modelId, generation.requestId),
+                    releaseError.withRequestId(generation.requestId),
                 )
+                readinessSwitch?.ensureWaiters?.forEach {
+                    it.completeExceptionally(
+                        releaseError.withModelId(readinessSwitch.identity.modelId),
+                    )
+                }
             },
         ),
     )

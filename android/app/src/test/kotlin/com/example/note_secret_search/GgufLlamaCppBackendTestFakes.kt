@@ -18,8 +18,12 @@ internal class RecordingLlamaContextClient(
     var lastRequestedMaxTokens: Int = 0
     var lastPrompt: String = ""
     var abortCalls: Int = 0
+    val loadThreadIds = mutableListOf<Long>()
+    val predictThreadIds = mutableListOf<Long>()
+    val releaseThreadIds = mutableListOf<Long>()
 
     override fun load(file: File, contextLength: Int, onLoaded: (Long) -> Unit) {
+        loadThreadIds += Thread.currentThread().id
         lastContextLength = contextLength
         onLoaded(7L)
     }
@@ -29,12 +33,14 @@ internal class RecordingLlamaContextClient(
         emitPartialCompletion: Boolean,
         maxTokens: Int,
         config: LocalLlmGenerationConfig,
+        generationId: Long,
     ) {
+        predictThreadIds += Thread.currentThread().id
         lastEmitPartialCompletion = emitPartialCompletion
         lastRequestedMaxTokens = maxTokens
         lastPrompt = prompt
         predictionEvents.forEach { event ->
-            check(events.tryEmit(event))
+            check(events.tryEmit(event.withGenerationId(generationId)))
         }
     }
 
@@ -43,6 +49,15 @@ internal class RecordingLlamaContextClient(
     }
 
     override fun release() {
+        releaseThreadIds += Thread.currentThread().id
+    }
+}
+
+private fun LlamaRuntimeEvent.withGenerationId(generationId: Long): LlamaRuntimeEvent {
+    return when (this) {
+        is LlamaRuntimeEvent.Ongoing -> copy(generationId = generationId)
+        is LlamaRuntimeEvent.Done -> copy(generationId = generationId)
+        is LlamaRuntimeEvent.Error -> copy(generationId = generationId)
     }
 }
 

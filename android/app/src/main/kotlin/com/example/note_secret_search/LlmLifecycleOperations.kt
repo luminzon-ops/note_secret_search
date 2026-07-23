@@ -29,6 +29,7 @@ internal class LlmGenerationOperation(
     var cancelSent: Boolean = false
     var releaseRequested: Boolean = false
     val releaseWaiters: MutableList<CompletableFuture<Unit>> = mutableListOf()
+    var readinessSwitch: LlmLoadOperation? = null
 }
 
 internal class LlmReleaseOperation(

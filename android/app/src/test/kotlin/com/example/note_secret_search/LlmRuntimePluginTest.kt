@@ -237,6 +237,86 @@ class LlmRuntimePluginTest {
     }
 
     @Test
+    fun `prompt beyond declared budget is rejected before runtime invocation`() {
+        val result = RecordingResult()
+        val runtimeCalls = AtomicInteger(0)
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun generateText(
+                modelId: String,
+                modelPath: String,
+                prompt: String,
+                usedPrivateContext: Boolean,
+                config: LocalLlmGenerationConfig,
+            ): Map<String, Any?> {
+                runtimeCalls.incrementAndGet()
+                return emptyMap()
+            }
+        }
+        val plugin = LlmRuntimePlugin(
+            runtime = runtime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to "PROMPT_SENTINEL_TOO_LONG",
+                    "maxPromptChars" to 8,
+                ),
+            ),
+            result,
+        )
+
+        assertEquals(0, runtimeCalls.get())
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
+    }
+
+    @Test
+    fun `prompt cannot bypass native hard cap with a larger declared budget`() {
+        val result = RecordingResult()
+        val runtimeCalls = AtomicInteger(0)
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun generateText(
+                modelId: String,
+                modelPath: String,
+                prompt: String,
+                usedPrivateContext: Boolean,
+                config: LocalLlmGenerationConfig,
+            ): Map<String, Any?> {
+                runtimeCalls.incrementAndGet()
+                return emptyMap()
+            }
+        }
+        val plugin = LlmRuntimePlugin(
+            runtime = runtime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to "x".repeat(LOCAL_LLM_MAX_PROMPT_CHARS + 1),
+                    "maxPromptChars" to 4_000,
+                ),
+            ),
+            result,
+        )
+
+        assertEquals(0, runtimeCalls.get())
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
+    }
+
+    @Test
     fun `unexpected worker failures return sanitized errors without details`() {
         val result = RecordingResult()
         val executor = Executors.newSingleThreadExecutor()

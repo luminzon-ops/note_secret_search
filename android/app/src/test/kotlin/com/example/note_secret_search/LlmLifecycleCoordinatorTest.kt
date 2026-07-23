@@ -9,6 +9,7 @@ import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -65,6 +66,141 @@ class LlmLifecycleCoordinatorTest {
             assertEquals("model-b", state.identity.modelId)
             assertEquals(2L, state.epoch)
         } finally {
+            coordinator.close()
+        }
+    }
+
+    @Test
+    fun `readiness model switch cancels generation then frees and loads next identity`() {
+        val firstModel = temporaryModel("switch-generating-a")
+        val secondModel = temporaryModel("switch-generating-b")
+        val backend = LifecycleRecordingBackend(
+            generateEntered = CountDownLatch(1),
+            allowGenerateReturn = CountDownLatch(1),
+        )
+        val coordinator = coordinator(backend)
+
+        try {
+            coordinator.ensureModelReady("model-a", firstModel.absolutePath)
+            val generation = coordinator.generateTextAsync(
+                modelId = "model-a",
+                modelPath = firstModel.absolutePath,
+                requestId = "request-switch",
+                prompt = "switch away",
+                usedPrivateContext = false,
+            )
+            assertTrue(backend.generateEntered.await(1, TimeUnit.SECONDS))
+
+            val switched = coordinator.ensureModelReadyAsync(
+                "model-b",
+                secondModel.absolutePath,
+            )
+
+            assertFutureFailure(generation, LlmRuntimeErrorCode.CANCELLED)
+            assertEquals("ready", switched.get(1, TimeUnit.SECONDS)["status"])
+            assertEquals(
+                listOf(
+                    "load:${firstModel.canonicalPath}",
+                    "generate:${firstModel.canonicalPath}",
+                    "release:${firstModel.canonicalPath}",
+                    "load:${secondModel.canonicalPath}",
+                ),
+                backend.events.take(4),
+            )
+            val state = coordinator.snapshot().state as LlmLifecycleState.Ready
+            assertEquals("model-b", state.identity.modelId)
+            assertEquals(2L, state.epoch)
+        } finally {
+            backend.allowGenerateReturn.countDown()
+            coordinator.close()
+        }
+    }
+
+    @Test
+    fun `matching readiness switch joins while generation is cancelling`() {
+        val firstModel = temporaryModel("join-switch-cancelling-a")
+        val secondModel = temporaryModel("join-switch-cancelling-b")
+        val backend = LifecycleRecordingBackend(
+            generateEntered = CountDownLatch(1),
+            allowGenerateReturn = CountDownLatch(1),
+            cancelReleasesGeneration = false,
+        )
+        val coordinator = coordinator(backend)
+
+        try {
+            coordinator.ensureModelReady("model-a", firstModel.absolutePath)
+            val generation = coordinator.generateTextAsync(
+                modelId = "model-a",
+                modelPath = firstModel.absolutePath,
+                requestId = "request-join-switch",
+                prompt = "switch once",
+                usedPrivateContext = false,
+            )
+            assertTrue(backend.generateEntered.await(1, TimeUnit.SECONDS))
+
+            val firstSwitch = coordinator.ensureModelReadyAsync(
+                "model-b",
+                secondModel.absolutePath,
+            )
+            assertTrue(backend.cancelEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(coordinator.snapshot().state is LlmLifecycleState.Cancelling)
+            val secondSwitch = coordinator.ensureModelReadyAsync(
+                "model-b",
+                secondModel.absolutePath,
+            )
+            assertFalse(coordinator.cancelGeneration("unknown-request"))
+
+            backend.allowGenerateReturn.countDown()
+            assertFutureFailure(generation, LlmRuntimeErrorCode.CANCELLED)
+            assertEquals("ready", firstSwitch.get(1, TimeUnit.SECONDS)["status"])
+            assertEquals("ready", secondSwitch.get(1, TimeUnit.SECONDS)["status"])
+            assertEquals(2, backend.loadCalls.get())
+        } finally {
+            backend.allowGenerateReturn.countDown()
+            coordinator.close()
+        }
+    }
+
+    @Test
+    fun `readiness switch during generation load cancels before predict then loads target`() {
+        val firstModel = temporaryModel("switch-loading-a")
+        val secondModel = temporaryModel("switch-loading-b")
+        val backend = LifecycleRecordingBackend(
+            loadEntered = CountDownLatch(1),
+            allowLoadReturn = CountDownLatch(1),
+        )
+        val coordinator = coordinator(backend)
+
+        try {
+            val generation = coordinator.generateTextAsync(
+                modelId = "model-a",
+                modelPath = firstModel.absolutePath,
+                requestId = "request-switch-loading",
+                prompt = "do not predict",
+                usedPrivateContext = false,
+            )
+            assertTrue(backend.loadEntered.await(1, TimeUnit.SECONDS))
+
+            val switched = coordinator.ensureModelReadyAsync(
+                "model-b",
+                secondModel.absolutePath,
+            )
+            assertFalse(coordinator.cancelGeneration("unknown-request"))
+            backend.allowLoadReturn.countDown()
+
+            assertFutureFailure(generation, LlmRuntimeErrorCode.CANCELLED)
+            assertEquals("ready", switched.get(1, TimeUnit.SECONDS)["status"])
+            assertEquals(0, backend.generateCalls.get())
+            assertEquals(
+                listOf(
+                    "load:${firstModel.canonicalPath}",
+                    "release:${firstModel.canonicalPath}",
+                    "load:${secondModel.canonicalPath}",
+                ),
+                backend.events.take(3),
+            )
+        } finally {
+            backend.allowLoadReturn.countDown()
             coordinator.close()
         }
     }
@@ -157,6 +293,68 @@ class LlmLifecycleCoordinatorTest {
         } finally {
             coordinator.close()
         }
+    }
+
+    @Test
+    fun `release failure poisons runtime and rejects the next load`() {
+        val model = temporaryModel("release-failure")
+        val backend = LifecycleRecordingBackend(
+            releaseFailure = IllegalStateException("FREE_SENTINEL"),
+        )
+        val lifecycleExecutor = Executors.newSingleThreadExecutor()
+        val nativeExecutor = Executors.newSingleThreadExecutor()
+        val controlExecutor = Executors.newSingleThreadExecutor()
+        val coordinator = LlmLifecycleCoordinator(
+            packageName = "com.example.note_secret_search",
+            sessionManager = LlmModelSessionManager(),
+            backendFactory = object : LlmBackendFactoryContract {
+                override fun create(file: File): LocalLlmBackend = backend
+            },
+            lifecycleExecutor = lifecycleExecutor,
+            nativeExecutor = nativeExecutor,
+            controlExecutor = controlExecutor,
+        )
+
+        try {
+            coordinator.ensureModelReady("model-a", model.absolutePath)
+            assertFutureFailure(
+                coordinator.releaseModelAsync("model-a"),
+                LlmRuntimeErrorCode.RELEASE_FAILED,
+            )
+            assertEquals(LlmLifecycleState.Closed, coordinator.snapshot().state)
+            assertTrue(lifecycleExecutor.isShutdown)
+            assertTrue(nativeExecutor.isShutdown)
+            assertTrue(controlExecutor.isShutdown)
+            assertFutureFailure(
+                coordinator.ensureModelReadyAsync("model-a", model.absolutePath),
+                LlmRuntimeErrorCode.RUNTIME_CLOSED,
+            )
+        } finally {
+            lifecycleExecutor.shutdownNow()
+            nativeExecutor.shutdownNow()
+            controlExecutor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `release failure wins over generation failure during cleanup`() {
+        val model = temporaryModel("generation-release-failure")
+        val backend = LifecycleRecordingBackend(
+            generationFailure = IllegalStateException("GENERATE_SENTINEL"),
+            releaseFailure = IllegalStateException("FREE_SENTINEL"),
+        )
+        val coordinator = coordinator(backend)
+
+        val result = coordinator.generateTextAsync(
+            modelId = "model-a",
+            modelPath = model.absolutePath,
+            requestId = "request-double-failure",
+            prompt = "fail twice",
+            usedPrivateContext = false,
+        )
+
+        assertFutureFailure(result, LlmRuntimeErrorCode.RELEASE_FAILED)
+        assertEquals(LlmLifecycleState.Closed, coordinator.snapshot().state)
     }
 
     @Test
@@ -305,6 +503,38 @@ class LlmLifecycleCoordinatorTest {
     }
 
     @Test
+    fun `release failure after cancelling a loading generation is reported`() {
+        val model = temporaryModel("cancel-loading-release-failure")
+        val backend = LifecycleRecordingBackend(
+            loadEntered = CountDownLatch(1),
+            allowLoadReturn = CountDownLatch(1),
+            releaseFailure = IllegalStateException("FREE_SENTINEL"),
+        )
+        val coordinator = coordinator(backend)
+
+        try {
+            val generation = coordinator.generateTextAsync(
+                modelId = "model-a",
+                modelPath = model.absolutePath,
+                requestId = "request-cancel-loading",
+                prompt = "cancel during load",
+                usedPrivateContext = false,
+            )
+            assertTrue(backend.loadEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(
+                coordinator.cancelGenerationAsync("request-cancel-loading")
+                    .get(1, TimeUnit.SECONDS),
+            )
+            backend.allowLoadReturn.countDown()
+
+            assertFutureFailure(generation, LlmRuntimeErrorCode.RELEASE_FAILED)
+            assertEquals(LlmLifecycleState.Closed, coordinator.snapshot().state)
+        } finally {
+            backend.allowLoadReturn.countDown()
+        }
+    }
+
+    @Test
     fun `close cancels active generation and completes after native free`() {
         val model = temporaryModel("close-generation")
         val backend = LifecycleRecordingBackend(
@@ -369,6 +599,8 @@ private class LifecycleRecordingBackend(
     val allowReleaseReturn: CountDownLatch = CountDownLatch(0),
     val cancelEntered: CountDownLatch = CountDownLatch(1),
     private val generationFailure: Throwable? = null,
+    private val releaseFailure: Throwable? = null,
+    private val cancelReleasesGeneration: Boolean = true,
 ) : LocalLlmBackend {
     val events: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val prompts: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -419,7 +651,9 @@ private class LifecycleRecordingBackend(
         controlThreadNames += Thread.currentThread().name
         cancelCalls.incrementAndGet()
         cancelEntered.countDown()
-        allowGenerateReturn.countDown()
+        if (cancelReleasesGeneration) {
+            allowGenerateReturn.countDown()
+        }
     }
 
     override fun release(session: LocalLlmBackendSession) {
@@ -427,6 +661,7 @@ private class LifecycleRecordingBackend(
         releaseCalls.incrementAndGet()
         releaseEntered.countDown()
         assertTrue(allowReleaseReturn.await(2, TimeUnit.SECONDS))
+        releaseFailure?.let { throw it }
     }
 
     private fun recordNative(event: String) {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
@@ -20,8 +21,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
 class GgufLlamaCppBackend internal constructor(
@@ -44,6 +48,7 @@ class GgufLlamaCppBackend internal constructor(
             predictionScope.cancel()
         },
     )
+    private val nextGenerationId = AtomicLong(1L)
 
     override fun inspect(file: File): LocalLlmInspectResult {
         if (!file.exists()) {
@@ -83,6 +88,7 @@ class GgufLlamaCppBackend internal constructor(
             awaitLoadedContextId(
                 timeoutMillis = LLM_MODEL_LOAD_TIMEOUT_MS,
                 loadScope = predictionScope,
+                startOnCallerThread = true,
                 onLateLoaded = {
                     client.release()
                 },
@@ -111,7 +117,15 @@ class GgufLlamaCppBackend internal constructor(
         config: LocalLlmGenerationConfig,
     ): LocalLlmGenerateResult {
         require(prompt.isNotBlank()) { "Prompt must not be blank." }
-        val boundedPrompt = prompt.trim().take(config.maxPromptChars)
+        val normalizedPrompt = prompt.trim()
+        val promptLimit = minOf(
+            config.maxPromptChars,
+            LOCAL_LLM_MAX_PROMPT_CHARS,
+        )
+        require(normalizedPrompt.length <= promptLimit) {
+            "Prompt exceeds maxPromptChars."
+        }
+        val generationId = nextGenerationId.getAndIncrement()
 
         return runBlocking {
             val event = awaitPredictionTerminalEvent(
@@ -120,8 +134,11 @@ class GgufLlamaCppBackend internal constructor(
                 predictionScope = predictionScope,
                 events = eventFlow,
                 isTerminal = { candidate ->
-                    candidate is LlamaRuntimeEvent.Done ||
-                        candidate is LlamaRuntimeEvent.Error
+                    candidate.generationId == generationId &&
+                        (
+                            candidate is LlamaRuntimeEvent.Done ||
+                                candidate is LlamaRuntimeEvent.Error
+                            )
                 },
                 onTimeout = {
                     releaseCoordinator.abortPrediction()
@@ -132,12 +149,14 @@ class GgufLlamaCppBackend internal constructor(
                 onPredictionFinished = {
                     releaseCoordinator.onPredictionFinished()
                 },
+                startOnCallerThread = true,
             ) {
                 client.predict(
-                    prompt = boundedPrompt,
+                    prompt = normalizedPrompt,
                     emitPartialCompletion = false,
                     maxTokens = config.maxOutputTokens,
                     config = config,
+                    generationId = generationId,
                 )
             }
 
@@ -207,6 +226,7 @@ internal class PredictionReleaseCoordinator(
     private var releaseRequested = false
     private var abortCompleted = false
     private var released = false
+    private val releaseCompletion = CompletableFuture<Unit>()
 
     fun tryRegisterPrediction(): Boolean = synchronized(lock) {
         if (releaseRequested || released) {
@@ -225,7 +245,7 @@ internal class PredictionReleaseCoordinator(
             markReleasedIfReady()
         }
         if (shouldRelease) {
-            releaseResources.invoke()
+            completeRelease()
         }
     }
 
@@ -242,20 +262,35 @@ internal class PredictionReleaseCoordinator(
                 true
             }
         }
-        if (!shouldAbort) {
-            return
+        if (shouldAbort) {
+            try {
+                abortPrediction.invoke()
+            } finally {
+                val shouldRelease = synchronized(lock) {
+                    abortCompleted = true
+                    markReleasedIfReady()
+                }
+                if (shouldRelease) {
+                    completeRelease()
+                }
+            }
         }
-
         try {
-            abortPrediction.invoke()
-        } finally {
-            val shouldRelease = synchronized(lock) {
-                abortCompleted = true
-                markReleasedIfReady()
-            }
-            if (shouldRelease) {
-                releaseResources.invoke()
-            }
+            releaseCompletion.get()
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw error
+        } catch (error: ExecutionException) {
+            throw (error.cause ?: error)
+        }
+    }
+
+    private fun completeRelease() {
+        try {
+            releaseResources.invoke()
+            releaseCompletion.complete(Unit)
+        } catch (error: Throwable) {
+            releaseCompletion.completeExceptionally(error)
         }
     }
 
@@ -276,6 +311,7 @@ internal class PredictionReleaseCoordinator(
 internal suspend fun awaitLoadedContextId(
     timeoutMillis: Long,
     loadScope: CoroutineScope,
+    startOnCallerThread: Boolean = false,
     onLateLoaded: () -> Unit,
     startLoad: (((Long) -> Unit)) -> Unit,
 ): Long = withTimeout(timeoutMillis) {
@@ -295,7 +331,7 @@ internal suspend fun awaitLoadedContextId(
                 cleanupLateLoad()
             }
         }
-        loadScope.launch {
+        val load = {
             try {
                 startLoad { contextId ->
                     if (completionState.compareAndSet(0, 1)) {
@@ -312,6 +348,11 @@ internal suspend fun awaitLoadedContextId(
                 }
             }
         }
+        if (startOnCallerThread) {
+            load()
+        } else {
+            loadScope.launch { load() }
+        }
     }
 }
 
@@ -325,6 +366,7 @@ internal suspend fun <T> awaitPredictionTerminalEvent(
     onTimeout: () -> Unit,
     tryRegisterPrediction: () -> Boolean,
     onPredictionFinished: () -> Unit,
+    startOnCallerThread: Boolean = false,
     startPrediction: () -> Unit,
 ): T = coroutineScope {
     val terminal = async(start = CoroutineStart.UNDISPATCHED) {
@@ -340,35 +382,80 @@ internal suspend fun <T> awaitPredictionTerminalEvent(
 
     val predictionFailure = CompletableDeferred<Throwable>()
     val predictionCompletion = CompletableDeferred<Unit>()
-    val predictionJob = predictionScope.launch {
+    val timeoutTriggered = AtomicBoolean(false)
+    val timeoutCompleted = CompletableDeferred<Unit>()
+    val timeoutJob = predictionScope.launch {
+        delay(timeoutMillis)
+        if (timeoutTriggered.compareAndSet(false, true)) {
+            try {
+                onTimeout()
+            } catch (_: Throwable) {
+            } finally {
+                timeoutCompleted.complete(Unit)
+            }
+        }
+    }
+    val runPrediction = {
         try {
             startPrediction()
         } catch (error: Throwable) {
             predictionFailure.complete(error)
+        } finally {
+            onPredictionFinished()
+            predictionCompletion.complete(Unit)
         }
     }
-    predictionJob.invokeOnCompletion {
-        onPredictionFinished()
-        predictionCompletion.complete(Unit)
+    val predictionJob = if (startOnCallerThread) {
+        runPrediction()
+        null
+    } else {
+        predictionScope.launch { runPrediction() }
     }
 
     try {
-        withTimeout(timeoutMillis) {
+        withTimeout(timeoutMillis + timeoutCleanupMillis + 1_000L) {
             select<T> {
-                terminal.onAwait { event -> event }
+                terminal.onAwait { event ->
+                    if (timeoutTriggered.get()) {
+                        throwTimeoutCancellation()
+                    }
+                    event
+                }
                 predictionFailure.onAwait { error ->
+                    if (timeoutTriggered.get()) {
+                        throwTimeoutCancellation()
+                    }
                     throw error
+                }
+                timeoutCompleted.onAwait {
+                    throwTimeoutCancellation()
                 }
             }
         }
     } catch (error: TimeoutCancellationException) {
-        onTimeout()
+        if (timeoutTriggered.compareAndSet(false, true)) {
+            try {
+                onTimeout()
+            } catch (_: Throwable) {
+            } finally {
+                timeoutCompleted.complete(Unit)
+            }
+        } else {
+            timeoutCompleted.await()
+        }
         withTimeoutOrNull(timeoutCleanupMillis) {
             predictionCompletion.await()
         }
         throw error
     } finally {
-        predictionJob.cancel()
+        timeoutJob.cancel()
+        predictionJob?.cancel()
         terminal.cancel()
+    }
+}
+
+private suspend fun throwTimeoutCancellation(): Nothing {
+    return withTimeout(1L) {
+        CompletableDeferred<Nothing>().await()
     }
 }

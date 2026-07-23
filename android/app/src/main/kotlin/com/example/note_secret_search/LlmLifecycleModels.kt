@@ -1,6 +1,8 @@
 package com.example.note_secret_search
 
-internal const val DEFAULT_LLM_RUNTIME_BUILD_ID = "llamacpp-kotlin-0.2.0-huawei-safe"
+import com.example.nssllama.NssLlamaBuildInfo
+
+internal const val DEFAULT_LLM_RUNTIME_BUILD_ID = NssLlamaBuildInfo.BUILD_ID
 
 data class LlmLoadConfig(
     val contextLength: Int,

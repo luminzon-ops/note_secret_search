@@ -10,11 +10,22 @@ import java.util.concurrent.atomic.AtomicInteger
 internal const val FIXED_LOGICAL_MODEL_NAME = "local-model.gguf"
 
 internal sealed interface LlamaRuntimeEvent {
-    data class Ongoing(val text: String) : LlamaRuntimeEvent
+    val generationId: Long
 
-    data class Done(val text: String) : LlamaRuntimeEvent
+    data class Ongoing(
+        val text: String,
+        override val generationId: Long = 0L,
+    ) : LlamaRuntimeEvent
 
-    data class Error(val message: String) : LlamaRuntimeEvent
+    data class Done(
+        val text: String,
+        override val generationId: Long = 0L,
+    ) : LlamaRuntimeEvent
+
+    data class Error(
+        val message: String,
+        override val generationId: Long = 0L,
+    ) : LlamaRuntimeEvent
 }
 
 internal interface LlamaContextClient {
@@ -25,6 +36,7 @@ internal interface LlamaContextClient {
         emitPartialCompletion: Boolean,
         maxTokens: Int,
         config: LocalLlmGenerationConfig,
+        generationId: Long,
     )
 
     fun abort()
@@ -119,12 +131,18 @@ internal class DirectLlamaContextClient(
         emitPartialCompletion: Boolean,
         maxTokens: Int,
         config: LocalLlmGenerationConfig,
+        generationId: Long,
     ) {
         val context = synchronized(lock) { nativeContext }
             ?: throw IllegalStateException("Local LLM context is not loaded.")
         context.setTokenCallback { token ->
             if (emitPartialCompletion) {
-                events.tryEmit(LlamaRuntimeEvent.Ongoing(token))
+                events.tryEmit(
+                    LlamaRuntimeEvent.Ongoing(
+                        text = token,
+                        generationId = generationId,
+                    ),
+                )
             }
         }
         val params = mapOf<String, Any>(
@@ -140,10 +158,18 @@ internal class DirectLlamaContextClient(
         try {
             val result = context.completion(params)
             val text = (result["text"] as? String).orEmpty()
-            events.tryEmit(LlamaRuntimeEvent.Done(text))
+            events.tryEmit(
+                LlamaRuntimeEvent.Done(
+                    text = text,
+                    generationId = generationId,
+                ),
+            )
         } catch (_: Throwable) {
             events.tryEmit(
-                LlamaRuntimeEvent.Error("Local LLM completion failed."),
+                LlamaRuntimeEvent.Error(
+                    message = "Local LLM completion failed.",
+                    generationId = generationId,
+                ),
             )
         }
     }

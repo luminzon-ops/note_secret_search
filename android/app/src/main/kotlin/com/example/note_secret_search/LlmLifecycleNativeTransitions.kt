@@ -134,6 +134,8 @@ internal fun LlmLifecycleActor.handleLoadFailure(
             ),
         )
     }
+    val readinessSwitch = operation.generation?.readinessSwitch
+    operation.generation?.readinessSwitch = null
     operation.generation?.let { generation ->
         activeGeneration = null
         generation.future.completeExceptionally(
@@ -147,7 +149,12 @@ internal fun LlmLifecycleActor.handleLoadFailure(
     operation.releaseWaiters.forEach { it.complete(Unit) }
     operation.releaseWaiters.clear()
     if (closeRequested.get()) {
+        readinessSwitch?.ensureWaiters?.forEach {
+            it.completeExceptionally(llmClosedError(readinessSwitch.identity.modelId))
+        }
         finishClosed()
+    } else if (readinessSwitch != null) {
+        startLoad(readinessSwitch)
     }
 }
 
@@ -263,11 +270,33 @@ internal fun LlmLifecycleActor.finishGeneration(
     }
     val waiters = generation.releaseWaiters.toList()
     generation.releaseWaiters.clear()
+    val readinessSwitch = generation.readinessSwitch
+    generation.readinessSwitch = null
     startReleaseForCurrent(
         waiters = waiters,
         continuation = LlmReleaseContinuation(
-            onSuccess = { completeLlmResult(generation.future, outcome) },
-            onFailure = { completeLlmResult(generation.future, outcome) },
+            onSuccess = {
+                completeLlmResult(generation.future, outcome)
+                if (readinessSwitch != null && !closeRequested.get()) {
+                    startLoad(readinessSwitch)
+                } else if (readinessSwitch != null) {
+                    readinessSwitch.ensureWaiters.forEach {
+                        it.completeExceptionally(
+                            llmClosedError(readinessSwitch.identity.modelId),
+                        )
+                    }
+                }
+            },
+            onFailure = { releaseError ->
+                generation.future.completeExceptionally(
+                    releaseError.withRequestId(generation.requestId),
+                )
+                readinessSwitch?.ensureWaiters?.forEach {
+                    it.completeExceptionally(
+                        releaseError.withModelId(readinessSwitch.identity.modelId),
+                    )
+                }
+            },
         ),
     )
 }

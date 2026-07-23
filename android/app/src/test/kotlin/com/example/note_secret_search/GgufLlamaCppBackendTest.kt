@@ -8,6 +8,7 @@ import org.junit.Test
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -26,19 +27,32 @@ import kotlinx.coroutines.withTimeoutOrNull
 class GgufLlamaCppBackendTest {
     @Test
     fun `prediction release coordinator defers native release until in-flight prediction finishes`() {
-        val calls = mutableListOf<String>()
+        val calls = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val abortEntered = CountDownLatch(1)
+        val releaseReturned = CountDownLatch(1)
         val coordinator = PredictionReleaseCoordinator(
-            abortPrediction = { calls += "abort" },
+            abortPrediction = {
+                calls += "abort"
+                abortEntered.countDown()
+            },
             releaseResources = { calls += "release" },
         )
 
         assertTrue(coordinator.tryRegisterPrediction())
-        coordinator.requestRelease()
+        val releaseThread = thread(start = true) {
+            coordinator.requestRelease()
+            releaseReturned.countDown()
+        }
 
+        assertTrue(abortEntered.await(1, TimeUnit.SECONDS))
         assertEquals(listOf("abort"), calls)
+        assertFalse(releaseReturned.await(50, TimeUnit.MILLISECONDS))
 
         coordinator.onPredictionFinished()
 
+        assertTrue(releaseReturned.await(1, TimeUnit.SECONDS))
+        releaseThread.join(1_000)
+        assertFalse(releaseThread.isAlive)
         assertEquals(listOf("abort", "release"), calls)
     }
 
@@ -93,6 +107,71 @@ class GgufLlamaCppBackendTest {
             fixture.backend.cancel(fixture.session)
 
             assertEquals(1, fixture.client.abortCalls)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `load predict and release stay on the native caller thread`() {
+        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
+            replay = 0,
+            extraBufferCapacity = 1,
+        )
+        val client = RecordingLlamaContextClient(events)
+        val backend = GgufLlamaCppBackend(
+            client = client,
+            predictionScope = predictionScope,
+            eventFlow = events,
+        )
+        val executor = Executors.newSingleThreadExecutor(
+            ThreadFactory { runnable -> Thread(runnable, "fixture-native-worker") },
+        )
+        val model = File.createTempFile("thread-owner", ".gguf").apply {
+            deleteOnExit()
+        }
+
+        try {
+            val callerThreadId = executor.submit<Long> {
+                val threadId = Thread.currentThread().id
+                val session = backend.load("model-thread", model)
+                backend.generate(
+                    session = session,
+                    prompt = "thread ownership",
+                    maxTokens = 16,
+                )
+                backend.release(session)
+                threadId
+            }.get(2, TimeUnit.SECONDS)
+
+            assertEquals(listOf(callerThreadId), client.loadThreadIds)
+            assertEquals(listOf(callerThreadId), client.predictThreadIds)
+            assertEquals(listOf(callerThreadId), client.releaseThreadIds)
+        } finally {
+            predictionScope.cancel()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `backend enforces native prompt hard cap`() {
+        val fixture = createGgufBackendTestFixture(
+            predictionEvents = listOf(LlamaRuntimeEvent.Done("unused")),
+        )
+        try {
+            try {
+                fixture.backend.generate(
+                    session = fixture.session,
+                    prompt = "x".repeat(LOCAL_LLM_MAX_PROMPT_CHARS + 1),
+                    maxTokens = 16,
+                    config = LocalLlmGenerationConfig(maxPromptChars = 4_000),
+                )
+                fail("Expected native prompt hard cap to reject oversized input.")
+            } catch (error: IllegalArgumentException) {
+                assertEquals("Prompt exceeds maxPromptChars.", error.message)
+            }
+            assertEquals("", fixture.client.lastPrompt)
         } finally {
             fixture.close()
         }
@@ -202,6 +281,35 @@ class GgufLlamaCppBackendTest {
     }
 
     @Test
+    fun `awaitPredictionTerminalEvent ignores stale terminal event identity`() = runBlocking {
+        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
+            replay = 0,
+            extraBufferCapacity = 2,
+        )
+
+        val result = awaitPredictionTerminalEvent(
+            timeoutMillis = 200,
+            timeoutCleanupMillis = 50,
+            predictionScope = predictionScope,
+            events = events,
+            isTerminal = { event ->
+                event.generationId == 2L &&
+                    (event is LlamaRuntimeEvent.Done || event is LlamaRuntimeEvent.Error)
+            },
+            onTimeout = {},
+            tryRegisterPrediction = { true },
+            onPredictionFinished = {},
+        ) {
+            assertTrue(events.tryEmit(LlamaRuntimeEvent.Done("stale", generationId = 1L)))
+            assertTrue(events.tryEmit(LlamaRuntimeEvent.Done("current", generationId = 2L)))
+        }
+
+        assertEquals(LlamaRuntimeEvent.Done("current", generationId = 2L), result)
+        predictionScope.cancel()
+    }
+
+    @Test
     fun `awaitPredictionTerminalEvent times out when terminal event never arrives`() = runBlocking {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
@@ -259,6 +367,50 @@ class GgufLlamaCppBackendTest {
             "cleanup wait should stay bounded while allowing prediction unwind, elapsed=${'$'}elapsedMillis ms",
             elapsedMillis in 120..260,
         )
+    }
+
+    @Test
+    fun `caller-thread prediction timeout aborts while native call is blocked`() = runBlocking {
+        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val predictionEntered = CountDownLatch(1)
+        val allowPredictionReturn = CountDownLatch(1)
+        val timeoutEntered = CountDownLatch(1)
+        val outcome = async(Dispatchers.Default) {
+            try {
+                awaitPredictionTerminalEvent<String>(
+                    timeoutMillis = 30,
+                    timeoutCleanupMillis = 100,
+                    predictionScope = predictionScope,
+                    events = MutableSharedFlow(replay = 0, extraBufferCapacity = 1),
+                    isTerminal = { it == "done" },
+                    onTimeout = {
+                        timeoutEntered.countDown()
+                    },
+                    tryRegisterPrediction = { true },
+                    onPredictionFinished = {},
+                    startOnCallerThread = true,
+                ) {
+                    predictionEntered.countDown()
+                    allowPredictionReturn.await(2, TimeUnit.SECONDS)
+                }
+                "completed"
+            } catch (_: TimeoutCancellationException) {
+                "timed_out"
+            }
+        }
+
+        try {
+            assertTrue(predictionEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(
+                "timeout must invoke abort while the caller-thread native call is blocked",
+                timeoutEntered.await(250, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            allowPredictionReturn.countDown()
+        }
+
+        assertEquals("timed_out", outcome.await())
+        predictionScope.cancel()
     }
 
     @Test
@@ -411,7 +563,7 @@ class GgufLlamaCppBackendTest {
     }
 
     @Test
-    fun `generate truncates prompt to conservative maxPromptChars before native predict`() = runBlocking {
+    fun `generate rejects prompt beyond maxPromptChars before native predict`() = runBlocking {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val events = MutableSharedFlow<LlamaRuntimeEvent>(
             replay = 0,
@@ -431,20 +583,25 @@ class GgufLlamaCppBackendTest {
             backend = backend,
         )
 
-        backend.generate(
-            session = session,
-            prompt = "a".repeat(20),
-            maxTokens = 96,
-            config = LocalLlmGenerationConfig(
-                contextLength = 1024,
-                maxOutputTokens = 96,
-                maxPromptChars = 8,
-                conservativeMode = true,
-                emitPartialCompletion = false,
-            ),
-        )
+        try {
+            backend.generate(
+                session = session,
+                prompt = "a".repeat(20),
+                maxTokens = 96,
+                config = LocalLlmGenerationConfig(
+                    contextLength = 1024,
+                    maxOutputTokens = 96,
+                    maxPromptChars = 8,
+                    conservativeMode = true,
+                    emitPartialCompletion = false,
+                ),
+            )
+            fail("Expected prompt budget validation to fail.")
+        } catch (error: IllegalArgumentException) {
+            assertEquals("Prompt exceeds maxPromptChars.", error.message)
+        }
 
-        assertEquals("aaaaaaaa", client.lastPrompt)
+        assertEquals("", client.lastPrompt)
         predictionScope.cancel()
     }
 }

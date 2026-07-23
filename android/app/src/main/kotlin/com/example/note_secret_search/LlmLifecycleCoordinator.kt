@@ -133,6 +133,20 @@ class LlmLifecycleCoordinator(
                 ),
             )
         }
+        val promptLimit = minOf(
+            config.maxPromptChars,
+            LOCAL_LLM_MAX_PROMPT_CHARS,
+        )
+        if (config.maxPromptChars <= 0 || prompt.trim().length > promptLimit) {
+            return llmFailedFuture(
+                LlmRuntimeException(
+                    code = LlmRuntimeErrorCode.INVALID_ARGUMENT,
+                    stage = LlmRuntimeStage.ARGUMENT,
+                    modelId = modelId.takeIf { it.isNotBlank() },
+                    requestId = requestId.takeIf { it.isNotBlank() },
+                ),
+            )
+        }
         val identity = try {
             identityFor(modelId, modelPath, verifiedChecksum, config)
         } catch (error: Throwable) {

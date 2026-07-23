@@ -144,6 +144,9 @@ class LlmRuntimePlugin(
         val usedPrivateContext = call.argument<Boolean>("usedPrivateContext") ?: false
         val verifiedChecksum = optionalNonBlankString(call, "verifiedChecksum")
         val config = readGenerationConfig(call)
+        require(prompt.trim().length <= config.maxPromptChars) {
+            "prompt exceeds maxPromptChars"
+        }
         runAsync(
             callback = callback,
             fallbackCode = LlmRuntimeErrorCode.GENERATION_FAILED,
@@ -217,20 +220,24 @@ class LlmRuntimePlugin(
             ?: listOf("</s>", "<|im_end|>", "<|endoftext|>")
         val contextLength = call.argument<Int>("contextLength") ?: HUAWEI_SAFE_CONTEXT_LENGTH
         val maxOutputTokens = call.argument<Int>("maxOutputTokens") ?: 96
-        val maxPromptChars = call.argument<Int>("maxPromptChars") ?: 1200
+        val requestedMaxPromptChars = call.argument<Int>("maxPromptChars")
+            ?: LOCAL_LLM_MAX_PROMPT_CHARS
         val temperature = call.argument<Number>("temperature")?.toDouble() ?: 0.7
         val topK = call.argument<Int>("topK") ?: 40
         val topP = call.argument<Number>("topP")?.toDouble() ?: 0.9
         require(contextLength > 0) { "contextLength must be positive" }
         require(maxOutputTokens > 0) { "maxOutputTokens must be positive" }
-        require(maxPromptChars > 0) { "maxPromptChars must be positive" }
+        require(requestedMaxPromptChars > 0) { "maxPromptChars must be positive" }
         require(temperature.isFinite() && temperature >= 0.0) { "temperature is invalid" }
         require(topK > 0) { "topK must be positive" }
         require(topP.isFinite() && topP in 0.0..1.0) { "topP is invalid" }
         return LocalLlmGenerationConfig(
             contextLength = contextLength,
             maxOutputTokens = maxOutputTokens,
-            maxPromptChars = maxPromptChars,
+            maxPromptChars = minOf(
+                requestedMaxPromptChars,
+                LOCAL_LLM_MAX_PROMPT_CHARS,
+            ),
             conservativeMode = call.argument<Boolean>("conservativeMode") ?: true,
             emitPartialCompletion = call.argument<Boolean>("emitPartialCompletion") ?: false,
             temperature = temperature,
