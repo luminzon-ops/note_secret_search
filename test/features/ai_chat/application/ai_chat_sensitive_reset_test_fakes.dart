@@ -172,10 +172,12 @@ class _ThrowingLlmEngine extends _ImmediateLlmEngine {
   }
 }
 
-class _ControllableLlmEngine extends _ImmediateLlmEngine {
+class _ControllableLlmEngine extends _ImmediateLlmEngine
+    implements CancellableLlmEngine {
   final Completer<void> _requested = Completer<void>();
   final Completer<LlmInferenceResponse> _result =
       Completer<LlmInferenceResponse>();
+  final List<String> cancelledRequestIds = <String>[];
 
   Future<void> waitForRequest() => _requested.future;
 
@@ -189,9 +191,36 @@ class _ControllableLlmEngine extends _ImmediateLlmEngine {
 
   @override
   Future<LlmInferenceResponse> generate(LlmInferenceRequest request) {
+    lastRequest = request;
     if (!_requested.isCompleted) {
       _requested.complete();
     }
     return _result.future;
+  }
+
+  @override
+  Future<void> cancelGeneration(String requestId) async {
+    cancelledRequestIds.add(requestId);
+  }
+}
+
+class _SensitiveTestContextProjector implements ChatContextProjector {
+  const _SensitiveTestContextProjector();
+
+  @override
+  Future<List<ProjectedChatContextItem>> projectManual({
+    required List<ChatContextItem> items,
+    required SearchConfiguration configuration,
+    required ChatContextProjectionTarget target,
+  }) async {
+    return items
+        .map(
+          (item) => ProjectedChatContextItem(
+            type: item.type,
+            title: item.title,
+            content: item.summary,
+          ),
+        )
+        .toList(growable: false);
   }
 }

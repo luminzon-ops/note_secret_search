@@ -118,6 +118,7 @@ class FreeChatTab extends ConsumerWidget {
         ChatInputBar(
           enabled: !state.sending,
           sending: state.sending,
+          onStop: controller.stopGeneration,
           hintText: '输入你的问题或消息',
           onSend: (value) => _handleSend(context, ref, value),
         ),

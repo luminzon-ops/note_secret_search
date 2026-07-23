@@ -5,12 +5,15 @@ class AiChatConversationController
     with _AiChatConversationSelection {
   AiChatConversationController({required Ref ref, required ChatMode mode})
     : _ref = ref,
+      _orchestrator = ref.read(aiChatOrchestratorProvider),
       super(AiChatConversationState(mode: mode));
 
   @override
   final Ref _ref;
+  final AiChatOrchestrator _orchestrator;
   static const _uuid = Uuid();
-  final Map<String, Object> _sendingOperations = <String, Object>{};
+  final Map<String, _SendingChatOperation> _sendingOperations =
+      <String, _SendingChatOperation>{};
   @override
   var _generation = 0;
 
@@ -141,6 +144,7 @@ class AiChatConversationController
   Future<void> startNewSession() async {
     _cancelPendingSelectionAttempts();
     _generation++;
+    await _cancelActiveRequests();
     _claimSelectionIntent(null);
     _resetConversation();
   }
@@ -148,8 +152,18 @@ class AiChatConversationController
   void resetForLock() {
     _cancelPendingSelectionAttempts();
     _generation++;
+    unawaited(_cancelActiveRequests());
     _claimSelectionIntent(null);
     _resetConversation();
+  }
+
+  Future<void> stopGeneration() => _cancelActiveRequests();
+
+  @override
+  void dispose() {
+    _generation++;
+    unawaited(_cancelActiveRequests());
+    super.dispose();
   }
 
   void _resetConversation() {
@@ -174,6 +188,7 @@ class AiChatConversationController
     final conversationMode = state.mode;
     final backendPreference = state.backendPreference;
     final allowPrivateContext = state.allowPrivateContext;
+    final history = _buildChatHistory(state.messages);
     final manualItems = List<ChatContextItem>.of(
       state.manualItems,
       growable: false,
@@ -195,30 +210,41 @@ class AiChatConversationController
     if (existingSessionId != null) {
       _activateExistingOriginSession(originSessionId);
     }
-    final sendingOperation = Object();
+    final sendingOperation = _SendingChatOperation(requestId: _uuid.v4());
     _sendingOperations[originSessionId] = sendingOperation;
 
     try {
       final repository = _ref.read(chatSessionRepositoryProvider);
-      final llmReadiness = await _ref.read(localLlmReadinessProvider.future);
+      if (backendPreference == ChatBackendPreference.local) {
+        await _ref.read(localLlmReadinessProvider.future);
+      }
+      final existingSession = existingSessionId == null
+          ? null
+          : await repository.getSession(originSessionId);
       if (!_canContinue(generation)) {
         return;
       }
       final timestamp = DateTime.now();
-      final sessionTitle = normalized.length <= 20
-          ? normalized
-          : '${normalized.substring(0, 20)}…';
+      final sessionTitle =
+          existingSession?.title ??
+          (normalized.length <= 20
+              ? normalized
+              : '${normalized.substring(0, 20)}…');
 
-      final session = ChatSession(
-        id: originSessionId,
-        mode: conversationMode,
-        title: sessionTitle,
-        allowPrivateContext: allowPrivateContext,
-        lastModelId: llmReadiness.activeModel?.id,
-        archived: false,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      );
+      final session =
+          existingSession?.copyWith(
+            allowPrivateContext: allowPrivateContext,
+            updatedAt: timestamp,
+          ) ??
+          ChatSession(
+            id: originSessionId,
+            mode: conversationMode,
+            title: sessionTitle,
+            allowPrivateContext: allowPrivateContext,
+            archived: false,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          );
       final userMessage = ChatMessage(
         id: 'user-${timestamp.microsecondsSinceEpoch}',
         role: ChatMessageRole.user,
@@ -270,17 +296,17 @@ class AiChatConversationController
       }
 
       try {
-        final response = await _ref
-            .read(aiChatOrchestratorProvider)
-            .send(
-              AiChatRequest(
-                mode: conversationMode,
-                userInput: normalized,
-                backendPreference: backendPreference,
-                allowPrivateContext: allowPrivateContext,
-                manualItems: manualItems,
-              ),
-            );
+        final response = await _orchestrator.send(
+          AiChatRequest(
+            mode: conversationMode,
+            userInput: normalized,
+            requestId: sendingOperation.requestId,
+            backendPreference: backendPreference,
+            allowPrivateContext: allowPrivateContext,
+            manualItems: manualItems,
+          ),
+          history: history,
+        );
         if (!_canContinue(generation)) {
           return;
         }
@@ -293,12 +319,13 @@ class AiChatConversationController
           usedPrivateContext: response.usedPrivateContext,
           contextSummary: response.contextSummary,
           sourceType: response.sourceType,
+          backendUsage: response.usage,
         );
         await repository.saveSession(
           session.copyWith(
             title: sessionTitle,
             allowPrivateContext: allowPrivateContext,
-            lastModelId: llmReadiness.activeModel?.id,
+            lastModelId: response.usage.actualModel,
             updatedAt: assistantMessage.createdAt,
           ),
         );
@@ -322,6 +349,7 @@ class AiChatConversationController
             relatedSourceIds: response.contextItems
                 .map((item) => item.id)
                 .toList(growable: false),
+            backendUsage: response.usage,
             createdAt: assistantMessage.createdAt,
           ),
         );
@@ -347,7 +375,7 @@ class AiChatConversationController
         final failedMessage = ChatMessage(
           id: loadingMessage.id,
           role: ChatMessageRole.system,
-          text: error.toString().replaceFirst('Bad state: ', ''),
+          text: _safeChatErrorMessage(error, backendPreference),
           createdAt: DateTime.now(),
           status: ChatMessageStatus.error,
         );
@@ -355,7 +383,6 @@ class AiChatConversationController
           session.copyWith(
             title: sessionTitle,
             allowPrivateContext: allowPrivateContext,
-            lastModelId: llmReadiness.activeModel?.id,
             updatedAt: failedMessage.createdAt,
           ),
         );
@@ -451,5 +478,12 @@ class AiChatConversationController
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
     _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
     _invalidateSelectedChatSession(_ref);
+  }
+
+  Future<void> _cancelActiveRequests() async {
+    final operations = _sendingOperations.values.toList(growable: false);
+    for (final operation in operations) {
+      await _orchestrator.cancel(operation.requestId);
+    }
   }
 }

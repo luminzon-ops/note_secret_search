@@ -12,10 +12,13 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_session_reposito
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/ai_chat_page.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 const _embeddingModel = ModelRegistryEntry(
@@ -289,6 +292,17 @@ void main() {
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final externalClient = _RecordingExternalProviderClient();
+      const externalConfig = ExternalProviderConfig(
+        id: 'provider-1',
+        providerType: ExternalProviderType.openAiCompatible,
+        displayName: 'OpenAI 兼容服务',
+        baseUrl: 'https://example.com/v1',
+        apiKey: 'secret-key',
+        modelName: 'gpt-4.1-mini',
+        embeddingModelName: 'text-embedding-3-small',
+        enabled: true,
+        allowSensitiveFields: true,
+      );
       final container = ProviderContainer(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
@@ -314,20 +328,20 @@ void main() {
             (ref) async => const ExternalProviderStatus(
               available: true,
               reason: '外部模型已可用：OpenAI 兼容服务',
-              config: ExternalProviderConfig(
-                id: 'provider-1',
-                providerType: ExternalProviderType.openAiCompatible,
-                displayName: 'OpenAI 兼容服务',
-                baseUrl: 'https://example.com/v1',
-                apiKey: 'secret-key',
-                modelName: 'gpt-4.1-mini',
-                embeddingModelName: 'text-embedding-3-small',
-                enabled: true,
-                allowSensitiveFields: true,
-              ),
+              config: externalConfig,
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(externalClient),
+          externalProviderRepositoryProvider.overrideWithValue(
+            _MemoryExternalProviderRepository(configs: [externalConfig]),
+          ),
+          externalProviderClientRouterProvider.overrideWithValue(
+            externalClient,
+          ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults().copyWith(
+              allowExternalProviderAccess: true,
+            ),
+          ),
           chatSessionRepositoryProvider.overrideWithValue(
             const _FakeChatSessionRepository(),
           ),
@@ -443,6 +457,35 @@ class _RecordingExternalProviderClient implements ExternalProviderClient {
 
   @override
   Future<void> testConnection(ExternalProviderConfig config) async {}
+}
+
+class _MemoryExternalProviderRepository implements ExternalProviderRepository {
+  _MemoryExternalProviderRepository({
+    List<ExternalProviderConfig> configs = const <ExternalProviderConfig>[],
+  }) : _configs = List<ExternalProviderConfig>.from(configs);
+
+  final List<ExternalProviderConfig> _configs;
+
+  @override
+  Future<List<ExternalProviderConfig>> loadAll() async {
+    return List<ExternalProviderConfig>.from(_configs);
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadById(String id) async {
+    return _configs.where((config) => config.id == id).firstOrNull;
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadEnabled() async {
+    return _configs.where((config) => config.enabled).firstOrNull;
+  }
+
+  @override
+  Future<void> save(ExternalProviderConfig config) async {
+    _configs.removeWhere((item) => item.id == config.id);
+    _configs.add(config);
+  }
 }
 
 class _StaticContextRetriever implements AiChatContextRetriever {

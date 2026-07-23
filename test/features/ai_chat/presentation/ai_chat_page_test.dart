@@ -562,7 +562,7 @@ void main() {
       expect(find.text('这是本地首轮回答。'), findsOneWidget);
       expect(fakeLlmEngine.lastRequest, isNotNull);
       expect(fakeLlmEngine.lastRequest?.model.id, 'llm-local');
-      expect(fakeLlmEngine.lastRequest?.prompt, '你好，本地模型');
+      expect(fakeLlmEngine.lastRequest?.prompt, contains('用户问题：\n你好，本地模型'));
       expect(fakeLlmEngine.lastRequest?.usedPrivateContext, isFalse);
     },
   );

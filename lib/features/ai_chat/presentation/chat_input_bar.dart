@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     required this.onSend,
+    this.onStop,
     this.enabled = true,
     this.sending = false,
     this.hintText = '输入你的问题或消息',
@@ -10,6 +11,7 @@ class ChatInputBar extends StatefulWidget {
   });
 
   final Future<void> Function(String value) onSend;
+  final Future<void> Function()? onStop;
   final bool enabled;
   final bool sending;
   final String hintText;
@@ -54,9 +56,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
             ),
           ),
           const SizedBox(width: 12),
-          FilledButton(
-            onPressed: widget.enabled ? _submit : null,
-            child: Text(widget.sending ? '发送中' : '发送'),
+          FilledButton.icon(
+            onPressed: widget.sending
+                ? widget.onStop
+                : (widget.enabled ? _submit : null),
+            icon: Icon(
+              widget.sending ? Icons.stop_circle_outlined : Icons.send_outlined,
+            ),
+            label: Text(widget.sending ? '停止生成' : '发送'),
           ),
         ],
       ),

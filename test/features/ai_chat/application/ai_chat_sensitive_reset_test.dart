@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/ai_chat/application/chat_context_projector.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
@@ -13,6 +14,8 @@ import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 
 part 'ai_chat_sensitive_reset_test_fakes.dart';
 
@@ -85,7 +88,7 @@ void main() {
       await controller.send('question for session B');
 
       expect(llmEngine.lastRequest, isNotNull);
-      expect(llmEngine.lastRequest!.prompt, 'question for session B');
+      expect(llmEngine.lastRequest!.prompt, contains('question for session B'));
       expect(llmEngine.lastRequest!.usedPrivateContext, isFalse);
 
       controller.setBackendPreference(ChatBackendPreference.external);
@@ -338,8 +341,11 @@ void main() {
 
       expect(controller.state.sending, isTrue);
       expect(controller.state.messages, hasLength(2));
+      final requestId = llmEngine.lastRequest!.requestId!;
 
       controller.resetForLock();
+      await Future<void>.delayed(Duration.zero);
+      expect(llmEngine.cancelledRequestIds, <String>[requestId]);
       llmEngine.complete(
         const LlmInferenceResponse(
           text: 'stale assistant plaintext',
@@ -384,6 +390,60 @@ void main() {
       isEmpty,
     );
   });
+
+  test('startNewSession cancels the active generation request', () async {
+    final repository = _ControllableChatSessionRepository();
+    final llmEngine = _ControllableLlmEngine();
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: llmEngine,
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(freeChatControllerProvider.notifier);
+    final sendFuture = controller.send('cancel on new session');
+    await llmEngine.waitForRequest();
+    final requestId = llmEngine.lastRequest!.requestId!;
+
+    await controller.startNewSession();
+
+    expect(llmEngine.cancelledRequestIds, <String>[requestId]);
+    llmEngine.complete(
+      const LlmInferenceResponse(
+        text: 'late response',
+        finishReason: 'stop',
+        usedPrivateContext: false,
+      ),
+    );
+    await sendFuture;
+    _expectBlankConversation(container, controller);
+  });
+
+  test('stop persists only the stable cancellation message', () async {
+    final repository = _ControllableChatSessionRepository();
+    final llmEngine = _ControllableLlmEngine();
+    final container = _buildContainer(
+      repository: repository,
+      llmEngine: llmEngine,
+    );
+    addTearDown(container.dispose);
+
+    final controller = container.read(freeChatControllerProvider.notifier);
+    final sendFuture = controller.send('stop this request');
+    await llmEngine.waitForRequest();
+
+    await controller.stopGeneration();
+    llmEngine.completeError(const LlmGenerationCancelledException());
+    await sendFuture;
+
+    final failed = repository.savedMessages.singleWhere(
+      (message) => message.status == ChatStoredMessageStatus.failed,
+    );
+    expect(failed.role, ChatStoredMessageRole.system);
+    expect(failed.content, '生成已停止。');
+    expect(failed.content, isNot(contains('/private/models')));
+    expect(controller.state.errorMessage, '生成已停止。');
+  });
 }
 
 ProviderContainer _buildContainer({
@@ -413,6 +473,12 @@ ProviderContainer _buildContainer({
           ready: false,
           reason: 'semantic retrieval disabled for controller test',
         ),
+      ),
+      searchConfigurationProvider.overrideWith(
+        (ref) async => SearchConfiguration.defaults(),
+      ),
+      chatContextProjectorProvider.overrideWithValue(
+        const _SensitiveTestContextProjector(),
       ),
     ],
   );

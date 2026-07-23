@@ -79,6 +79,7 @@ class PrivateQaTab extends ConsumerWidget {
           ChatInputBar(
             enabled: !state.sending && semanticReadiness.ready,
             sending: state.sending,
+            onStop: controller.stopGeneration,
             hintText: '输入你的私密内容问题',
             onSend: (value) => _handleSend(context, ref, value),
           ),

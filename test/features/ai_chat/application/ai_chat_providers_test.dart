@@ -1,12 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/ai_chat/application/chat_context_projector.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
+import 'package:note_secret_search/features/ai_providers/application/external_chat_gateway.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
@@ -14,6 +17,8 @@ import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -196,14 +201,19 @@ void main() {
             ),
           ),
           aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
-          externalProviderStatusProvider.overrideWith(
-            (ref) async => const ExternalProviderStatus(
-              available: true,
-              reason: '外部模型已可用：OpenAI 兼容服务',
-              config: blockedConfig,
+          externalProviderRepositoryProvider.overrideWithValue(
+            _MemoryExternalProviderRepository(
+              configs: const <ExternalProviderConfig>[blockedConfig],
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(fakeExternalClient),
+          externalProviderClientRouterProvider.overrideWithValue(
+            fakeExternalClient,
+          ),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults().copyWith(
+              allowExternalProviderAccess: true,
+            ),
+          ),
         ],
       );
 
@@ -226,7 +236,7 @@ void main() {
         throwsA(
           predicate(
             (error) =>
-                error is StateError &&
+                error is ExternalChatGatewayException &&
                 error.toString().contains('当前外部模型未允许访问私密内容'),
           ),
         ),
@@ -377,6 +387,18 @@ void main() {
             ),
           ),
           aiChatContextRetrieverProvider.overrideWithValue(fakeRetriever),
+          searchConfigurationProvider.overrideWith(
+            (ref) async => SearchConfiguration.defaults(),
+          ),
+          chatContextProjectorProvider.overrideWithValue(
+            const _FakeChatContextProjector(<ProjectedChatContextItem>[
+              ProjectedChatContextItem(
+                type: ChatContextItemType.note,
+                title: '开发备忘',
+                content: '附注：MFA 已开启',
+              ),
+            ]),
+          ),
           llmEngineProvider.overrideWithValue(fakeLlmEngine),
         ],
       );
@@ -460,6 +482,14 @@ void main() {
       );
       expect(fakeRepository.savedSessions.last.lastModelId, 'llm-1');
       expect(
+        fakeRepository.savedMessages.last.backendUsage?.actualBackend,
+        'llama.cpp',
+      );
+      expect(
+        fakeRepository.savedMessages.last.backendUsage?.actualModel,
+        'llm-1',
+      );
+      expect(
         fakeRepository.savedSessions.single.updatedAt.isAfter(
           fakeRepository.savedSessions.single.createdAt,
         ),
@@ -507,6 +537,7 @@ void main() {
         fakeRepository.savedMessages.last.status,
         ChatStoredMessageStatus.failed,
       );
+      expect(fakeRepository.savedSessions.single.lastModelId, isNull);
     },
   );
 
@@ -548,9 +579,10 @@ void main() {
         fakeRepository.savedMessages.last.status,
         ChatStoredMessageStatus.failed,
       );
+      expect(fakeRepository.savedMessages.last.content, '本地模型请求失败，请稍后重试。');
       expect(
         fakeRepository.savedMessages.last.content,
-        contains('真实本地 LLM 生成失败'),
+        isNot(contains('真实本地 LLM 生成失败')),
       );
     },
   );
@@ -612,6 +644,89 @@ void main() {
         greaterThanOrEqualTo(assistantMicros),
         reason:
             'assistant reply is created later but must preserve the original correlation id seed',
+      );
+    },
+  );
+
+  test(
+    'controller sends only complete prior turns and preserves session creation time',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _FakeLlmEngine();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('FIRST_USER_TURN');
+      final originalCreatedAt = fakeRepository.savedSessions.single.createdAt;
+
+      await controller.send('SECOND_USER_TURN');
+
+      expect(fakeLlmEngine.requests, hasLength(2));
+      expect(fakeLlmEngine.requests.last.prompt, contains('FIRST_USER_TURN'));
+      expect(fakeLlmEngine.requests.last.prompt, contains('普通回答'));
+      expect(fakeLlmEngine.requests.last.prompt, contains('SECOND_USER_TURN'));
+      expect(fakeRepository.savedSessions.single.createdAt, originalCreatedAt);
+    },
+  );
+
+  test(
+    'controller excludes failed and incomplete turns from history',
+    () async {
+      final fakeRepository = _FakeChatSessionRepository();
+      final fakeLlmEngine = _FailThenSucceedLlmEngine();
+      final container = ProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          localLlmReadinessProvider.overrideWith(
+            (ref) async => const LocalLlmReadiness(
+              ready: true,
+              reason: 'ready',
+              activeModel: _llmModel,
+              runtimeState: LlmRuntimeState(
+                ready: true,
+                reason: 'ready',
+                status: LlmRuntimeStatus.ready,
+              ),
+            ),
+          ),
+          chatSessionRepositoryProvider.overrideWithValue(fakeRepository),
+          llmEngineProvider.overrideWithValue(fakeLlmEngine),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(freeChatControllerProvider.notifier);
+      await controller.send('FAILED_USER_TURN');
+      await controller.send('RECOVERY_USER_TURN');
+
+      expect(fakeLlmEngine.requests, hasLength(2));
+      expect(
+        fakeLlmEngine.requests.last.prompt,
+        isNot(contains('FAILED_USER_TURN')),
+      );
+      expect(fakeLlmEngine.requests.last.prompt, isNot(contains('本地模型请求失败')));
+      expect(
+        fakeLlmEngine.requests.last.prompt,
+        contains('RECOVERY_USER_TURN'),
       );
     },
   );
@@ -728,18 +843,60 @@ class _FakeAiChatContextRetriever implements AiChatContextRetriever {
   }
 }
 
+class _FakeChatContextProjector implements ChatContextProjector {
+  const _FakeChatContextProjector(this.projectedItems);
+
+  final List<ProjectedChatContextItem> projectedItems;
+
+  @override
+  Future<List<ProjectedChatContextItem>> projectManual({
+    required List<ChatContextItem> items,
+    required SearchConfiguration configuration,
+    required ChatContextProjectionTarget target,
+  }) async {
+    return projectedItems;
+  }
+}
+
 class _FakeLlmEngine implements LlmEngine {
   _FakeLlmEngine({this.onGenerate});
 
   final void Function(LlmInferenceRequest request)? onGenerate;
   LlmInferenceRequest? lastRequest;
+  final List<LlmInferenceRequest> requests = <LlmInferenceRequest>[];
 
   @override
   Future<LlmInferenceResponse> generate(LlmInferenceRequest request) async {
     lastRequest = request;
+    requests.add(request);
     onGenerate?.call(request);
     return LlmInferenceResponse(
       text: request.usedPrivateContext ? '结合私密上下文后的回答' : '普通回答',
+      finishReason: 'stop',
+      usedPrivateContext: request.usedPrivateContext,
+    );
+  }
+
+  @override
+  Future<LlmRuntimeState> getState(ModelRegistryEntry model) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> releaseModel(String modelId) async {}
+}
+
+class _FailThenSucceedLlmEngine implements LlmEngine {
+  final List<LlmInferenceRequest> requests = <LlmInferenceRequest>[];
+
+  @override
+  Future<LlmInferenceResponse> generate(LlmInferenceRequest request) async {
+    requests.add(request);
+    if (requests.length == 1) {
+      throw StateError('RAW_FAILURE_SENTINEL');
+    }
+    return LlmInferenceResponse(
+      text: 'recovered',
       finishReason: 'stop',
       usedPrivateContext: request.usedPrivateContext,
     );
@@ -827,5 +984,34 @@ class _FakeChatSessionRepository implements ChatSessionRepository {
   Future<void> saveSession(ChatSession session) async {
     savedSessions.removeWhere((item) => item.id == session.id);
     savedSessions.add(session);
+  }
+}
+
+class _MemoryExternalProviderRepository implements ExternalProviderRepository {
+  _MemoryExternalProviderRepository({
+    List<ExternalProviderConfig> configs = const <ExternalProviderConfig>[],
+  }) : _configs = List<ExternalProviderConfig>.from(configs);
+
+  final List<ExternalProviderConfig> _configs;
+
+  @override
+  Future<List<ExternalProviderConfig>> loadAll() async {
+    return List<ExternalProviderConfig>.from(_configs);
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadById(String id) async {
+    return _configs.where((config) => config.id == id).firstOrNull;
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadEnabled() async {
+    return _configs.where((config) => config.enabled).firstOrNull;
+  }
+
+  @override
+  Future<void> save(ExternalProviderConfig config) async {
+    _configs.removeWhere((item) => item.id == config.id);
+    _configs.add(config);
   }
 }

@@ -1,4 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
@@ -6,8 +8,12 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.d
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
+import 'package:note_secret_search/features/ai_providers/application/external_chat_gateway.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
+import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -49,6 +55,52 @@ const _manualItem = ChatContextItem(
 );
 
 void main() {
+  test(
+    'cancel during external authorization prevents the network request',
+    () async {
+      final accessCheckStarted = Completer<void>();
+      final allowExternalAccess = Completer<bool>();
+      final externalClient = _RecordingExternalClient();
+      final gateway = ExternalChatGateway(
+        repository: _MemoryExternalProviderRepository(
+          configs: const <ExternalProviderConfig>[_externalConfig],
+        ),
+        clientFor: (_) => externalClient,
+        hasConsent: (_, _) async => true,
+        isExternalAccessAllowed: () {
+          if (!accessCheckStarted.isCompleted) {
+            accessCheckStarted.complete();
+          }
+          return allowExternalAccess.future;
+        },
+      );
+      final container = ProviderContainer(
+        overrides: [externalChatGatewayProvider.overrideWithValue(gateway)],
+      );
+      addTearDown(container.dispose);
+
+      final orchestrator = container.read(aiChatOrchestratorProvider);
+      final pending = orchestrator.send(
+        const AiChatRequest(
+          mode: ChatMode.freeChat,
+          userInput: 'do not send after cancellation',
+          requestId: 'preflight-cancel',
+          backendPreference: ChatBackendPreference.external,
+        ),
+      );
+      await accessCheckStarted.future;
+
+      await orchestrator.cancel('preflight-cancel');
+      allowExternalAccess.complete(true);
+
+      await expectLater(
+        pending,
+        throwsA(predicate((error) => error.toString().contains('生成已停止'))),
+      );
+      expect(externalClient.generateCallCount, 0);
+    },
+  );
+
   test('explicit external backend rejects an unacknowledged config', () async {
     final externalClient = _RecordingExternalClient();
     final container = await _buildContainer(
@@ -70,7 +122,8 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error is StateError && error.toString().contains('外部模型配置尚未确认'),
+              error is ExternalChatGatewayException &&
+              error.code == ExternalChatGatewayErrorCode.authorizationRequired,
         ),
       ),
     );
@@ -103,7 +156,7 @@ void main() {
 
       expect(response.text, 'external answer');
       expect(externalClient.generateCallCount, 1);
-      expect(externalClient.lastPrompt, 'hello');
+      expect(externalClient.lastPrompt, contains('用户问题：\nhello'));
       expect(externalClient.lastUsedPrivateContext, isFalse);
     },
   );
@@ -135,7 +188,9 @@ void main() {
         throwsA(
           predicate(
             (error) =>
-                error is StateError && error.toString().contains('外部模型配置尚未确认'),
+                error is ExternalChatGatewayException &&
+                error.code ==
+                    ExternalChatGatewayErrorCode.authorizationRequired,
           ),
         ),
       );
@@ -166,7 +221,13 @@ void main() {
               backendPreference: ChatBackendPreference.external,
             ),
           ),
-      throwsStateError,
+      throwsA(
+        predicate(
+          (error) =>
+              error is ExternalChatGatewayException &&
+              error.code == ExternalChatGatewayErrorCode.authorizationRequired,
+        ),
+      ),
     );
 
     expect(externalClient.generateCallCount, 0);
@@ -193,7 +254,8 @@ void main() {
       throwsA(
         predicate(
           (error) =>
-              error is StateError && error.toString().contains('尚未启用外部模型提供方'),
+              error is ExternalChatGatewayException &&
+              error.code == ExternalChatGatewayErrorCode.providerNotEnabled,
         ),
       ),
     );
@@ -225,7 +287,14 @@ void main() {
               backendPreference: ChatBackendPreference.external,
             ),
           ),
-      throwsStateError,
+      throwsA(
+        predicate(
+          (error) =>
+              error is ExternalChatGatewayException &&
+              error.code ==
+                  ExternalChatGatewayErrorCode.privateContextNotAllowed,
+        ),
+      ),
     );
 
     expect(externalClient.generateCallCount, 0);
@@ -258,7 +327,8 @@ void main() {
           );
 
       expect(retriever.callCount, 0);
-      expect(externalClient.lastPrompt, 'public question');
+      expect(externalClient.lastPrompt, contains('用户问题：\npublic question'));
+      expect(externalClient.lastPrompt, isNot(contains(_manualItem.summary)));
       expect(externalClient.lastUsedPrivateContext, isFalse);
       expect(response.contextItems, isEmpty);
       expect(response.sourceType, ChatContextSource.none);
@@ -284,14 +354,19 @@ Future<ProviderContainer> _buildContainer({
           runtimeState: null,
         ),
       ),
-      externalProviderStatusProvider.overrideWith(
-        (ref) async => ExternalProviderStatus(
-          available: config != null,
-          reason: config == null ? '尚未启用外部模型提供方。' : 'external ready',
-          config: config,
+      externalProviderRepositoryProvider.overrideWithValue(
+        _MemoryExternalProviderRepository(
+          configs: config == null
+              ? const <ExternalProviderConfig>[]
+              : <ExternalProviderConfig>[config],
         ),
       ),
-      externalProviderClientProvider.overrideWithValue(externalClient),
+      externalProviderClientRouterProvider.overrideWithValue(externalClient),
+      searchConfigurationProvider.overrideWith(
+        (ref) async => SearchConfiguration.defaults().copyWith(
+          allowExternalProviderAccess: true,
+        ),
+      ),
       semanticSearchReadinessProvider.overrideWith(
         (ref) async => const SemanticSearchReadiness(
           ready: true,
@@ -340,5 +415,34 @@ class _RecordingContextRetriever implements AiChatContextRetriever {
   }) async {
     callCount++;
     return items;
+  }
+}
+
+class _MemoryExternalProviderRepository implements ExternalProviderRepository {
+  _MemoryExternalProviderRepository({
+    List<ExternalProviderConfig> configs = const <ExternalProviderConfig>[],
+  }) : _configs = List<ExternalProviderConfig>.from(configs);
+
+  final List<ExternalProviderConfig> _configs;
+
+  @override
+  Future<List<ExternalProviderConfig>> loadAll() async {
+    return List<ExternalProviderConfig>.from(_configs);
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadById(String id) async {
+    return _configs.where((config) => config.id == id).firstOrNull;
+  }
+
+  @override
+  Future<ExternalProviderConfig?> loadEnabled() async {
+    return _configs.where((config) => config.enabled).firstOrNull;
+  }
+
+  @override
+  Future<void> save(ExternalProviderConfig config) async {
+    _configs.removeWhere((item) => item.id == config.id);
+    _configs.add(config);
   }
 }
