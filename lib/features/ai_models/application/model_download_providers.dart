@@ -8,6 +8,7 @@ import 'package:note_secret_search/features/ai_models/application/model_catalog_
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_chat/infrastructure/local_llm_engine.dart';
 import 'package:note_secret_search/features/ai_models/application/model_lifecycle_controller.dart';
+import 'package:note_secret_search/features/ai_models/application/model_session_releaser.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
@@ -41,6 +42,7 @@ class ModelDownloadController {
     required ModelLifecycleStore lifecycleStore,
     required ModelArtifactStore artifactStore,
     required AppLogger logger,
+    ModelSessionReleaser? sessionReleaser,
   }) : _ref = ref,
        _repository = repository,
        _registryRepository = registryRepository,
@@ -49,6 +51,29 @@ class ModelDownloadController {
        _modelLifecycleController = ModelLifecycleController(
          lifecycleStore: lifecycleStore,
          artifactStore: artifactStore,
+         sessionReleaser:
+             sessionReleaser ??
+             ModelSessionReleaser(
+               stopWrites: ref.read(searchIndexWriteFenceProvider).invalidate,
+               releaseEmbedding: (modelId) {
+                 return ref
+                     .read(embeddingRuntimeBridgeProvider)
+                     .releaseModel(modelId: modelId);
+               },
+               releaseLlm: (modelId) {
+                 return ref
+                     .read(llmRuntimeBridgeProvider)
+                     .releaseModel(modelId: modelId);
+               },
+               shouldReleaseEmbedding: (modelType) =>
+                   modelType == null || modelType == 'embedding',
+               shouldReleaseLlm: (modelType) =>
+                   modelType == null ||
+                   modelType == 'llm' ||
+                   modelType == 'multimodal_llm',
+               shouldReleaseMultimodal: (modelType) =>
+                   modelType == null || modelType == 'multimodal_llm',
+             ),
          invalidateEmbeddingWrites: ref
              .read(searchIndexWriteFenceProvider)
              .invalidate,
@@ -161,12 +186,10 @@ class ModelDownloadController {
         _ref.invalidate(modelRegistryEntriesProvider);
         return;
       }
-      if (existingRegistry.type == 'embedding') {
-        _ref.read(searchIndexWriteFenceProvider).invalidate();
-        await _ref
-            .read(embeddingRuntimeBridgeProvider)
-            .releaseModel(modelId: existingRegistry.id);
-      }
+      await _modelLifecycleController.prepareForMutation(
+        existingRegistry.id,
+        modelType: existingRegistry.type,
+      );
       if (filePresent) {
         await _downloadService.deleteLocalFile(existingRegistry.localPath);
       }

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/ai_models/application/model_lifecycle_controller.dart';
+import 'package:note_secret_search/features/ai_models/application/model_session_releaser.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
@@ -115,6 +116,80 @@ void main() {
       expect(lifecycleStore.manifest, isNotNull);
     },
   );
+
+  test(
+    'releases embedding and llm sessions before deleting artifacts',
+    () async {
+      final events = <String>[];
+      final lifecycleStore = _RecordingLifecycleStore(
+        _registryEntry().copyWith(type: 'llm'),
+        onPurge: () => events.add('purge'),
+      );
+      final artifactStore = _RecordingArtifactStore(
+        fail: false,
+        onDelete: () => events.add('delete'),
+      );
+      final controller = ModelLifecycleController(
+        lifecycleStore: lifecycleStore,
+        artifactStore: artifactStore,
+        sessionReleaser: ModelSessionReleaser(
+          stopWrites: () => events.add('fence'),
+          releaseEmbedding: (modelId) async {
+            events.add('embedding:$modelId');
+          },
+          releaseLlm: (modelId) async {
+            events.add('llm:$modelId');
+          },
+        ),
+      );
+
+      await controller.deleteInstalledModel('model-1');
+
+      expect(events, <String>[
+        'fence',
+        'embedding:model-1',
+        'llm:model-1',
+        'delete',
+        'purge',
+      ]);
+    },
+  );
+
+  test('keeps old artifacts when any native session release fails', () async {
+    final events = <String>[];
+    final lifecycleStore = _RecordingLifecycleStore(
+      _registryEntry().copyWith(type: 'llm'),
+      onPurge: () => events.add('purge'),
+    );
+    final artifactStore = _RecordingArtifactStore(
+      fail: false,
+      onDelete: () => events.add('delete'),
+    );
+    final controller = ModelLifecycleController(
+      lifecycleStore: lifecycleStore,
+      artifactStore: artifactStore,
+      sessionReleaser: ModelSessionReleaser(
+        stopWrites: () => events.add('fence'),
+        releaseEmbedding: (modelId) async {
+          events.add('embedding:$modelId');
+        },
+        releaseLlm: (modelId) async {
+          events.add('llm:$modelId');
+          throw StateError('llm_release_failed');
+        },
+      ),
+    );
+
+    await expectLater(
+      controller.deleteInstalledModel('model-1'),
+      throwsStateError,
+    );
+
+    expect(events, <String>['fence', 'embedding:model-1', 'llm:model-1']);
+    expect(artifactStore.deleteCalls, 0);
+    expect(lifecycleStore.purgeCalls, 0);
+    expect(lifecycleStore.manifest, isNotNull);
+  });
 }
 
 class _RecordingLifecycleStore implements ModelLifecycleStore {
