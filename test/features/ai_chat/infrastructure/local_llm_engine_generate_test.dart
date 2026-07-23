@@ -74,6 +74,22 @@ void main() {
     );
     expect(bridge.generateTextCalls, isEmpty);
   });
+
+  test('generate maps native cancellation into the domain exception', () async {
+    final engine = LocalLlmEngine(bridge: _CancellingLlmRuntimeBridge());
+
+    await expectLater(
+      engine.generate(
+        const LlmInferenceRequest(
+          requestId: 'request-cancelled',
+          model: _installedLlmModel,
+          prompt: '停止这次生成',
+          usedPrivateContext: false,
+        ),
+      ),
+      throwsA(isA<LlmGenerationCancelledException>()),
+    );
+  });
 }
 
 const _installedLlmModel = ModelRegistryEntry(
@@ -179,6 +195,86 @@ class _FakeLlmRuntimeBridge implements LlmRuntimeBridge {
       'status': 'installed_unverified',
       'modelPath': modelPath,
     };
+  }
+
+  @override
+  Future<void> releaseModel({required String modelId}) async {}
+}
+
+class _CancellingLlmRuntimeBridge
+    implements LlmRuntimeBridge, RequestIdentifiedLlmRuntimeBridge {
+  @override
+  Future<void> cancelGeneration({required String requestId}) async {}
+
+  @override
+  Future<Map<String, dynamic>> ensureIdentifiedModelReady({
+    required String modelId,
+    required String modelPath,
+    required String? verifiedChecksum,
+  }) async {
+    return <String, dynamic>{'ready': true};
+  }
+
+  @override
+  Future<Map<String, dynamic>> ensureModelReady({
+    required String modelId,
+    required String modelPath,
+  }) async {
+    return <String, dynamic>{'ready': true};
+  }
+
+  @override
+  Future<Map<String, dynamic>> generateIdentifiedText({
+    required String requestId,
+    required String modelId,
+    required String modelPath,
+    required String? verifiedChecksum,
+    required String prompt,
+    required bool usedPrivateContext,
+    required int maxOutputTokens,
+    required int maxPromptChars,
+    required int contextLength,
+    required bool conservativeMode,
+    required double temperature,
+    required int topK,
+    required double topP,
+    required int seed,
+    required List<String> stopSequences,
+    required bool emitPartialCompletion,
+  }) async {
+    throw const LlmRuntimeCancelledException(
+      stage: 'generation',
+      modelId: 'qwen-local',
+      requestId: 'request-cancelled',
+    );
+  }
+
+  @override
+  Future<Map<String, dynamic>> generateText({
+    required String modelId,
+    required String modelPath,
+    required String prompt,
+    required bool usedPrivateContext,
+    required int maxOutputTokens,
+    required int maxPromptChars,
+    required int contextLength,
+    required bool conservativeMode,
+    required double temperature,
+    required int topK,
+    required double topP,
+    required int seed,
+    required List<String> stopSequences,
+    required bool emitPartialCompletion,
+  }) {
+    throw StateError('legacy generation must not be used');
+  }
+
+  @override
+  Future<Map<String, dynamic>> inspectModel({
+    required String modelId,
+    required String modelPath,
+  }) async {
+    return <String, dynamic>{'ready': true};
   }
 
   @override
