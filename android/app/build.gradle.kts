@@ -36,7 +36,7 @@ android {
 
     packaging {
         jniLibs {
-            pickFirsts += listOf(
+            excludes += setOf(
                 "lib/arm64-v8a/librnllama_v8_2_fp16.so",
                 "lib/arm64-v8a/librnllama_v8_2_fp16_dotprod.so",
             )
@@ -49,14 +49,13 @@ flutter {
 }
 
 dependencies {
-    implementation(project(":silent_llama_bridge"))
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.lambdapioneer.argon2kt:argon2kt:1.6.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
-    implementation(files("../third_party/llamacpp-kotlin-0.2.0-huawei-safe.aar"))
+    implementation(files("../third_party/llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar"))
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

@@ -34,4 +34,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "note_secret_search"
 include(":app")
-include(":silent_llama_bridge")

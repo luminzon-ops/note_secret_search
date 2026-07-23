@@ -1,0 +1,209 @@
+diff --git a/llamaCpp/src/main/cpp/jni.cpp b/llamaCpp/src/main/cpp/jni.cpp
+index 66a10553bce57ad7f725d7a98b8e6a82ff07a268..4494102270b9573e6f75ae1aa47efc0f49eef6a9 100644
+--- a/llamaCpp/src/main/cpp/jni.cpp
++++ b/llamaCpp/src/main/cpp/jni.cpp
+@@ -4,7 +4,6 @@
+ 
+ // #include <android/asset_manager.h>
+ // #include <android/asset_manager_jni.h>
+-#include <android/log.h>
+ #include <cstdlib>
+ #include <ctime>
+ #include <sys/sysinfo.h>
+@@ -16,10 +15,8 @@
+ #include "ggml.h"
+ 
+ #define UNUSED(x) (void)(x)
+-#define TAG "RNLLAMA_ANDROID_JNI"
+-
+-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,     TAG, __VA_ARGS__)
+-#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,     TAG, __VA_ARGS__)
++#define LOGI(...)
++#define LOGW(...)
+ 
+ static inline int min(int a, int b) {
+     return (a < b) ? a : b;
+@@ -252,6 +249,7 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContext(
+ 
+ 
+ 
++    gpt_init();
+     auto llama = new rnllama::llama_rn_context();
+     bool is_model_loaded = llama->loadModel(defaultParams);
+ 
+@@ -337,6 +335,7 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd(
+     defaultParams.rope_freq_base = rope_freq_base;
+     defaultParams.rope_freq_scale = rope_freq_scale;
+ 
++    gpt_init();
+     auto llama = new rnllama::llama_rn_context();
+     bool ok = llama->loadModel(defaultParams);
+ 
+@@ -697,7 +696,6 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+         }
+     }
+ 
+-    llama_perf_context_print(llama->ctx);
+     llama->is_predicting = false;
+ 
+     auto result = createHashMap(env);
+@@ -872,4 +870,4 @@ Java_org_nehuatl_llamacpp_LlamaContext_freeContext(
+     context_map.erase((long) llama->ctx);
+ }
+ 
+-} // extern "C"
+\ No newline at end of file
++} // extern "C"
+diff --git a/llamaCpp/src/main/cpp/lib/common.cpp b/llamaCpp/src/main/cpp/lib/common.cpp
+index bcf1cbd36c878a76d0d16dfe177f7650d52b80d7..7b9ad6dee508a6b0d860bcb52f14bde55a79a413 100644
+--- a/llamaCpp/src/main/cpp/lib/common.cpp
++++ b/llamaCpp/src/main/cpp/lib/common.cpp
+@@ -369,19 +369,11 @@ bool parse_cpu_mask(const std::string & mask, bool (&boolmask)[LM_GGML_MAX_N_THR
+ }
+ 
+ void gpt_init() {
+-    llama_log_set([](lm_ggml_log_level level, const char * text, void * /*user_data*/) {
+-        if (LOG_DEFAULT_LLAMA <= gpt_log_verbosity_thold) {
+-            gpt_log_add(gpt_log_main(), level, "%s", text);
+-        }
++    llama_log_set([](lm_ggml_log_level level, const char * text, void * user_data) {
++        (void) level;
++        (void) text;
++        (void) user_data;
+     }, NULL);
+-
+-#ifdef NDEBUG
+-    const char * build_type = "";
+-#else
+-    const char * build_type = " (debug)";
+-#endif
+-
+-    LOG_INF("build: %d (%s) with %s for %s%s\n", LLAMA_BUILD_NUMBER, LLAMA_COMMIT, LLAMA_COMPILER, LLAMA_BUILD_TARGET, build_type);
+ }
+ 
+ std::string gpt_params_get_system_info(const gpt_params & params) {
+diff --git a/llamaCpp/src/main/cpp/lib/ggml.c b/llamaCpp/src/main/cpp/lib/ggml.c
+index 1372ab1b7bc1956264c04df6baec0ca6fb2d820b..e4ccb31269c494a4c7408139550637a59429eb2f 100644
+--- a/llamaCpp/src/main/cpp/lib/ggml.c
++++ b/llamaCpp/src/main/cpp/lib/ggml.c
+@@ -353,9 +353,8 @@ void lm_ggml_log_internal(enum lm_ggml_log_level level, const char * format, ...
+ 
+ void lm_ggml_log_callback_default(enum lm_ggml_log_level level, const char * text, void * user_data) {
+     (void) level;
++    (void) text;
+     (void) user_data;
+-    fputs(text, stderr);
+-    fflush(stderr);
+ }
+ 
+ #if (LM_GGML_DEBUG >= 1)
+diff --git a/llamaCpp/src/main/cpp/lib/llama.cpp b/llamaCpp/src/main/cpp/lib/llama.cpp
+index af367a15133d099a66b0b1a914304b49d7e3a4ab..fab181887ea6596cd4db3aa1a026c9834d322ac6 100644
+--- a/llamaCpp/src/main/cpp/lib/llama.cpp
++++ b/llamaCpp/src/main/cpp/lib/llama.cpp
+@@ -21878,8 +21878,7 @@ void llama_log_internal(lm_ggml_log_level level, const char * format, ...) {
+ 
+ void llama_log_callback_default(lm_ggml_log_level level, const char * text, void * user_data) {
+     (void) level;
++    (void) text;
+     (void) user_data;
+-    fputs(text, stderr);
+-    fflush(stderr);
+ }
+ 
+diff --git a/llamaCpp/src/main/cpp/lib/log.h b/llamaCpp/src/main/cpp/lib/log.h
+index da414fb7484f872dc717ac92f0d4e5b5cd01c42a..a5f039fbf1b27635d5558d90aa151a745f4d9e78 100644
+--- a/llamaCpp/src/main/cpp/lib/log.h
++++ b/llamaCpp/src/main/cpp/lib/log.h
+@@ -71,39 +71,7 @@ void gpt_log_set_timestamps(struct gpt_log * log,       bool   timestamps); // w
+ 
+ 
+ 
+-#if defined(__ANDROID__)
+-#include <android/log.h>
+-#define LLAMA_ANDROID_LOG_TAG "RNLLAMA_LOG_ANDROID"
+-
+-#if defined(RNLLAMA_ANDROID_ENABLE_LOGGING)
+-#define RNLLAMA_LOG_LEVEL 1
+-#else
+-#define RNLLAMA_LOG_LEVEL 0
+-#endif
+-
+-#define LOG_TMPL(level, verbosity, ...) \
+-    do { \
+-        if ((verbosity) <= RNLLAMA_LOG_LEVEL) { \
+-            int android_log_level = ANDROID_LOG_DEFAULT; \
+-            switch (level) { \
+-                case LM_GGML_LOG_LEVEL_INFO:  android_log_level = ANDROID_LOG_INFO; break; \
+-                case LM_GGML_LOG_LEVEL_WARN:  android_log_level = ANDROID_LOG_WARN; break; \
+-                case LM_GGML_LOG_LEVEL_ERROR: android_log_level = ANDROID_LOG_ERROR; break; \
+-                default:             android_log_level = ANDROID_LOG_DEFAULT; \
+-            } \
+-            __android_log_print(android_log_level, LLAMA_ANDROID_LOG_TAG, __VA_ARGS__); \
+-        } \
+-    } while(0)
+-#else
+-
+-#define LOG_TMPL(level, verbosity, ...) \
+-    do { \
+-        if ((verbosity) <= gpt_log_verbosity_thold) { \
+-            gpt_log_add(gpt_log_main(), (level), __VA_ARGS__); \
+-        } \
+-    } while (0)
+-
+-#endif
++#define LOG_TMPL(level, verbosity, ...)
+ 
+ #define LOG(...)             LOG_TMPL(LM_GGML_LOG_LEVEL_NONE, 0,         __VA_ARGS__)
+ #define LOGV(verbosity, ...) LOG_TMPL(LM_GGML_LOG_LEVEL_NONE, verbosity, __VA_ARGS__)
+diff --git a/llamaCpp/src/main/cpp/lib/rn-llama.hpp b/llamaCpp/src/main/cpp/lib/rn-llama.hpp
+index 5e4b144dab69195a1d25432d2c415fbc98cac298..8e4e3dcabab7e23fe6d4945ab9ffbdab9b341b31 100644
+--- a/llamaCpp/src/main/cpp/lib/rn-llama.hpp
++++ b/llamaCpp/src/main/cpp/lib/rn-llama.hpp
+@@ -30,14 +30,10 @@ static void llama_batch_add(llama_batch *batch, llama_token id, llama_pos pos, s
+ static void log(const char *level, const char *function, int line,
+                        const char *format, ...)
+ {
+-    printf("[%s] %s:%d ", level, function, line);
+-
+-    va_list args;
+-    va_start(args, format);
+-    vprintf(format, args);
+-    va_end(args);
+-
+-    printf("\n");
++    (void) level;
++    (void) function;
++    (void) line;
++    (void) format;
+ }
+ 
+ static bool rnllama_verbose = false;
+@@ -55,9 +51,9 @@ static bool rnllama_verbose = false;
+     } while (0)
+ #endif
+ 
+-#define LOG_ERROR(MSG, ...) log("ERROR", __func__, __LINE__, MSG, ##__VA_ARGS__)
+-#define LOG_WARNING(MSG, ...) log("WARNING", __func__, __LINE__, MSG, ##__VA_ARGS__)
+-#define LOG_INFO(MSG, ...) log("INFO", __func__, __LINE__, MSG, ##__VA_ARGS__)
++#define LOG_ERROR(MSG, ...)
++#define LOG_WARNING(MSG, ...)
++#define LOG_INFO(MSG, ...)
+ 
+ enum stop_type
+ {
+@@ -271,14 +267,6 @@ struct llama_rn_context
+         std::vector<llama_token> prompt_tokens = ::llama_tokenize(ctx, params.prompt, true, true);
+         num_prompt_tokens = prompt_tokens.size();
+ 
+-        // LOG tokens
+-        std::stringstream ss;
+-        ss << "\n" << __func__ << ": prompt_tokens = ";
+-        for (auto& token : prompt_tokens) {
+-            ss << token << " ";
+-        }
+-        LOG_INFO("%s\n", ss.str().c_str());
+-
+         if (params.n_keep < 0)
+         {
+             params.n_keep = (int)num_prompt_tokens;

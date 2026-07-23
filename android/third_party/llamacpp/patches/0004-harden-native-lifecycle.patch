@@ -1,0 +1,680 @@
+diff --git a/llamaCpp/src/main/cpp/jni.cpp b/llamaCpp/src/main/cpp/jni.cpp
+index 4494102..432ac12 100644
+--- a/llamaCpp/src/main/cpp/jni.cpp
++++ b/llamaCpp/src/main/cpp/jni.cpp
+@@ -6,6 +6,8 @@
+ // #include <android/asset_manager_jni.h>
+ #include <cstdlib>
+ #include <ctime>
++#include <memory>
++#include <mutex>
+ #include <sys/sysinfo.h>
+ #include <string>
+ #include <thread>
+@@ -183,7 +185,62 @@ static inline void putHashMapHashMap(JNIEnv *env, jobject hashMap, const char *k
+     env->CallObjectMethod(hashMap, putMethod, jKey, value);
+ }
+ 
+-std::unordered_map<long, rnllama::llama_rn_context *> context_map;
++using LlamaContextPtr = std::shared_ptr<rnllama::llama_rn_context>;
++
++std::mutex context_map_mutex;
++std::unordered_map<long, LlamaContextPtr> context_map;
++
++static LlamaContextPtr findContext(long context_ptr) {
++    std::lock_guard<std::mutex> lock(context_map_mutex);
++    auto found = context_map.find(context_ptr);
++    return found == context_map.end() ? nullptr : found->second;
++}
++
++static LlamaContextPtr beginContextGeneration(long context_ptr) {
++    std::lock_guard<std::mutex> lock(context_map_mutex);
++    auto found = context_map.find(context_ptr);
++    if (found == context_map.end() || found->second->released.load()) {
++        return nullptr;
++    }
++    auto llama = found->second;
++    llama->is_interrupted.store(false);
++    llama->is_predicting.store(true);
++    return llama;
++}
++
++static void installContext(const LlamaContextPtr &llama) {
++    std::lock_guard<std::mutex> lock(context_map_mutex);
++    context_map.emplace((long) llama->ctx, llama);
++}
++
++static LlamaContextPtr takeContext(long context_ptr) {
++    std::lock_guard<std::mutex> lock(context_map_mutex);
++    auto found = context_map.find(context_ptr);
++    if (found == context_map.end()) {
++        return nullptr;
++    }
++    auto llama = found->second;
++    context_map.erase(found);
++    llama->released.store(true);
++    llama->is_interrupted.store(true);
++    return llama;
++}
++
++static jobject createContextError(JNIEnv *env) {
++    auto result = createHashMap(env);
++    putStringHashMap(env, result, "error", "RUNTIME_CLOSED");
++    return result;
++}
++
++struct PredictionStateGuard {
++    explicit PredictionStateGuard(const LlamaContextPtr &context) : llama(context) {}
++
++    ~PredictionStateGuard() {
++        llama->is_predicting.store(false);
++    }
++
++    LlamaContextPtr llama;
++};
+ 
+ struct CallbackContext {
+     JNIEnv * env;
+@@ -250,20 +307,22 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContext(
+ 
+ 
+     gpt_init();
+-    auto llama = new rnllama::llama_rn_context();
++    auto llama = std::make_shared<rnllama::llama_rn_context>();
+     bool is_model_loaded = llama->loadModel(defaultParams);
+ 
+     LOGI("[RNLlama] is_model_loaded %s", (is_model_loaded ? "true" : "false"));
++    jlong context_id = 0;
+     if (is_model_loaded) {
+-        context_map[(long) llama->ctx] = llama;
++        context_id = reinterpret_cast<jlong>(llama->ctx);
++        installContext(llama);
+     } else {
+-        llama_free(llama->ctx);
++        llama.reset();
+     }
+ 
+     env->ReleaseStringUTFChars(model_path_str, model_path_chars);
+     env->ReleaseStringUTFChars(lora_str, lora_chars);
+ 
+-    return reinterpret_cast<jlong>(llama->ctx);
++    return context_id;
+ }
+ 
+ // New JNI function: same args as initContext but model represented by jint fd first
+@@ -336,7 +395,7 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd(
+     defaultParams.rope_freq_scale = rope_freq_scale;
+ 
+     gpt_init();
+-    auto llama = new rnllama::llama_rn_context();
++    auto llama = std::make_shared<rnllama::llama_rn_context>();
+     bool ok = llama->loadModel(defaultParams);
+ 
+     LOGI("[RNLlama] is_model_loaded = %s", ok ? "true" : "false");
+@@ -344,12 +403,13 @@ Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd(
+     if (!ok) {
+         close(dupfd);
+         free(fdString);
+-        llama_free(llama->ctx);
++        llama.reset();
++        env->ReleaseStringUTFChars(lora_str, lora_chars);
+         return 0;
+     }
+ 
+     // model loaded — context is valid
+-    context_map[(long) llama->ctx] = llama;
++    installContext(llama);
+ 
+     env->ReleaseStringUTFChars(lora_str, lora_chars);
+     return reinterpret_cast<jlong>(llama->ctx);
+@@ -362,7 +422,14 @@ Java_org_nehuatl_llamacpp_LlamaContext_loadModelDetails(
+         jlong context_ptr
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return createContextError(env);
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return createContextError(env);
++    }
+ 
+     int count = llama_model_meta_count(llama->model);
+     auto meta = createHashMap(env);
+@@ -397,7 +464,14 @@ Java_org_nehuatl_llamacpp_LlamaContext_getFormattedChat(
+         jstring chat_template
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return env->NewStringUTF("");
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return env->NewStringUTF("");
++    }
+ 
+     std::vector<llama_chat_msg> chat;
+ 
+@@ -452,7 +526,14 @@ Java_org_nehuatl_llamacpp_LlamaContext_loadSession(
+         jstring path
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return createContextError(env);
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return createContextError(env);
++    }
+     const char *path_chars = env->GetStringUTFChars(path, nullptr);
+ 
+     auto result = createHashMap(env);
+@@ -482,7 +563,14 @@ Java_org_nehuatl_llamacpp_LlamaContext_saveSession(
+         jint size
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return -1;
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return -1;
++    }
+ 
+     const char *path_chars = env->GetStringUTFChars(path, nullptr);
+ 
+@@ -555,13 +643,24 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+         jobject partialCompletionCallback // The Java class for callbacks
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = beginContextGeneration((long) context_ptr);
++    if (!llama) {
++        return createContextError(env);
++    }
++    std::unique_lock<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        llama->is_predicting.store(false);
++        return createContextError(env);
++    }
++    PredictionStateGuard prediction_state(llama);
+ 
+     llama->rewind();
+ 
+     //llama_reset_timings(llama->ctx);
+ 
+-    llama->params.prompt = env->GetStringUTFChars(prompt, nullptr);
++    const char *prompt_chars = env->GetStringUTFChars(prompt, nullptr);
++    llama->params.prompt = prompt_chars;
++    env->ReleaseStringUTFChars(prompt, prompt_chars);
+     llama->params.sparams.seed = (seed == -1) ? time(NULL) : seed;
+ 
+     int max_threads = std::thread::hardware_concurrency();
+@@ -588,7 +687,9 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+     sparams.tfs_z = tfs_z;
+     sparams.typ_p = typical_p;
+     sparams.n_probs = n_probs;
+-    sparams.grammar = env->GetStringUTFChars(grammar, nullptr);
++    const char *grammar_chars = env->GetStringUTFChars(grammar, nullptr);
++    sparams.grammar = grammar_chars;
++    env->ReleaseStringUTFChars(grammar, grammar_chars);
+     sparams.xtc_t = xtc_t;
+     sparams.xtc_p = xtc_p;
+ 
+@@ -639,7 +740,7 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+     size_t sent_count = 0;
+     size_t sent_token_probs_index = 0;
+ 
+-    while (llama->has_next_token && !llama->is_interrupted) {
++    while (llama->has_next_token && !llama->is_interrupted.load()) {
+         const rnllama::completion_token_output token_with_probs = llama->doCompletion();
+         if (token_with_probs.tok == -1 || llama->incomplete) {
+             continue;
+@@ -687,7 +788,7 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+                 }
+                 sent_token_probs_index = probs_stop_pos;
+ 
+-                putArrayListHashMap(env, tokenResult, "completion_probabilities", tokenProbsToMap(env, llama, probs_output));
++                putArrayListHashMap(env, tokenResult, "completion_probabilities", tokenProbsToMap(env, llama.get(), probs_output));
+             }
+ 
+             jclass cb_class = env->GetObjectClass(partialCompletionCallback); // Get class of callback object
+@@ -696,11 +797,9 @@ Java_org_nehuatl_llamacpp_LlamaContext_doCompletion(
+         }
+     }
+ 
+-    llama->is_predicting = false;
+-
+     auto result = createHashMap(env);
+     putStringHashMap(env, result, "text", llama->generated_text.c_str());
+-    putArrayListHashMap(env, result, "completion_probabilities", tokenProbsToMap(env, llama, llama->generated_token_probs));
++    putArrayListHashMap(env, result, "completion_probabilities", tokenProbsToMap(env, llama.get(), llama->generated_token_probs));
+     putIntHashMap(env, result, "tokens_predicted", llama->num_tokens_predicted);
+     putIntHashMap(env, result, "tokens_evaluated", llama->num_prompt_tokens);
+     putIntHashMap(env, result, "truncated", llama->truncated);
+@@ -732,8 +831,10 @@ Java_org_nehuatl_llamacpp_LlamaContext_stopCompletion(
+         JNIEnv *env, jobject thiz, jlong context_ptr) {
+     UNUSED(env);
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
+-    llama->is_interrupted = true;
++    auto llama = findContext((long) context_ptr);
++    if (llama && llama->is_predicting.load()) {
++        llama->is_interrupted.store(true);
++    }
+ }
+ 
+ JNIEXPORT jboolean JNICALL
+@@ -741,15 +842,22 @@ Java_org_nehuatl_llamacpp_LlamaContext_isPredicting(
+         JNIEnv *env, jobject thiz, jlong context_ptr) {
+     UNUSED(env);
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
+-    return llama->is_predicting;
++    auto llama = findContext((long) context_ptr);
++    return llama && !llama->released.load() && llama->is_predicting.load();
+ }
+ 
+ JNIEXPORT jobject JNICALL
+ Java_org_nehuatl_llamacpp_LlamaContext_tokenize(
+         JNIEnv *env, jobject thiz, jlong context_ptr, jstring text) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return createArrayList(env);
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return createArrayList(env);
++    }
+ 
+     const char *text_chars = env->GetStringUTFChars(text, nullptr);
+ 
+@@ -772,7 +880,14 @@ JNIEXPORT jstring JNICALL
+ Java_org_nehuatl_llamacpp_LlamaContext_detokenize(
+         JNIEnv *env, jobject thiz, jlong context_ptr, jintArray tokens) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return env->NewStringUTF("");
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return env->NewStringUTF("");
++    }
+ 
+     jsize tokens_len = env->GetArrayLength(tokens);
+     jint *tokens_ptr = env->GetIntArrayElements(tokens, 0);
+@@ -793,15 +908,24 @@ Java_org_nehuatl_llamacpp_LlamaContext_isEmbeddingEnabled(
+         JNIEnv *env, jobject thiz, jlong context_ptr) {
+     UNUSED(env);
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
+-    return llama->params.embedding;
++    auto llama = findContext((long) context_ptr);
++    return llama && !llama->released.load() && llama->params.embedding;
+ }
+ 
+ JNIEXPORT jobject JNICALL
+ Java_org_nehuatl_llamacpp_LlamaContext_embedding(
+         JNIEnv *env, jobject thiz, jlong context_ptr, jstring text) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = beginContextGeneration((long) context_ptr);
++    if (!llama) {
++        return createContextError(env);
++    }
++    std::unique_lock<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        llama->is_predicting.store(false);
++        return createContextError(env);
++    }
++    PredictionStateGuard prediction_state(llama);
+ 
+     const char *text_chars = env->GetStringUTFChars(text, nullptr);
+ 
+@@ -846,7 +970,15 @@ Java_org_nehuatl_llamacpp_LlamaContext_bench(
+         jint nr
+ ) {
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
++    auto llama = findContext((long) context_ptr);
++    if (!llama) {
++        return env->NewStringUTF("[]");
++    }
++    std::lock_guard<std::mutex> operation_lock(llama->operation_mutex);
++    if (llama->released.load()) {
++        return env->NewStringUTF("[]");
++    }
++    llama->is_interrupted.store(false);
+     std::string result = llama->bench(pp, tg, pl, nr);
+     return env->NewStringUTF(result.c_str());
+ }
+@@ -856,18 +988,14 @@ Java_org_nehuatl_llamacpp_LlamaContext_freeContext(
+         JNIEnv *env, jobject thiz, jlong context_ptr) {
+     UNUSED(env);
+     UNUSED(thiz);
+-    auto llama = context_map[(long) context_ptr];
+-    if (llama->model) {
+-        llama_free_model(llama->model);
+-    }
+-    if (llama->ctx) {
+-        llama_free(llama->ctx);
++    auto llama = takeContext((long) context_ptr);
++    if (!llama) {
++        return;
+     }
+-    if (llama->ctx_sampling != nullptr)
+     {
+-        gpt_sampler_free(llama->ctx_sampling);
++        std::unique_lock<std::mutex> operation_lock(llama->operation_mutex);
+     }
+-    context_map.erase((long) llama->ctx);
++    llama.reset();
+ }
+ 
+ } // extern "C"
+diff --git a/llamaCpp/src/main/cpp/lib/rn-llama.hpp b/llamaCpp/src/main/cpp/lib/rn-llama.hpp
+index 8e4e3dc..d3acc88 100644
+--- a/llamaCpp/src/main/cpp/lib/rn-llama.hpp
++++ b/llamaCpp/src/main/cpp/lib/rn-llama.hpp
+@@ -1,6 +1,8 @@
+ #ifndef RNLLAMA_H
+ #define RNLLAMA_H
+ 
++#include <atomic>
++#include <mutex>
+ #include <sstream>
+ #include <iostream>
+ #include "common.h"
+@@ -140,8 +142,10 @@ static std::string tokens_to_str(llama_context *ctx, Iter begin, Iter end)
+ 
+ struct llama_rn_context
+ {
+-    bool is_predicting = false;
+-    bool is_interrupted = false;
++    std::atomic_bool is_predicting = false;
++    std::atomic_bool is_interrupted = false;
++    std::atomic_bool released = false;
++    std::mutex operation_mutex;
+     bool has_next_token = false;
+     std::string generated_text;
+     std::vector<completion_token_output> generated_token_probs;
+@@ -170,6 +174,11 @@ struct llama_rn_context
+ 
+     ~llama_rn_context()
+     {
++        if (ctx_sampling != nullptr)
++        {
++            gpt_sampler_free(ctx_sampling);
++            ctx_sampling = nullptr;
++        }
+         if (ctx)
+         {
+             llama_free(ctx);
+@@ -180,15 +189,10 @@ struct llama_rn_context
+             llama_free_model(model);
+             model = nullptr;
+         }
+-        if (ctx_sampling != nullptr)
+-        {
+-            gpt_sampler_free(ctx_sampling);
+-        }
+     }
+ 
+     void rewind()
+     {
+-        is_interrupted = false;
+         params.antiprompt.clear();
+         params.sparams.grammar.clear();
+         num_prompt_tokens = 0;
+@@ -321,7 +325,7 @@ struct llama_rn_context
+         // number of tokens to keep when resetting context
+         n_remain = params.n_predict;
+         llama_perf_context_reset(ctx);
+-        is_predicting = true;
++        is_predicting.store(true);
+     }
+ 
+     completion_token_output nextToken()
+@@ -376,7 +380,7 @@ struct llama_rn_context
+             }
+             n_past += n_eval;
+             
+-            if(is_interrupted) {
++            if (is_interrupted.load()) {
+                 LOG_INFO("Decoding Interrupted");
+                 embd.resize(n_past);
+                 has_next_token = false;
+@@ -556,12 +560,12 @@ struct llama_rn_context
+ 
+     std::string bench(int pp, int tg, int pl, int nr)
+     {
+-        if (is_predicting) {
++        if (is_predicting.load()) {
+             LOG_ERROR("cannot benchmark while predicting", "");
+             return std::string("[]");
+         }
+ 
+-        is_predicting = true;
++        is_predicting.store(true);
+ 
+         double pp_avg = 0;
+         double tg_avg = 0;
+@@ -594,7 +598,7 @@ struct llama_rn_context
+             const int64_t t_pp_end = llama_time_us();
+             llama_kv_cache_clear(ctx);
+ 
+-            if (is_interrupted) break;
++            if (is_interrupted.load()) break;
+ 
+             const int64_t t_tg_start = llama_time_us();
+ 
+@@ -611,7 +615,7 @@ struct llama_rn_context
+                 {
+                     LOG_ERROR("llama_decode() failed during text generation", "");
+                 }
+-                if (is_interrupted) break;
++                if (is_interrupted.load()) break;
+             }
+ 
+             const int64_t t_tg_end = llama_time_us();
+@@ -642,8 +646,8 @@ struct llama_rn_context
+             tg_std = 0;
+         }
+ 
+-        if (is_interrupted) llama_kv_cache_clear(ctx);
+-        is_predicting = false;
++        if (is_interrupted.load()) llama_kv_cache_clear(ctx);
++        is_predicting.store(false);
+ 
+         char model_desc[128];
+         llama_model_desc(model, model_desc, sizeof(model_desc));
+diff --git a/llamaCpp/src/main/java/com/example/nssllama/NssLlamaBuildInfo.kt b/llamaCpp/src/main/java/com/example/nssllama/NssLlamaBuildInfo.kt
+index 4171ab7..2c21526 100644
+--- a/llamaCpp/src/main/java/com/example/nssllama/NssLlamaBuildInfo.kt
++++ b/llamaCpp/src/main/java/com/example/nssllama/NssLlamaBuildInfo.kt
+@@ -1,7 +1,7 @@
+ package com.example.nssllama
+ 
+ object NssLlamaBuildInfo {
+-    const val BUILD_ID = "nss-llamacpp-b576a1ff-a63e57a6-arm64-v8a"
++    const val BUILD_ID = "nss-llamacpp-b576a1ff-a63e57a6-lc1-arm64-v8a"
+     const val WRAPPER_COMMIT = "b576a1ff0a4dc013893c9aee69b1df70b3cc9794"
+     const val LLAMA_CPP_TREE = "a63e57a601701e87446c988bb344d8c9e660afe1"
+ }
+diff --git a/llamaCpp/src/main/java/org/nehuatl/llamacpp/LLamaContext.kt b/llamaCpp/src/main/java/org/nehuatl/llamacpp/LLamaContext.kt
+index 89ea8de..9b58cdd 100644
+--- a/llamaCpp/src/main/java/org/nehuatl/llamacpp/LLamaContext.kt
++++ b/llamaCpp/src/main/java/org/nehuatl/llamacpp/LLamaContext.kt
+@@ -1,6 +1,7 @@
+ package org.nehuatl.llamacpp
+ 
+ import java.io.File
++import java.util.concurrent.atomic.AtomicBoolean
+ 
+ class LlamaContext(
+     private val id: Int,
+@@ -8,6 +9,7 @@ class LlamaContext(
+ ) {
+ 
+     private var tokenCallback: ((String) -> Unit)? = null
++    private val released = AtomicBoolean(false)
+ 
+     companion object {
+         init {
+@@ -52,6 +54,9 @@ class LlamaContext(
+             // float rope_freq_scale
+             (params["rope_freq_scale"] as? Double)?.toFloat() ?: 0.0f
+         )
++        check(this.context != 0L) {
++            "Local LLM context initialization failed."
++        }
+         this.modelDetails = loadModelDetails(this.context).toMutableMap()
+     }
+ 
+@@ -100,6 +105,9 @@ class LlamaContext(
+     }
+ 
+     fun completion(params: Map<String, Any>): Map<String, Any> {
++        check(!released.get()) {
++            "Local LLM context is released."
++        }
+         //TODO: log->"completion start".v()
+         if (!params.containsKey("prompt")) {
+             throw IllegalArgumentException("Missing required parameter: prompt")
+@@ -173,7 +181,9 @@ class LlamaContext(
+     }
+ 
+     fun stopCompletion() {
+-        stopCompletion(context)
++        if (!released.get()) {
++            stopCompletion(context)
++        }
+     }
+ 
+     fun isPredicting(): Boolean {
+@@ -205,7 +215,9 @@ class LlamaContext(
+     }
+ 
+     fun release() {
+-        freeContext(context)
++        if (released.compareAndSet(false, true)) {
++            freeContext(context)
++        }
+     }
+ 
+     private external fun initContext(
+diff --git a/llamaCpp/src/main/cpp/CMakeLists.txt b/llamaCpp/src/main/cpp/CMakeLists.txt
+index d3255ed..4947e73 100644
+--- a/llamaCpp/src/main/cpp/CMakeLists.txt
++++ b/llamaCpp/src/main/cpp/CMakeLists.txt
+@@ -41,6 +41,7 @@ set(SOURCE_FILES
+     "${RNLLAMA_LIB_DIR}/unicode.cpp"
+     "${RNLLAMA_LIB_DIR}/llama.cpp"
+     "${RNLLAMA_LIB_DIR}/sgemm.cpp"
++    "${CMAKE_SOURCE_DIR}/nss-log-sink.cpp"
+     "${CMAKE_SOURCE_DIR}/jni.cpp"
+ )
+ 
+@@ -51,6 +52,7 @@ target_include_directories(rnllama_v8 PRIVATE "${RNLLAMA_LIB_DIR}")
+ target_compile_definitions(rnllama_v8 PRIVATE
+     NDEBUG
+     RNLLAMA_USE_FD_FILE
++    NSS_LLM_BASELINE_ONLY=1
+     NSS_LLM_DISABLE_RUNTIME_LOGS=1
+ )
+ 
+@@ -58,6 +60,7 @@ target_compile_options(rnllama_v8 PRIVATE
+     -O3
+     -pthread
+     -march=armv8-a
++    -mno-outline-atomics
+     -fvisibility=hidden
+     -fvisibility-inlines-hidden
+     -ffunction-sections
+@@ -74,4 +77,9 @@ target_link_options(rnllama_v8 PRIVATE
+     -Wl,--build-id=sha1
+     -Wl,--gc-sections
+     -Wl,--exclude-libs,ALL
++    -Wl,--wrap=getauxval
++    -Wl,--wrap=printf
++    -Wl,--wrap=stderr
++    -Wl,--wrap=stdout
++    -Wl,--wrap=syslog
+ )
+diff --git a/llamaCpp/src/main/cpp/nss-log-sink.cpp b/llamaCpp/src/main/cpp/nss-log-sink.cpp
+new file mode 100644
+index 0000000..e24bce1
+--- /dev/null
++++ b/llamaCpp/src/main/cpp/nss-log-sink.cpp
+@@ -0,0 +1,19 @@
++#include <cstdio>
++
++extern "C" {
++
++FILE * __wrap_stderr = nullptr;
++FILE * __wrap_stdout = nullptr;
++
++unsigned long __wrap_getauxval(unsigned long) {
++    return 0;
++}
++
++int __wrap_printf(const char *, ...) {
++    return 0;
++}
++
++void __wrap_syslog(int, const char *, ...) {
++}
++
++}
+diff --git a/llamaCpp/src/main/cpp/lib/ggml-aarch64.c b/llamaCpp/src/main/cpp/lib/ggml-aarch64.c
+index d52857f..aeda0b5 100644
+--- a/llamaCpp/src/main/cpp/lib/ggml-aarch64.c
++++ b/llamaCpp/src/main/cpp/lib/ggml-aarch64.c
+@@ -617,7 +617,7 @@ void lm_ggml_gemv_q4_0_4x4_q8_0(int n, float * restrict s, size_t bs, const void
+     UNUSED(ncols_interleaved);
+     UNUSED(blocklen);
+ 
+-#if ! ((defined(_MSC_VER)) && ! defined(__clang__)) && defined(__aarch64__) && defined(__ARM_NEON)
++#if !defined(NSS_LLM_BASELINE_ONLY) && ! ((defined(_MSC_VER)) && ! defined(__clang__)) && defined(__aarch64__) && defined(__ARM_NEON)
+     if (lm_ggml_cpu_has_neon()) {
+         const void * b_ptr = vx;
+         const void * a_ptr = vy;
+@@ -1039,7 +1039,7 @@ void lm_ggml_gemm_q4_0_4x4_q8_0(int n, float * restrict s, size_t bs, const void
+     UNUSED(ncols_interleaved);
+     UNUSED(blocklen);
+ 
+-#if ! ((defined(_MSC_VER)) && ! defined(__clang__)) && defined(__aarch64__) && defined(__ARM_NEON)
++#if !defined(NSS_LLM_BASELINE_ONLY) && ! ((defined(_MSC_VER)) && ! defined(__clang__)) && defined(__aarch64__) && defined(__ARM_NEON)
+     if (lm_ggml_cpu_has_neon()) {
+         const void * b_ptr = vx;
+         const void * a_ptr = vy;
+diff --git a/llamaCpp/src/main/cpp/lib/ggml.c b/llamaCpp/src/main/cpp/lib/ggml.c
+index e4ccb31..540f4c6 100644
+--- a/llamaCpp/src/main/cpp/lib/ggml.c
++++ b/llamaCpp/src/main/cpp/lib/ggml.c
+@@ -3743,7 +3743,12 @@ static inline int lm_ggml_up(int n, int m) {
+ #endif
+ 
+ static void lm_ggml_init_arm_arch_features(void) {
+-#if defined(__linux__) && defined(__aarch64__)
++#if defined(NSS_LLM_BASELINE_ONLY)
++    lm_ggml_arm_arch_features.has_neon = 1;
++    lm_ggml_arm_arch_features.has_i8mm = 0;
++    lm_ggml_arm_arch_features.has_sve = 0;
++    lm_ggml_arm_arch_features.sve_cnt = 0;
++#elif defined(__linux__) && defined(__aarch64__)
+     uint32_t hwcap = getauxval(AT_HWCAP);
+     uint32_t hwcap2 = getauxval(AT_HWCAP2);
+ 
