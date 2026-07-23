@@ -113,7 +113,9 @@ void registerSensitiveStateInvalidatorPurgeTests() {
             (ref) async => const SearchScopeConfig.defaults(),
           ),
           searchConfigurationProvider.overrideWith(
-            (ref) async => SearchConfiguration.defaults(),
+            (ref) async => SearchConfiguration.defaults().copyWith(
+              allowExternalProviderAccess: true,
+            ),
           ),
           searchIndexModelRevisionProvider.overrideWith(
             (ref, model) async => 'a' * 64,
