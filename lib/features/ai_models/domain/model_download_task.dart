@@ -7,6 +7,23 @@ enum ModelDownloadStatus {
   failed,
 }
 
+enum ModelDownloadPhase {
+  legacy,
+  queued,
+  probing,
+  downloading,
+  paused,
+  verifying,
+  staged,
+  runtimeValidating,
+  releasingSessions,
+  installing,
+  committing,
+  completed,
+  retryableFailed,
+  failed,
+}
+
 class ModelDownloadTask {
   const ModelDownloadTask({
     required this.id,
@@ -20,6 +37,19 @@ class ModelDownloadTask {
     required this.resumable,
     required this.createdAt,
     required this.updatedAt,
+    this.operationId,
+    this.attemptGeneration = 0,
+    this.releaseId,
+    this.artifactId,
+    this.sourceUrl,
+    this.stagingPath,
+    this.expectedChecksum,
+    this.expectedSizeBytes,
+    this.etag,
+    this.lastModified,
+    this.phase = ModelDownloadPhase.legacy,
+    this.retryReason,
+    this.receivedBytes,
   });
 
   final String id;
@@ -33,6 +63,21 @@ class ModelDownloadTask {
   final bool resumable;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String? operationId;
+  final int attemptGeneration;
+  final String? releaseId;
+  final String? artifactId;
+  final String? sourceUrl;
+  final String? stagingPath;
+  final String? expectedChecksum;
+  final int? expectedSizeBytes;
+  final String? etag;
+  final String? lastModified;
+  final ModelDownloadPhase phase;
+  final String? retryReason;
+  final int? receivedBytes;
+
+  int get effectiveReceivedBytes => receivedBytes ?? downloadedBytes;
 
   double? get progress {
     final total = totalBytes;
@@ -44,7 +89,8 @@ class ModelDownloadTask {
   }
 
   bool get isTerminal =>
-      status == ModelDownloadStatus.completed || status == ModelDownloadStatus.failed;
+      status == ModelDownloadStatus.completed ||
+      status == ModelDownloadStatus.failed;
 
   ModelDownloadTask copyWith({
     String? id,
@@ -61,6 +107,30 @@ class ModelDownloadTask {
     bool? resumable,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? operationId,
+    bool clearOperationId = false,
+    int? attemptGeneration,
+    String? releaseId,
+    bool clearReleaseId = false,
+    String? artifactId,
+    bool clearArtifactId = false,
+    String? sourceUrl,
+    bool clearSourceUrl = false,
+    String? stagingPath,
+    bool clearStagingPath = false,
+    String? expectedChecksum,
+    bool clearExpectedChecksum = false,
+    int? expectedSizeBytes,
+    bool clearExpectedSizeBytes = false,
+    String? etag,
+    bool clearEtag = false,
+    String? lastModified,
+    bool clearLastModified = false,
+    ModelDownloadPhase? phase,
+    String? retryReason,
+    bool clearRetryReason = false,
+    int? receivedBytes,
+    bool clearReceivedBytes = false,
   }) {
     return ModelDownloadTask(
       id: id ?? this.id,
@@ -69,11 +139,36 @@ class ModelDownloadTask {
       status: status ?? this.status,
       totalBytes: clearTotalBytes ? null : (totalBytes ?? this.totalBytes),
       downloadedBytes: downloadedBytes ?? this.downloadedBytes,
-      averageSpeed: clearAverageSpeed ? null : (averageSpeed ?? this.averageSpeed),
-      errorMessage: clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
+      averageSpeed: clearAverageSpeed
+          ? null
+          : (averageSpeed ?? this.averageSpeed),
+      errorMessage: clearErrorMessage
+          ? null
+          : (errorMessage ?? this.errorMessage),
       resumable: resumable ?? this.resumable,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      operationId: clearOperationId ? null : (operationId ?? this.operationId),
+      attemptGeneration: attemptGeneration ?? this.attemptGeneration,
+      releaseId: clearReleaseId ? null : (releaseId ?? this.releaseId),
+      artifactId: clearArtifactId ? null : (artifactId ?? this.artifactId),
+      sourceUrl: clearSourceUrl ? null : (sourceUrl ?? this.sourceUrl),
+      stagingPath: clearStagingPath ? null : (stagingPath ?? this.stagingPath),
+      expectedChecksum: clearExpectedChecksum
+          ? null
+          : (expectedChecksum ?? this.expectedChecksum),
+      expectedSizeBytes: clearExpectedSizeBytes
+          ? null
+          : (expectedSizeBytes ?? this.expectedSizeBytes),
+      etag: clearEtag ? null : (etag ?? this.etag),
+      lastModified: clearLastModified
+          ? null
+          : (lastModified ?? this.lastModified),
+      phase: phase ?? this.phase,
+      retryReason: clearRetryReason ? null : (retryReason ?? this.retryReason),
+      receivedBytes: clearReceivedBytes
+          ? null
+          : (receivedBytes ?? this.receivedBytes),
     );
   }
 }

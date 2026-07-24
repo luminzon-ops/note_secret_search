@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -6,6 +7,8 @@ import 'package:dio/dio.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+part 'model_download_service_transfer.dart';
 
 class ModelDownloadProgress {
   const ModelDownloadProgress({
@@ -19,6 +22,18 @@ class ModelDownloadProgress {
   final double? averageSpeedBytesPerSecond;
 }
 
+class ModelDownloadStagingTarget {
+  const ModelDownloadStagingTarget({
+    required this.localPath,
+    required this.stagingPath,
+    required this.metadataPath,
+  });
+
+  final String localPath;
+  final String stagingPath;
+  final String metadataPath;
+}
+
 class ModelDownloadResult {
   const ModelDownloadResult({
     required this.localPath,
@@ -27,6 +42,8 @@ class ModelDownloadResult {
     this.resumed = false,
     this.fellBackToRestart = false,
     this.resumable = true,
+    this.etag,
+    this.lastModified,
   });
 
   final String localPath;
@@ -35,6 +52,8 @@ class ModelDownloadResult {
   final bool resumed;
   final bool fellBackToRestart;
   final bool resumable;
+  final String? etag;
+  final String? lastModified;
 }
 
 class ModelDownloadTarget {
@@ -73,120 +92,117 @@ class ModelDownloadService {
     int resumeFromBytes = 0,
     required FutureOr<void> Function(ModelDownloadProgress progress) onProgress,
   }) async {
-    final targetFile = await _resolveTargetFile(
+    final target = await _resolveTarget(
       modelId: modelId,
       sourceUrl: sourceUrl,
       createParent: true,
     );
-    final targetExists = await targetFile.exists();
-    final target = ModelDownloadTarget(
-      localPath: targetFile.path,
-      exists: targetExists,
-      existingBytes: targetExists ? await targetFile.length() : 0,
+    return _run(
+      _Job(
+        taskId: taskId,
+        target: target,
+        modelId: modelId,
+        sourceUrl: sourceUrl,
+        checksum: _normalizeChecksum(expectedChecksum),
+        resumeFromBytes: resumeFromBytes,
+        onProgress: onProgress,
+      ),
+      installOnSuccess: true,
     );
-    final cancelToken = CancelToken();
-    _cancelTokens[taskId] = cancelToken;
-    final startedAt = DateTime.now();
-    final effectiveResumeFromBytes = target.exists
-        ? (resumeFromBytes <= target.existingBytes
-              ? resumeFromBytes
-              : target.existingBytes)
-        : 0;
-    var resumed = false;
-    var fellBackToRestart = false;
-    var resumable = effectiveResumeFromBytes > 0;
+  }
 
-    try {
-      if (effectiveResumeFromBytes > 0) {
-        final response = await _streamDownload(
-          sourceUrl: sourceUrl,
-          cancelToken: cancelToken,
-          rangeStart: effectiveResumeFromBytes,
-        );
-
-        final statusCode = response.statusCode ?? 200;
-        if (statusCode == HttpStatus.partialContent) {
-          resumed = true;
-          await _writeResponseBody(
-            targetFile: targetFile,
-            body: response.data,
-            append: true,
-            existingBytes: effectiveResumeFromBytes,
-            startedAt: startedAt,
-            onProgress: onProgress,
-          );
-        } else {
-          resumed = false;
-          resumable = false;
-          fellBackToRestart = true;
-          if (await targetFile.exists()) {
-            await targetFile.delete();
-          }
-          final fullResponse = await _streamDownload(
-            sourceUrl: sourceUrl,
-            cancelToken: cancelToken,
-          );
-          await _writeResponseBody(
-            targetFile: targetFile,
-            body: fullResponse.data,
-            append: false,
-            existingBytes: 0,
-            startedAt: startedAt,
-            onProgress: onProgress,
-          );
-        }
-      } else {
-        if (await targetFile.exists()) {
-          await targetFile.delete();
-        }
-        final response = await _streamDownload(
-          sourceUrl: sourceUrl,
-          cancelToken: cancelToken,
-        );
-        await _writeResponseBody(
-          targetFile: targetFile,
-          body: response.data,
-          append: false,
-          existingBytes: 0,
-          startedAt: startedAt,
-          onProgress: onProgress,
-        );
-      }
-
-      final fileLength = await targetFile.length();
-      final verifiedChecksum = await verifyChecksum(
-        filePath: targetFile.path,
-        expectedChecksum: expectedChecksum,
+  Future<ModelDownloadResult> stageArtifact({
+    required String taskId,
+    required String modelId,
+    required String operationId,
+    required String artifactId,
+    required String sourceUrl,
+    required String expectedChecksum,
+    required int expectedSizeBytes,
+    int resumeFromBytes = 0,
+    required FutureOr<void> Function(ModelDownloadProgress progress) onProgress,
+  }) async {
+    if (expectedSizeBytes <= 0) {
+      throw ArgumentError.value(
+        expectedSizeBytes,
+        'expectedSizeBytes',
+        'Signed artifact size must be positive.',
       );
-      _logger.info('model_download_completed');
-      return ModelDownloadResult(
-        localPath: targetFile.path,
-        totalBytes: fileLength,
-        verifiedChecksum: verifiedChecksum,
-        resumed: resumed,
-        fellBackToRestart: fellBackToRestart,
-        resumable: resumable,
-      );
-    } finally {
-      _cancelTokens.remove(taskId);
     }
+    final target = await resolveArtifactStagingTarget(
+      modelId: modelId,
+      operationId: operationId,
+      artifactId: artifactId,
+    );
+    return _run(
+      _Job(
+        taskId: taskId,
+        target: target,
+        modelId: modelId,
+        operationId: operationId,
+        artifactId: artifactId,
+        sourceUrl: sourceUrl,
+        checksum: _normalizeChecksum(expectedChecksum),
+        expectedSizeBytes: expectedSizeBytes,
+        resumeFromBytes: resumeFromBytes,
+        onProgress: onProgress,
+      ),
+      installOnSuccess: false,
+    );
+  }
+
+  Future<ModelDownloadStagingTarget> resolveStagingTarget({
+    required String modelId,
+    required String sourceUrl,
+  }) {
+    return _resolveTarget(
+      modelId: modelId,
+      sourceUrl: sourceUrl,
+      createParent: false,
+    );
+  }
+
+  Future<ModelDownloadStagingTarget> resolveArtifactStagingTarget({
+    required String modelId,
+    required String operationId,
+    required String artifactId,
+  }) async {
+    _validateModelId(modelId);
+    _validateIdentifier(operationId, 'operationId');
+    _validateIdentifier(artifactId, 'artifactId');
+    final root = await _applicationSupportDirectoryProvider();
+    final stagingDir = p.join(
+      root.path,
+      'models',
+      modelId,
+      '.staging',
+      operationId,
+    );
+    final stagingPath = p.join(stagingDir, '$artifactId.part');
+    return ModelDownloadStagingTarget(
+      localPath: stagingPath,
+      stagingPath: stagingPath,
+      metadataPath: p.join(stagingDir, '$artifactId.json'),
+    );
   }
 
   Future<ModelDownloadTarget> inspectDownloadTarget({
     required String modelId,
     required String sourceUrl,
   }) async {
-    final targetFile = await _resolveTargetFile(
+    final target = await resolveStagingTarget(
       modelId: modelId,
       sourceUrl: sourceUrl,
-      createParent: false,
     );
-    final exists = await targetFile.exists();
-    final existingBytes = exists ? await targetFile.length() : 0;
+    final finalFile = File(target.localPath);
+    final partialFile = File(target.stagingPath);
+    final finalExists = await finalFile.exists();
+    final partialExists = await partialFile.exists();
+    final existing = finalExists ? finalFile : partialFile;
     return ModelDownloadTarget(
-      localPath: targetFile.path,
-      exists: exists,
-      existingBytes: existingBytes,
+      localPath: target.localPath,
+      exists: finalExists || partialExists,
+      existingBytes: finalExists || partialExists ? await existing.length() : 0,
     );
   }
 
@@ -194,33 +210,26 @@ class ModelDownloadService {
     required String filePath,
     required String expectedChecksum,
   }) async {
-    final normalizedExpected = expectedChecksum.trim().toLowerCase();
-    if (normalizedExpected.isEmpty) {
-      throw StateError('Missing checksum for $filePath');
+    final expected = _normalizeChecksum(expectedChecksum);
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw StateError('Downloaded file is missing: $filePath');
     }
-    if (!normalizedExpected.startsWith('sha256:')) {
-      throw StateError('Unsupported checksum format: $expectedChecksum');
-    }
-
-    final digest = await sha256.bind(File(filePath).openRead()).first;
-    final verifiedChecksum = 'sha256:${digest.toString()}';
-    if (verifiedChecksum != normalizedExpected) {
+    final actual = 'sha256:${await sha256.bind(file.openRead()).first}';
+    if (actual != expected) {
       throw StateError('Checksum mismatch for $filePath');
     }
-
-    return verifiedChecksum;
+    return actual;
   }
 
   void cancel(String taskId) {
-    final token = _cancelTokens.remove(taskId);
-    token?.cancel('User paused download');
+    _cancelTokens.remove(taskId)?.cancel('User paused download');
   }
 
   Future<bool> fileExists(String? path) async {
     if (path == null || path.trim().isEmpty) {
       return false;
     }
-
     return File(path).exists();
   }
 
@@ -228,95 +237,157 @@ class ModelDownloadService {
     if (path == null || path.trim().isEmpty) {
       return;
     }
-
     final file = File(path);
     if (await file.exists()) {
       await file.delete();
       _logger.info('model_file_deleted');
     }
   }
+}
 
-  Future<Response<ResponseBody>> _streamDownload({
-    required String sourceUrl,
-    required CancelToken cancelToken,
-    int? rangeStart,
-  }) {
-    return _dio.get<ResponseBody>(
-      sourceUrl,
-      cancelToken: cancelToken,
-      options: Options(
-        responseType: ResponseType.stream,
-        headers: rangeStart == null
-            ? null
-            : <String, Object>{HttpHeaders.rangeHeader: 'bytes=$rangeStart-'},
+class _Job {
+  const _Job({
+    required this.taskId,
+    required this.target,
+    required this.modelId,
+    required this.sourceUrl,
+    required this.checksum,
+    this.operationId,
+    this.artifactId,
+    this.expectedSizeBytes,
+    required this.resumeFromBytes,
+    required this.onProgress,
+  });
+
+  final String taskId;
+  final ModelDownloadStagingTarget target;
+  final String modelId;
+  final String? operationId;
+  final String? artifactId;
+  final String sourceUrl;
+  final String checksum;
+  final int? expectedSizeBytes;
+  final int resumeFromBytes;
+  final FutureOr<void> Function(ModelDownloadProgress progress) onProgress;
+}
+
+class _Files {
+  _Files(ModelDownloadStagingTarget target)
+    : finalFile = File(target.localPath),
+      partial = File(target.stagingPath),
+      metadata = File(target.metadataPath);
+
+  final File finalFile;
+  final File partial;
+  final File metadata;
+}
+
+class _Validator {
+  const _Validator({this.etag, this.lastModified});
+
+  final String? etag;
+  final String? lastModified;
+  bool get resumable => _strongEtag(etag) || _validHttpDate(lastModified);
+  String? get ifRange => _strongEtag(etag)
+      ? etag!.trim()
+      : (_validHttpDate(lastModified) ? lastModified!.trim() : null);
+}
+
+class _State {
+  const _State({
+    this.modelId,
+    this.operationId,
+    this.artifactId,
+    required this.sourceUrl,
+    required this.checksum,
+    required this.totalBytes,
+    this.expectedSizeBytes,
+    required this.validator,
+  });
+
+  factory _State.fromJson(Map<String, dynamic> json) {
+    final sourceUrl = json['sourceUrl'];
+    final checksum = json['expectedChecksum'];
+    final total = json['totalBytes'];
+    final expectedSize = json['expectedSizeBytes'];
+    if (sourceUrl is! String ||
+        checksum is! String ||
+        (total != null && total is! int) ||
+        (expectedSize != null && expectedSize is! int)) {
+      throw const FormatException('Invalid download state.');
+    }
+    return _State(
+      modelId: json['modelId'] as String?,
+      operationId: json['operationId'] as String?,
+      artifactId: json['artifactId'] as String?,
+      sourceUrl: sourceUrl,
+      checksum: checksum,
+      totalBytes: total as int?,
+      expectedSizeBytes: expectedSize as int?,
+      validator: _Validator(
+        etag: json['etag'] as String?,
+        lastModified: json['lastModified'] as String?,
       ),
     );
   }
 
-  Future<void> _writeResponseBody({
-    required File targetFile,
-    required ResponseBody? body,
-    required bool append,
-    required int existingBytes,
-    required DateTime startedAt,
-    required FutureOr<void> Function(ModelDownloadProgress progress) onProgress,
-  }) async {
-    if (body == null) {
-      throw StateError('Download response body is empty.');
-    }
+  final String? modelId;
+  final String? operationId;
+  final String? artifactId;
+  final String sourceUrl;
+  final String checksum;
+  final int? totalBytes;
+  final int? expectedSizeBytes;
+  final _Validator validator;
 
-    final totalBodyBytes = body.contentLength >= 0 ? body.contentLength : null;
-    final totalBytes = totalBodyBytes == null
-        ? null
-        : totalBodyBytes + existingBytes;
-    var receivedBytes = existingBytes;
-    final sink = targetFile.openWrite(
-      mode: append ? FileMode.append : FileMode.writeOnly,
-    );
-
-    try {
-      await for (final chunk in body.stream) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        final elapsed = DateTime.now().difference(startedAt).inMilliseconds;
-        final speed = elapsed <= 0 ? null : receivedBytes * 1000 / elapsed;
-        await Future.sync(
-          () => onProgress(
-            ModelDownloadProgress(
-              receivedBytes: receivedBytes,
-              totalBytes: totalBytes,
-              averageSpeedBytesPerSecond: speed,
-            ),
-          ),
-        );
-      }
-    } finally {
-      await sink.flush();
-      await sink.close();
-    }
+  bool matches(_Job job) {
+    final identityMatches = job.operationId == null && job.artifactId == null
+        ? operationId == null && artifactId == null
+        : modelId == job.modelId &&
+              operationId == job.operationId &&
+              artifactId == job.artifactId;
+    return sourceUrl == job.sourceUrl &&
+        checksum == job.checksum &&
+        identityMatches &&
+        expectedSizeBytes == job.expectedSizeBytes;
   }
 
-  Future<File> _resolveTargetFile({
-    required String modelId,
-    required String sourceUrl,
-    required bool createParent,
-  }) async {
-    final appDir = await _applicationSupportDirectoryProvider();
-    final modelDir = Directory(p.join(appDir.path, 'models', modelId));
-    if (createParent && !await modelDir.exists()) {
-      await modelDir.create(recursive: true);
-    }
+  Map<String, Object?> toJson() => <String, Object?>{
+    'version': 2,
+    'modelId': modelId,
+    'operationId': operationId,
+    'artifactId': artifactId,
+    'sourceUrl': sourceUrl,
+    'expectedChecksum': checksum,
+    'totalBytes': totalBytes,
+    'expectedSizeBytes': expectedSizeBytes,
+    'etag': validator.etag,
+    'lastModified': validator.lastModified,
+  };
+}
 
-    final uri = Uri.parse(sourceUrl);
-    final rawFileName = p.basename(uri.path);
-    final safeFileName = _sanitizeFileName(
-      rawFileName.isEmpty ? '$modelId.bin' : rawFileName,
-    );
-    return File(p.join(modelDir.path, safeFileName));
+class _DownloadIntegrityException extends StateError {
+  _DownloadIntegrityException(super.message);
+}
+
+bool _strongEtag(String? value) {
+  final etag = value?.trim();
+  return _notEmpty(etag) &&
+      !etag!.toUpperCase().startsWith('W/') &&
+      etag.startsWith('"') &&
+      etag.endsWith('"');
+}
+
+bool _notEmpty(String? value) => value != null && value.trim().isNotEmpty;
+
+bool _validHttpDate(String? value) {
+  if (!_notEmpty(value)) {
+    return false;
   }
-
-  String _sanitizeFileName(String value) {
-    final sanitized = value.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    return sanitized.isEmpty ? 'artifact.bin' : sanitized;
+  try {
+    HttpDate.parse(value!.trim());
+    return true;
+  } on HttpException {
+    return false;
   }
 }

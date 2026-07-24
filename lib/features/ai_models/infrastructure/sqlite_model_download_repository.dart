@@ -2,6 +2,7 @@ import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
+import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 class SqliteModelDownloadRepository implements ModelDownloadRepository {
   SqliteModelDownloadRepository({required AppDatabase database})
@@ -64,49 +65,7 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
 
   @override
   Future<void> saveTask(ModelDownloadTask task) {
-    return _database.run((db) async {
-      await db.rawInsert(
-        '''
-        INSERT INTO ${DatabaseSchema.downloadTasks} (
-          id,
-          model_id,
-          source_id,
-          status,
-          total_bytes,
-          downloaded_bytes,
-          average_speed,
-          error_message,
-          resumable,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          model_id = excluded.model_id,
-          source_id = excluded.source_id,
-          status = excluded.status,
-          total_bytes = excluded.total_bytes,
-          downloaded_bytes = excluded.downloaded_bytes,
-          average_speed = excluded.average_speed,
-          error_message = excluded.error_message,
-          resumable = excluded.resumable,
-          created_at = excluded.created_at,
-          updated_at = excluded.updated_at
-        ''',
-        <Object?>[
-          task.id,
-          task.modelId,
-          task.sourceId,
-          task.status.name,
-          task.totalBytes,
-          task.downloadedBytes,
-          task.averageSpeed,
-          task.errorMessage,
-          task.resumable ? 1 : 0,
-          task.createdAt.millisecondsSinceEpoch,
-          task.updatedAt.millisecondsSinceEpoch,
-        ],
-      );
-    });
+    return _database.run((db) => upsertModelDownloadTask(db, task));
   }
 
   ModelDownloadTask _mapTask(Map<String, Object?> row) {
@@ -122,6 +81,20 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
       resumable: (row['resumable'] as int? ?? 1) == 1,
       createdAt: DateTime.fromMillisecondsSinceEpoch(row['created_at']! as int),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(row['updated_at']! as int),
+      operationId: row['operation_id'] as String?,
+      attemptGeneration: row['attempt_generation'] as int? ?? 0,
+      releaseId: row['release_id'] as String?,
+      artifactId: row['artifact_id'] as String?,
+      sourceUrl: row['source_url'] as String?,
+      stagingPath: row['staging_path'] as String?,
+      expectedChecksum: row['expected_sha256'] as String?,
+      expectedSizeBytes: row['expected_size_bytes'] as int?,
+      etag: row['etag'] as String?,
+      lastModified: row['last_modified'] as String?,
+      phase: _parsePhase(row['checkpoint'] as String?),
+      retryReason: row['retry_reason'] as String?,
+      receivedBytes:
+          row['received_bytes'] as int? ?? row['downloaded_bytes'] as int? ?? 0,
     );
   }
 
@@ -131,4 +104,123 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
       orElse: () => ModelDownloadStatus.idle,
     );
   }
+
+  ModelDownloadPhase _parsePhase(String? raw) {
+    if (raw == null) {
+      return ModelDownloadPhase.legacy;
+    }
+    return ModelDownloadPhase.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () => ModelDownloadPhase.legacy,
+    );
+  }
+}
+
+Future<void> upsertModelDownloadTask(
+  DatabaseExecutor db,
+  ModelDownloadTask task,
+) async {
+  await db.rawInsert(
+    '''
+        INSERT INTO ${DatabaseSchema.downloadTasks} (
+          id,
+          model_id,
+          source_id,
+          status,
+          total_bytes,
+          downloaded_bytes,
+          average_speed,
+          error_message,
+          resumable,
+          created_at,
+          updated_at,
+          operation_id,
+          attempt_generation,
+          release_id,
+          artifact_id,
+          source_url,
+          staging_path,
+          expected_sha256,
+          expected_size_bytes,
+          checkpoint,
+          retry_reason,
+          received_bytes,
+          etag,
+          last_modified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          model_id = excluded.model_id,
+          source_id = excluded.source_id,
+          status = excluded.status,
+          total_bytes = excluded.total_bytes,
+          downloaded_bytes = excluded.downloaded_bytes,
+          average_speed = excluded.average_speed,
+          error_message = excluded.error_message,
+          resumable = excluded.resumable,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          operation_id = excluded.operation_id,
+          attempt_generation = excluded.attempt_generation,
+          release_id = excluded.release_id,
+          artifact_id = excluded.artifact_id,
+          source_url = excluded.source_url,
+          staging_path = excluded.staging_path,
+          expected_sha256 = excluded.expected_sha256,
+          expected_size_bytes = excluded.expected_size_bytes,
+          checkpoint = excluded.checkpoint,
+          retry_reason = excluded.retry_reason,
+          received_bytes = excluded.received_bytes,
+          etag = excluded.etag,
+          last_modified = excluded.last_modified
+        WHERE
+          excluded.attempt_generation > download_tasks.attempt_generation
+          OR (
+            excluded.attempt_generation = download_tasks.attempt_generation
+            AND excluded.model_id = download_tasks.model_id
+            AND excluded.source_id = download_tasks.source_id
+            AND excluded.operation_id IS download_tasks.operation_id
+            AND excluded.release_id IS download_tasks.release_id
+            AND excluded.artifact_id IS download_tasks.artifact_id
+            AND excluded.source_url IS download_tasks.source_url
+            AND excluded.staging_path IS download_tasks.staging_path
+            AND excluded.expected_sha256 IS download_tasks.expected_sha256
+            AND excluded.expected_size_bytes IS download_tasks.expected_size_bytes
+            AND excluded.updated_at >= download_tasks.updated_at
+            AND (
+              download_tasks.checkpoint = 'legacy'
+              OR excluded.received_bytes >= download_tasks.received_bytes
+            )
+            AND (
+              download_tasks.checkpoint NOT IN ('completed', 'failed')
+              OR excluded.checkpoint = download_tasks.checkpoint
+            )
+          )
+        ''',
+    <Object?>[
+      task.id,
+      task.modelId,
+      task.sourceId,
+      task.status.name,
+      task.totalBytes,
+      task.downloadedBytes,
+      task.averageSpeed,
+      task.errorMessage,
+      task.resumable ? 1 : 0,
+      task.createdAt.millisecondsSinceEpoch,
+      task.updatedAt.millisecondsSinceEpoch,
+      task.operationId,
+      task.attemptGeneration,
+      task.releaseId,
+      task.artifactId,
+      task.sourceUrl,
+      task.stagingPath,
+      task.expectedChecksum,
+      task.expectedSizeBytes ?? task.totalBytes,
+      task.phase.name,
+      task.retryReason,
+      task.effectiveReceivedBytes,
+      task.etag,
+      task.lastModified,
+    ],
+  );
 }
