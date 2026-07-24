@@ -8,6 +8,7 @@ class _CatalogEntryTile extends ConsumerStatefulWidget {
     required this.runtimeState,
     required this.llmRuntimeState,
     required this.allTasks,
+    required this.capabilityAssessment,
   });
 
   final ModelCatalogEntry entry;
@@ -16,6 +17,7 @@ class _CatalogEntryTile extends ConsumerStatefulWidget {
   final EmbeddingEngineState? runtimeState;
   final LlmRuntimeState? llmRuntimeState;
   final List<ModelDownloadTask> allTasks;
+  final ModelCapabilityAssessment? capabilityAssessment;
 
   @override
   ConsumerState<_CatalogEntryTile> createState() => _CatalogEntryTileState();
@@ -37,6 +39,8 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
   ModelRegistryEntry? get installedEntry => widget.installedEntry;
   EmbeddingEngineState? get runtimeState => widget.runtimeState;
   LlmRuntimeState? get llmRuntimeState => widget.llmRuntimeState;
+  ModelCapabilityAssessment? get capabilityAssessment =>
+      widget.capabilityAssessment;
 
   String? get _activeLlmModelId {
     final activeLlmAsync = ref.watch(activeLocalLlmModelProvider);
@@ -168,8 +172,18 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
             Chip(label: Text('推荐 ${entry.recommendedTier}')),
             Chip(label: Text('RAM ≥ ${entry.minRamMb}MB')),
             Chip(label: Text(_formatSize(entry.sizeBytes))),
+            if (capabilityAssessment?.isDefaultRecommendation == true)
+              const Chip(label: Text('设备默认推荐')),
           ],
         ),
+        if (capabilityAssessment != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            capabilityAssessment!.explanation,
+            key: ValueKey<String>('model-capability-${entry.id}'),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
         const SizedBox(height: 8),
         Text(
           formatCatalogDeploymentStatus(

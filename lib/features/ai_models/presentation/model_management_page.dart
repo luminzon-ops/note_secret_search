@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
+import 'package:note_secret_search/features/ai_models/application/device_capability_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_capability_assessment.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/ai_models/presentation/device_tier_card.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_download_status_view_model.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_presentation_formatter.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
@@ -27,13 +30,18 @@ class ModelManagementPage extends ConsumerWidget {
     final llmRuntimeStatesAsync = ref.watch(llmRuntimeStatesProvider);
     final selectionAsync = ref.watch(activeModelSelectionProvider);
     final activeLlmAsync = ref.watch(activeLocalLlmModelProvider);
+    final deviceProfileAsync = ref.watch(deviceProfileProvider);
+    final capabilityReportAsync = ref.watch(deviceCapabilityReportProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('模型')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const _DeviceTierCard(),
+          DeviceTierCard(
+            profile: deviceProfileAsync.valueOrNull,
+            capabilityReport: capabilityReportAsync.valueOrNull,
+          ),
           const SizedBox(height: 16),
           const _ModelDownloadNoticeCard(),
           const SizedBox(height: 16),
@@ -119,27 +127,6 @@ class ModelManagementPage extends ConsumerWidget {
   }
 }
 
-class _DeviceTierCard extends StatelessWidget {
-  const _DeviceTierCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Card(
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('设备能力评级'),
-            SizedBox(height: 8),
-            Text('当前为 MVP 保守实现：先展示模型目录，再接设备探测、下载状态机与安装校验。'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ModelDownloadNoticeCard extends StatelessWidget {
   const _ModelDownloadNoticeCard();
 
@@ -202,15 +189,15 @@ class _InstalledModelsCard extends ConsumerWidget {
                   final runtimeState = runtimeStates[entry.id];
                   final llmRuntimeState = llmRuntimeStates[entry.id];
                   final cleanupOnly = entry.type == 'multimodal_llm';
-                  final isRuntimeReady = !cleanupOnly &&
+                  final isRuntimeReady =
+                      !cleanupOnly &&
                       switch (entry.type) {
                         'embedding' => runtimeState?.ready == true,
                         'llm' => llmRuntimeState?.ready == true,
                         _ => entry.isInstalled,
                       };
                   final isBroken =
-                      !cleanupOnly &&
-                      (!isRuntimeReady || !entry.filePresent);
+                      !cleanupOnly && (!isRuntimeReady || !entry.filePresent);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -277,10 +264,7 @@ class _InstalledModelsCard extends ConsumerWidget {
                             OutlinedButton.icon(
                               onPressed: () =>
                                   controller.deleteInstalledModel(entry.id),
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 18,
-                              ),
+                              icon: const Icon(Icons.delete_outline, size: 18),
                               label: const Text('删除本地模型'),
                             )
                           else ...[
@@ -345,6 +329,9 @@ class _CatalogSection extends ConsumerWidget {
     final installedAsync = ref.watch(modelRegistryEntriesProvider);
     final runtimeStatesAsync = ref.watch(embeddingRuntimeStatesProvider);
     final llmRuntimeStatesAsync = ref.watch(llmRuntimeStatesProvider);
+    final capabilityReport = ref
+        .watch(deviceCapabilityReportProvider)
+        .valueOrNull;
 
     if (entries.isEmpty) {
       return const Card(
@@ -384,6 +371,8 @@ class _CatalogSection extends ConsumerWidget {
                             runtimeState: runtimeStates[entry.id],
                             llmRuntimeState: llmRuntimeStates[entry.id],
                             allTasks: _tasksFor(entry.id),
+                            capabilityAssessment: capabilityReport
+                                ?.maybeAssessmentFor(entry.id),
                           );
                         },
                       ),
