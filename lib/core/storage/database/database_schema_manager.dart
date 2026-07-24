@@ -1,12 +1,11 @@
-import 'dart:convert';
-
-import 'package:crypto/crypto.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5_data_migration.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5_objects.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5_rebuild.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v5.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v6_migration.dart';
 import 'package:note_secret_search/core/storage/database/database_schema_v7_migration.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_v8_migration.dart';
+import 'package:note_secret_search/core/storage/database/database_schema_fingerprint.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
 abstract interface class DatabaseSchemaController {
@@ -48,6 +47,10 @@ enum DatabaseMigrationCheckpoint {
   v7SchemaObjectsCreated,
   v7PostconditionsValidated,
   v7LedgerWritten,
+  v8BaselineValidated,
+  v8SchemaObjectsCreated,
+  v8PostconditionsValidated,
+  v8LedgerWritten,
 }
 
 typedef DatabaseMigrationCheckpointCallback =
@@ -61,7 +64,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
            nowMilliseconds ?? (() => DateTime.now().millisecondsSinceEpoch),
        _onMigrationCheckpoint = onMigrationCheckpoint;
 
-  static const int latestVersion = 7;
+  static const int latestVersion = 8;
   static const String v5MigrationName = 'database_schema_v5';
   static const String v5MigrationChecksum =
       '72961f4e65faded09a0b1afdfdadee2b'
@@ -80,11 +83,19 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   static const String v7MigrationChecksum =
       'e153245d83136f5423a8f9500fd2d492'
       'f4fb68b2e655b27c9267f38716be75b6';
-  static const String migrationName = v7MigrationName;
-  static const String migrationChecksum = v7MigrationChecksum;
-  static const String expectedFingerprint =
+  static const String v7ExpectedFingerprint =
       'c5e2ab18baf246a5e786d4689eb36e93'
       '9ca929d15644fd496a3f5daf5a6cbaeb';
+  static const String v8MigrationName = 'database_schema_v8';
+  static const String v8MigrationChecksum =
+      'fa0300b2d01ef06c992bba3fe443bbdb'
+      'ed989d5c36ca9852839f2bd4f78c9747';
+  static const String v8ExpectedFingerprint =
+      '28184e5d81049ee0c64a440b175b093a'
+      '010989ec455c3740e36366f47961bcb4';
+  static const String migrationName = v8MigrationName;
+  static const String migrationChecksum = v8MigrationChecksum;
+  static const String expectedFingerprint = v8ExpectedFingerprint;
 
   final int Function() _nowMilliseconds;
   final DatabaseMigrationCheckpointCallback? _onMigrationCheckpoint;
@@ -138,6 +149,18 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       checksum: v7MigrationChecksum,
     );
     await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8BaselineValidated);
+    await DatabaseSchemaV8Migration.apply(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8SchemaObjectsCreated);
+    await DatabaseSchemaV8Migration.validatePostconditions(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8PostconditionsValidated);
+    await _writeLedger(
+      database,
+      version: 8,
+      name: v8MigrationName,
+      checksum: v8MigrationChecksum,
+    );
+    await _checkpoint(DatabaseMigrationCheckpoint.v8LedgerWritten);
     await _validateTargetStructure(database);
   }
 
@@ -147,7 +170,10 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     int oldVersion,
     int newVersion,
   ) async {
-    if ((oldVersion != 4 && oldVersion != 5 && oldVersion != 6) ||
+    if ((oldVersion != 4 &&
+            oldVersion != 5 &&
+            oldVersion != 6 &&
+            oldVersion != 7) ||
         newVersion != latestVersion) {
       throw const DatabaseSchemaException('database_schema_unsupported');
     }
@@ -171,22 +197,39 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       );
       await _validateV6Baseline(database);
       await _checkpoint(DatabaseMigrationCheckpoint.v6LedgerWritten);
-    } else {
+    } else if (oldVersion == 6) {
       await _validateV6Baseline(database);
     }
-    await _checkpoint(DatabaseMigrationCheckpoint.v7BaselineValidated);
-    await DatabaseSchemaV7Migration.apply(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v7SchemaObjectsCreated);
-    await DatabaseSchemaV7Migration.validatePostconditions(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v7PostconditionsValidated);
+    if (oldVersion <= 6) {
+      await _checkpoint(DatabaseMigrationCheckpoint.v7BaselineValidated);
+      await DatabaseSchemaV7Migration.apply(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v7SchemaObjectsCreated);
+      await DatabaseSchemaV7Migration.validatePostconditions(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v7PostconditionsValidated);
+      await _writeLedger(
+        database,
+        version: 7,
+        name: v7MigrationName,
+        checksum: v7MigrationChecksum,
+      );
+      await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
+    } else {
+      await _validateV7Baseline(database);
+      await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
+    }
+    await _checkpoint(DatabaseMigrationCheckpoint.v8BaselineValidated);
+    await DatabaseSchemaV8Migration.apply(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8SchemaObjectsCreated);
+    await DatabaseSchemaV8Migration.validatePostconditions(database);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8PostconditionsValidated);
     await _writeLedger(
       database,
-      version: 7,
-      name: v7MigrationName,
-      checksum: v7MigrationChecksum,
+      version: 8,
+      name: v8MigrationName,
+      checksum: v8MigrationChecksum,
     );
     await _validateTargetStructure(database);
-    await _checkpoint(DatabaseMigrationCheckpoint.v7LedgerWritten);
+    await _checkpoint(DatabaseMigrationCheckpoint.v8LedgerWritten);
   }
 
   @override
@@ -204,83 +247,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
   }
 
   Future<String> fingerprint(DatabaseExecutor database) async {
-    final inventory = <Object?>[];
-    final tables = await database.rawQuery('''
-      SELECT name, sql FROM sqlite_master
-      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-      ORDER BY name
-      ''');
-    for (final tableRow in tables) {
-      final table = tableRow['name']! as String;
-      final columns = await database.rawQuery(
-        'PRAGMA table_info(${_quoteIdentifier(table)})',
-      );
-      final canonicalColumns =
-          columns
-              .map(
-                (row) => <Object?>[
-                  row['name'],
-                  row['type'].toString().toUpperCase(),
-                  row['notnull'],
-                  row['dflt_value']?.toString(),
-                  row['pk'],
-                ],
-              )
-              .toList()
-            ..sort(
-              (left, right) =>
-                  (left[0]! as String).compareTo(right[0]! as String),
-            );
-      final foreignKeys = await database.rawQuery(
-        'PRAGMA foreign_key_list(${_quoteIdentifier(table)})',
-      );
-      final canonicalForeignKeys =
-          foreignKeys
-              .map(
-                (row) => <Object?>[
-                  row['id'],
-                  row['seq'],
-                  row['table'],
-                  row['from'],
-                  row['to'],
-                  row['on_update'],
-                  row['on_delete'],
-                  row['match'],
-                ],
-              )
-              .toList()
-            ..sort(_compareCanonicalRows);
-      inventory.add(<Object?>[
-        'table',
-        table,
-        canonicalColumns,
-        canonicalForeignKeys,
-        _normalizeSql(tableRow['sql']?.toString()),
-      ]);
-    }
-
-    final objects = await database.rawQuery('''
-      SELECT type, name, tbl_name, sql FROM sqlite_master
-      WHERE type IN ('index', 'trigger') AND name NOT LIKE 'sqlite_%'
-      ORDER BY type, name
-      ''');
-    for (final row in objects) {
-      final type = row['type']! as String;
-      final name = row['name']! as String;
-      final columns = type == 'index'
-          ? (await database.rawQuery(
-              'PRAGMA index_info(${_quoteIdentifier(name)})',
-            )).map((column) => column['name']).toList(growable: false)
-          : const <Object?>[];
-      inventory.add(<Object?>[
-        type,
-        name,
-        row['tbl_name'],
-        columns,
-        _normalizeSql(row['sql']?.toString()),
-      ]);
-    }
-    return sha256.convert(utf8.encode(jsonEncode(inventory))).toString();
+    return DatabaseSchemaFingerprint.compute(database);
   }
 
   Future<void> _ensureDefaultVault(DatabaseExecutor database) async {
@@ -333,6 +300,7 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       (5, v5MigrationName, v5MigrationChecksum),
       (6, v6MigrationName, v6MigrationChecksum),
       (7, v7MigrationName, v7MigrationChecksum),
+      (8, v8MigrationName, v8MigrationChecksum),
     ].where((entry) => entry.$1 <= throughVersion).toList(growable: false);
     if (rows.length != expected.length) {
       throw const DatabaseSchemaException('database_schema_invalid');
@@ -457,6 +425,14 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
     }
   }
 
+  Future<void> _validateV7Baseline(Database database) async {
+    await _validateIntegrity(database);
+    await _validateLedgerThrough(database, 7);
+    if (await fingerprint(database) != v7ExpectedFingerprint) {
+      throw const DatabaseSchemaException('database_schema_invalid');
+    }
+  }
+
   Future<void> _checkpoint(DatabaseMigrationCheckpoint checkpoint) async {
     await _onMigrationCheckpoint?.call(checkpoint);
   }
@@ -465,14 +441,4 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
 Future<int> _pragmaInt(DatabaseExecutor database, String pragma) async {
   final row = (await database.rawQuery('PRAGMA $pragma')).single;
   return row.values.single as int;
-}
-
-int _compareCanonicalRows(List<Object?> left, List<Object?> right) {
-  return jsonEncode(left).compareTo(jsonEncode(right));
-}
-
-String _quoteIdentifier(String value) => '"${value.replaceAll('"', '""')}"';
-
-String? _normalizeSql(String? value) {
-  return value?.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
 }

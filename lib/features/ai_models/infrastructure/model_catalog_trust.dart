@@ -20,12 +20,14 @@ class ModelCatalogAcceptanceState {
     required this.payloadDigest,
     required this.keyId,
     this.minimumCatalogVersion = 1,
+    this.schemaVersion = ModelCatalogVerifier.schemaVersion,
   });
 
   final int catalogVersion;
   final String payloadDigest;
   final String keyId;
   final int minimumCatalogVersion;
+  final int schemaVersion;
 }
 
 abstract interface class ModelCatalogAcceptanceStore {

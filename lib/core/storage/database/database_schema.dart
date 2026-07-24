@@ -8,6 +8,9 @@ abstract final class DatabaseSchema {
   static const String embeddingIndexSets = 'embedding_index_sets';
   static const String embeddingChunks = 'embedding_chunks';
   static const String modelRegistry = 'model_registry';
+  static const String modelCatalogState = 'model_catalog_state';
+  static const String modelRegistryArtifacts = 'model_registry_artifacts';
+  static const String modelInstallJournal = 'model_install_journal';
   static const String modelCatalogEntries = 'model_catalog_entries';
   static const String downloadTasks = 'download_tasks';
   static const String providerConfigs = 'provider_configs';

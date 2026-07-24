@@ -24,7 +24,7 @@ void main() {
 
     expect(snapshot.version, DatabaseSchemaManager.latestVersion);
     expect(snapshot.foreignKeys, 1);
-    expect(snapshot.ledger, hasLength(3));
+    expect(snapshot.ledger, hasLength(4));
     expect(snapshot.defaultVaults, const <Map<String, Object?>>[
       <String, Object?>{'id': 'default'},
     ]);

@@ -16,7 +16,7 @@ void main() {
 
   for (final testCase in _migrationCases) {
     test(
-      '${testCase.name} upgrades through frozen v4 into validated v7',
+      '${testCase.name} upgrades through frozen v4 into validated v8',
       () async {
         final fixture = await createPhase3DatabaseMigrationFixture(
           testCase.version,
@@ -325,15 +325,26 @@ Future<void> _expectSchemaGate(
   Database database,
   DatabaseSchemaManager manager,
 ) async {
-  expect(await phase3PragmaInt(database, 'user_version'), 7);
+  expect(await phase3PragmaInt(database, 'user_version'), 8);
   expect(await phase3PragmaInt(database, 'foreign_keys'), 1);
   expect(
     (await database.rawQuery('PRAGMA quick_check')).single.values.single,
     'ok',
   );
   expect(await database.rawQuery('PRAGMA foreign_key_check'), isEmpty);
-  expect(await phase3ObjectNames(database, 'table'), phase4V6Tables);
-  expect(await phase3ObjectNames(database, 'index'), phase4V6Indexes);
+  expect(await phase3ObjectNames(database, 'table'), <String>{
+    ...phase4V6Tables,
+    'model_catalog_state',
+    'model_registry_artifacts',
+    'model_install_journal',
+  });
+  expect(await phase3ObjectNames(database, 'index'), <String>{
+    ...phase4V6Indexes,
+    'idx_model_registry_artifacts_model_release',
+    'uq_download_tasks_identity',
+    'idx_download_tasks_operation_checkpoint',
+    'idx_model_install_journal_model_phase',
+  });
   expect(await phase3ObjectNames(database, 'trigger'), phase4V6Triggers);
   expect(
     await manager.fingerprint(database),
@@ -358,6 +369,12 @@ Future<void> _expectSchemaGate(
         'version': 7,
         'name': DatabaseSchemaManager.v7MigrationName,
         'checksum': DatabaseSchemaManager.v7MigrationChecksum,
+        'applied_at': 1_800_000_000_000,
+      },
+      <String, Object?>{
+        'version': 8,
+        'name': DatabaseSchemaManager.v8MigrationName,
+        'checksum': DatabaseSchemaManager.v8MigrationChecksum,
         'applied_at': 1_800_000_000_000,
       },
     ],

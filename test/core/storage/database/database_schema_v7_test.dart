@@ -43,7 +43,7 @@ void main() {
 
     expect(
       await DatabaseSchemaManager().fingerprint(database),
-      DatabaseSchemaManager.expectedFingerprint,
+      DatabaseSchemaManager.v7ExpectedFingerprint,
     );
   });
 
@@ -55,7 +55,7 @@ void main() {
     final database = await fixture.openManaged(manager);
     addTearDown(database.close);
 
-    expect(await _pragmaInt(database, 'user_version'), 7);
+    expect(await _pragmaInt(database, 'user_version'), 8);
     expect(
       await _columnNames(database, 'chat_messages'),
       containsAll(<String>{
@@ -69,7 +69,7 @@ void main() {
         'schema_migrations',
         orderBy: 'version ASC',
       )).map((row) => row['version']),
-      <Object?>[5, 6, 7],
+      <Object?>[5, 6, 7, 8],
     );
 
     await database.insert('provider_configs', _providerRow('provider-a'));
@@ -98,7 +98,7 @@ void main() {
       addTearDown(database.close);
       await manager.validate(database);
 
-      expect(await _pragmaInt(database, 'user_version'), 7);
+      expect(await _pragmaInt(database, 'user_version'), 8);
       expect(
         await database.query(
           'provider_configs',
@@ -131,7 +131,7 @@ void main() {
           'schema_migrations',
           orderBy: 'version ASC',
         )).map((row) => row['version']),
-        <Object?>[5, 6, 7],
+        <Object?>[5, 6, 7, 8],
       );
       expect(
         await manager.fingerprint(database),
@@ -180,7 +180,7 @@ void main() {
     final upgraded = await fixture.openManaged(retry);
     addTearDown(upgraded.close);
     await retry.validate(upgraded);
-    expect(await _pragmaInt(upgraded, 'user_version'), 7);
+    expect(await _pragmaInt(upgraded, 'user_version'), 8);
   });
 }
 

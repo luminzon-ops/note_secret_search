@@ -25,7 +25,7 @@ void main() {
   });
 
   test(
-    'fresh database creates validated schema v7 with ordered ledger',
+    'fresh database creates validated schema v8 with ordered ledger',
     () async {
       final fixture = await _DatabaseFixture.create();
       addTearDown(fixture.dispose);
@@ -35,13 +35,13 @@ void main() {
       addTearDown(database.close);
 
       await manager.validate(database);
-      expect(await _pragmaInt(database, 'user_version'), 7);
+      expect(await _pragmaInt(database, 'user_version'), 8);
       expect(
         (await database.query(
           'schema_migrations',
           orderBy: 'version ASC',
         )).map((row) => row['version']),
-        <Object?>[5, 6, 7],
+        <Object?>[5, 6, 7, 8],
       );
       expect(
         await _tableNames(database),
@@ -78,7 +78,7 @@ void main() {
   );
 
   test(
-    'v5 to v7 discards legacy JSON vectors and keeps business data',
+    'v5 to v8 discards legacy JSON vectors and keeps business data',
     () async {
       final fixture = await _DatabaseFixture.create();
       addTearDown(fixture.dispose);
@@ -88,7 +88,7 @@ void main() {
       final database = await fixture.openManaged(manager);
       addTearDown(database.close);
 
-      expect(await _pragmaInt(database, 'user_version'), 7);
+      expect(await _pragmaInt(database, 'user_version'), 8);
       expect(await database.query('embedding_index_sets'), isEmpty);
       expect(await database.query('embedding_chunks'), isEmpty);
       expect(
@@ -105,7 +105,7 @@ void main() {
           'schema_migrations',
           orderBy: 'version ASC',
         )).map((row) => row['version']),
-        <Object?>[5, 6, 7],
+        <Object?>[5, 6, 7, 8],
       );
     },
   );
@@ -137,7 +137,7 @@ void main() {
     final upgraded = await fixture.openManaged(retry);
     addTearDown(upgraded.close);
     await retry.validate(upgraded);
-    expect(await _pragmaInt(upgraded, 'user_version'), 7);
+    expect(await _pragmaInt(upgraded, 'user_version'), 8);
     expect(await upgraded.query('embedding_chunks'), isEmpty);
   });
 
