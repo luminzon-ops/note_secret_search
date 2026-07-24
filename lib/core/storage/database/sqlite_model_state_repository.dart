@@ -100,6 +100,7 @@ class SqliteModelStateRepository {
         'expectedSizeBytes',
       );
     }
+    _validateArtifactVerification(artifact);
     return _database.run((db) {
       return db.rawInsert(
         '''
@@ -180,6 +181,11 @@ class SqliteModelStateRepository {
     if (checkpoint.attemptGeneration < 0 || checkpoint.receivedBytes < 0) {
       throw ArgumentError.value(checkpoint, 'checkpoint');
     }
+    _requireStagingPath(
+      checkpoint.stagingPath,
+      operationId: checkpoint.operationId,
+      name: 'stagingPath',
+    );
     return _database.run((db) {
       return db.rawInsert(
         '''
@@ -231,6 +237,29 @@ class SqliteModelStateRepository {
           checkpoint = excluded.checkpoint,
           retry_reason = excluded.retry_reason,
           received_bytes = excluded.received_bytes
+        WHERE
+          excluded.attempt_generation > download_tasks.attempt_generation
+          OR (
+            excluded.attempt_generation = download_tasks.attempt_generation
+            AND excluded.model_id = download_tasks.model_id
+            AND excluded.source_id = download_tasks.source_id
+            AND excluded.operation_id IS download_tasks.operation_id
+            AND excluded.release_id IS download_tasks.release_id
+            AND excluded.artifact_id IS download_tasks.artifact_id
+            AND excluded.source_url IS download_tasks.source_url
+            AND excluded.staging_path IS download_tasks.staging_path
+            AND excluded.expected_sha256 IS download_tasks.expected_sha256
+            AND excluded.expected_size_bytes IS download_tasks.expected_size_bytes
+            AND excluded.updated_at >= download_tasks.updated_at
+            AND (
+              download_tasks.checkpoint = 'legacy'
+              OR excluded.received_bytes >= download_tasks.received_bytes
+            )
+            AND (
+              download_tasks.checkpoint NOT IN ('completed', 'failed')
+              OR excluded.checkpoint = download_tasks.checkpoint
+            )
+          )
         ''',
         <Object?>[
           checkpoint.taskId,
@@ -279,6 +308,15 @@ class SqliteModelStateRepository {
     if (journal.attemptGeneration < 0) {
       throw ArgumentError.value(journal.attemptGeneration, 'attemptGeneration');
     }
+    _requireRevisionPath(journal.oldRevision, 'oldRevision');
+    _requireRevisionPath(journal.newRevision, 'newRevision');
+    _requireStagingPath(
+      journal.stagingRoot,
+      operationId: journal.operationId,
+      name: 'stagingRoot',
+      allowRoot: true,
+    );
+    _requireRevisionPath(journal.targetRoot, 'targetRoot');
     return _database.run((db) {
       return db.rawInsert(
         '''
@@ -312,6 +350,21 @@ class SqliteModelStateRepository {
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           completed_at = excluded.completed_at
+        WHERE
+          excluded.model_id = model_install_journal.model_id
+          AND excluded.operation_type = model_install_journal.operation_type
+          AND (
+            excluded.attempt_generation > model_install_journal.attempt_generation
+            OR (
+              excluded.attempt_generation = model_install_journal.attempt_generation
+              AND excluded.release_id IS model_install_journal.release_id
+              AND excluded.updated_at >= model_install_journal.updated_at
+              AND (
+                model_install_journal.phase NOT IN ('completed', 'failed')
+                OR excluded.phase = model_install_journal.phase
+              )
+            )
+          )
         ''',
         <Object?>[
           journal.operationId,
@@ -393,6 +446,66 @@ void _requireRelativePath(String value, String name) {
       value,
       name,
       'A normalized relative path is required.',
+    );
+  }
+}
+
+void _validateArtifactVerification(ModelRegistryArtifactRecord artifact) {
+  if (artifact.expectedSizeBytes <= 0) {
+    throw ArgumentError.value(
+      artifact.expectedSizeBytes,
+      'expectedSizeBytes',
+      'A positive artifact size is required.',
+    );
+  }
+  const trustedStates = <String>{'verified', 'staged', 'installed'};
+  if (!trustedStates.contains(artifact.state)) {
+    return;
+  }
+  if (artifact.verifiedSizeBytes != artifact.expectedSizeBytes ||
+      artifact.verifiedSha256 != artifact.expectedSha256 ||
+      artifact.verifiedAt == null) {
+    throw ArgumentError.value(
+      artifact,
+      'artifact',
+      'Trusted artifact state requires matching verified identity.',
+    );
+  }
+}
+
+void _requireStagingPath(
+  String? value, {
+  required String? operationId,
+  required String name,
+  bool allowRoot = false,
+}) {
+  if (value == null) {
+    return;
+  }
+  _requireRelativePath(value, name);
+  final root = '.staging/$operationId';
+  if (operationId == null ||
+      operationId.trim().isEmpty ||
+      (!allowRoot && !value.startsWith('$root/')) ||
+      (allowRoot && value != root && !value.startsWith('$root/'))) {
+    throw ArgumentError.value(
+      value,
+      name,
+      'A model-owned staging path is required.',
+    );
+  }
+}
+
+void _requireRevisionPath(String? value, String name) {
+  if (value == null) {
+    return;
+  }
+  _requireRelativePath(value, name);
+  if (!value.startsWith('revisions/')) {
+    throw ArgumentError.value(
+      value,
+      name,
+      'A model-owned revision path is required.',
     );
   }
 }

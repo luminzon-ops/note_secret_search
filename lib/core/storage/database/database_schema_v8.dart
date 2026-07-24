@@ -30,9 +30,9 @@ abstract final class DatabaseSchemaV8 {
     CREATE TABLE IF NOT EXISTS model_registry_artifacts (
       model_id TEXT NOT NULL
         REFERENCES model_registry(id) ON DELETE CASCADE,
-      release_id TEXT NOT NULL,
-      artifact_id TEXT NOT NULL,
-      role TEXT NOT NULL,
+      release_id TEXT NOT NULL CHECK (length(trim(release_id)) > 0),
+      artifact_id TEXT NOT NULL CHECK (length(trim(artifact_id)) > 0),
+      role TEXT NOT NULL CHECK (length(trim(role)) > 0),
       required INTEGER NOT NULL DEFAULT 1
         CHECK (required IN (0, 1)),
       relative_path TEXT NOT NULL COLLATE NOCASE
@@ -53,7 +53,7 @@ abstract final class DatabaseSchemaV8 {
           AND relative_path NOT LIKE '%/..'
         ),
       expected_size_bytes INTEGER NOT NULL
-        CHECK (expected_size_bytes >= 0),
+        CHECK (expected_size_bytes > 0),
       expected_sha256 TEXT NOT NULL
         CHECK (
           length(expected_sha256) = 71
@@ -61,7 +61,7 @@ abstract final class DatabaseSchemaV8 {
           AND substr(expected_sha256, 8) NOT GLOB '*[^0-9a-f]*'
         ),
       verified_size_bytes INTEGER
-        CHECK (verified_size_bytes IS NULL OR verified_size_bytes >= 0),
+        CHECK (verified_size_bytes IS NULL OR verified_size_bytes > 0),
       verified_sha256 TEXT
         CHECK (
           verified_sha256 IS NULL
@@ -83,7 +83,15 @@ abstract final class DatabaseSchemaV8 {
             'orphaned'
           )
         ),
-      verified_at INTEGER,
+      verified_at INTEGER CHECK (verified_at IS NULL OR verified_at >= 0),
+      CHECK (
+        state NOT IN ('verified', 'staged', 'installed')
+        OR (
+          verified_size_bytes = expected_size_bytes
+          AND verified_sha256 = expected_sha256
+          AND verified_at IS NOT NULL
+        )
+      ),
       PRIMARY KEY (model_id, release_id, artifact_id),
       UNIQUE (model_id, release_id, relative_path)
     )
@@ -128,6 +136,39 @@ abstract final class DatabaseSchemaV8 {
 
   static const String addOperationIdStatement =
       'ALTER TABLE download_tasks ADD COLUMN operation_id TEXT';
+  static const String addActiveReleaseIdStatement =
+      'ALTER TABLE model_registry ADD COLUMN active_release_id TEXT '
+      'CHECK (active_release_id IS NULL OR length(trim(active_release_id)) > 0)';
+  static const String addCatalogVersionStatement =
+      'ALTER TABLE model_registry ADD COLUMN catalog_version INTEGER '
+      'CHECK (catalog_version IS NULL OR catalog_version >= 1)';
+  static const String addCatalogDigestStatement =
+      'ALTER TABLE model_registry ADD COLUMN catalog_digest TEXT '
+      'CHECK (catalog_digest IS NULL OR ('
+      'length(catalog_digest) = 64 '
+      "AND catalog_digest NOT GLOB '*[^0-9a-f]*'"
+      '))';
+  static const String addInstallGenerationStatement =
+      'ALTER TABLE model_registry ADD COLUMN install_generation INTEGER '
+      'NOT NULL DEFAULT 0 CHECK (install_generation >= 0)';
+  static const String addRevisionRootStatement =
+      'ALTER TABLE model_registry ADD COLUMN revision_root TEXT COLLATE NOCASE '
+      'CHECK (revision_root IS NULL OR ('
+      'length(revision_root) > 0 '
+      "AND substr(revision_root, 1, 1) <> '/' "
+      "AND substr(revision_root, -1, 1) <> '/' "
+      'AND instr(revision_root, char(92)) = 0 '
+      "AND instr(revision_root, ':') = 0 "
+      "AND instr(revision_root, '//') = 0 "
+      "AND revision_root <> '.' "
+      "AND revision_root <> '..' "
+      "AND revision_root NOT LIKE './%' "
+      "AND revision_root NOT LIKE '../%' "
+      "AND revision_root NOT LIKE '%/./%' "
+      "AND revision_root NOT LIKE '%/../%' "
+      "AND revision_root NOT LIKE '%/.' "
+      "AND revision_root NOT LIKE '%/..'"
+      '))';
   static const String addAttemptGenerationStatement =
       'ALTER TABLE download_tasks ADD COLUMN attempt_generation INTEGER '
       'NOT NULL DEFAULT 0 CHECK (attempt_generation >= 0)';
@@ -186,6 +227,29 @@ abstract final class DatabaseSchemaV8 {
     SET received_bytes = COALESCE(downloaded_bytes, 0)
     WHERE received_bytes = 0 AND COALESCE(downloaded_bytes, 0) > 0
     ''';
+  static const String quarantineLegacyRegistryStatement = '''
+    UPDATE model_registry
+    SET enabled = 0,
+        integrity_status = 'unknown'
+    WHERE active_release_id IS NULL
+       OR catalog_version IS NULL
+       OR catalog_digest IS NULL
+       OR install_generation <= 0
+       OR revision_root IS NULL
+    ''';
+  static const String quarantineLegacyDownloadTasksStatement = '''
+    UPDATE download_tasks
+    SET status = 'paused',
+        resumable = 0,
+        retry_reason = COALESCE(retry_reason, 'legacy_identity_untrusted')
+    WHERE operation_id IS NULL
+       OR release_id IS NULL
+       OR artifact_id IS NULL
+       OR source_url IS NULL
+       OR staging_path IS NULL
+       OR expected_sha256 IS NULL
+       OR expected_size_bytes IS NULL
+    ''';
 
   static const String createRegistryArtifactsModelIndexStatement = '''
     CREATE INDEX IF NOT EXISTS idx_model_registry_artifacts_model_release
@@ -205,6 +269,36 @@ abstract final class DatabaseSchemaV8 {
     CREATE INDEX IF NOT EXISTS idx_model_install_journal_model_phase
     ON model_install_journal(model_id, phase, updated_at DESC)
     ''';
+  static const String createTrustedRegistryInsertTriggerStatement = '''
+    CREATE TRIGGER IF NOT EXISTS trg_model_registry_trusted_insert
+    BEFORE INSERT ON model_registry
+    WHEN NEW.enabled = 1 OR NEW.integrity_status = 'valid'
+    BEGIN
+      SELECT CASE WHEN
+        NEW.active_release_id IS NULL
+        OR NEW.catalog_version IS NULL
+        OR NEW.catalog_digest IS NULL
+        OR NEW.install_generation <= 0
+        OR NEW.revision_root IS NULL
+      THEN RAISE(ABORT, 'model_registry_trust_required') END;
+    END
+    ''';
+  static const String createTrustedRegistryUpdateTriggerStatement = '''
+    CREATE TRIGGER IF NOT EXISTS trg_model_registry_trusted_update
+    BEFORE UPDATE OF enabled, integrity_status, active_release_id,
+      catalog_version, catalog_digest, install_generation, revision_root
+    ON model_registry
+    WHEN NEW.enabled = 1 OR NEW.integrity_status = 'valid'
+    BEGIN
+      SELECT CASE WHEN
+        NEW.active_release_id IS NULL
+        OR NEW.catalog_version IS NULL
+        OR NEW.catalog_digest IS NULL
+        OR NEW.install_generation <= 0
+        OR NEW.revision_root IS NULL
+      THEN RAISE(ABORT, 'model_registry_trust_required') END;
+    END
+    ''';
 
   static const Map<String, String> downloadTaskColumnStatements =
       <String, String>{
@@ -222,11 +316,23 @@ abstract final class DatabaseSchemaV8 {
         'retry_reason': addRetryReasonStatement,
         'received_bytes': addReceivedBytesStatement,
       };
+  static const Map<String, String> registryColumnStatements = <String, String>{
+    'active_release_id': addActiveReleaseIdStatement,
+    'catalog_version': addCatalogVersionStatement,
+    'catalog_digest': addCatalogDigestStatement,
+    'install_generation': addInstallGenerationStatement,
+    'revision_root': addRevisionRootStatement,
+  };
 
   static const List<String> migrationStatements = <String>[
     catalogStateCreateStatement,
     registryArtifactsCreateStatement,
     installJournalCreateStatement,
+    addActiveReleaseIdStatement,
+    addCatalogVersionStatement,
+    addCatalogDigestStatement,
+    addInstallGenerationStatement,
+    addRevisionRootStatement,
     addOperationIdStatement,
     addAttemptGenerationStatement,
     addReleaseIdStatement,
@@ -241,9 +347,13 @@ abstract final class DatabaseSchemaV8 {
     addRetryReasonStatement,
     addReceivedBytesStatement,
     backfillReceivedBytesStatement,
+    quarantineLegacyRegistryStatement,
+    quarantineLegacyDownloadTasksStatement,
     createRegistryArtifactsModelIndexStatement,
     createDownloadIdentityIndexStatement,
     createDownloadOperationIndexStatement,
     createInstallJournalModelIndexStatement,
+    createTrustedRegistryInsertTriggerStatement,
+    createTrustedRegistryUpdateTriggerStatement,
   ];
 }

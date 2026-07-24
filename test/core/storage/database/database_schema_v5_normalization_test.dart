@@ -100,7 +100,13 @@ void main() {
         for (final row in await database.query('model_registry'))
           row['id']! as String: row,
       };
-      expect(models['model-1']!['integrity_status'], 'valid');
+      expect(models['model-1']!['integrity_status'], 'unknown');
+      expect(models['model-1']!['enabled'], 0);
+      expect(models['model-1']!['active_release_id'], isNull);
+      expect(models['model-1']!['catalog_version'], isNull);
+      expect(models['model-1']!['catalog_digest'], isNull);
+      expect(models['model-1']!['install_generation'], 0);
+      expect(models['model-1']!['revision_root'], isNull);
       expect(
         jsonDecode(models['model-1']!['artifact_paths_json']! as String),
         const <Object?>[
@@ -170,6 +176,14 @@ void main() {
           'local_path': '/models/tokenizer.json',
         },
       ]);
+      final state = (await database.query(
+        'model_registry',
+        columns: const <String>['enabled', 'integrity_status'],
+        where: 'id = ?',
+        whereArgs: const <Object>['model-multi'],
+      )).single;
+      expect(state['enabled'], 0);
+      expect(state['integrity_status'], 'unknown');
     },
   );
 }

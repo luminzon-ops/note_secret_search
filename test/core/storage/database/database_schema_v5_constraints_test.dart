@@ -305,8 +305,8 @@ Future<void> _insertOwnershipRows(Database database) async {
     'type': 'embedding',
     'provider': 'local',
     'name': 'Model',
-    'integrity_status': 'valid',
-    'enabled': 1,
+    'integrity_status': 'unknown',
+    'enabled': 0,
   });
 }
 
@@ -383,4 +383,6 @@ const _requiredV8Triggers = <String>{
   'trg_tags_vault_owner_update',
   'trg_secret_vault_tag_owner_update',
   'trg_note_vault_tag_owner_update',
+  'trg_model_registry_trusted_insert',
+  'trg_model_registry_trusted_update',
 };

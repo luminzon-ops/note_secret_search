@@ -68,7 +68,7 @@ void main() {
           releaseId: 'release-1',
           artifactId: 'artifact-model',
           sourceUrl: 'https://example.test/model.bin',
-          stagingPath: 'models/model-1/.staging/operation-1/model.bin.part',
+          stagingPath: '.staging/operation-1/model.bin.part',
           expectedSha256: 'sha256:${'b' * 64}',
           expectedSizeBytes: 1024,
           etag: '"etag-1"',
@@ -88,10 +88,10 @@ void main() {
           attemptGeneration: 2,
           operationType: 'install',
           phase: 'staged',
-          oldRevision: 'revision-1',
-          newRevision: 'revision-2',
-          stagingRoot: 'models/model-1/.staging/operation-1',
-          targetRoot: 'models/model-1/revisions/revision-2',
+          oldRevision: 'revisions/1',
+          newRevision: 'revisions/2',
+          stagingRoot: '.staging/operation-1',
+          targetRoot: 'revisions/2',
           errorCode: null,
           createdAt: 104,
           updatedAt: 105,
@@ -125,7 +125,7 @@ void main() {
       releaseId: 'release-2',
       artifactId: 'artifact-2',
       sourceUrl: 'https://example.test/other.bin',
-      stagingPath: 'models/model-2/.staging/operation-2/other.part',
+      stagingPath: '.staging/operation-2/other.part',
       expectedSha256: 'sha256:${'c' * 64}',
       expectedSizeBytes: 2,
       etag: null,
@@ -264,6 +264,142 @@ void main() {
           expectedSha256: 'sha256:ABC',
           checkpoint: 'queued',
           receivedBytes: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('trusted artifact state requires matching verified identity', () async {
+    await database.run((db) {
+      return db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
+        'id': 'model-verified',
+        'type': 'llm',
+        'provider': 'builtin',
+        'name': 'Verified model',
+        'enabled': 0,
+        'integrity_status': 'unknown',
+      });
+    });
+
+    expect(
+      () => repository.saveRegistryArtifact(
+        ModelRegistryArtifactRecord(
+          modelId: 'model-verified',
+          releaseId: 'release-1',
+          artifactId: 'model',
+          role: 'model',
+          required: true,
+          relativePath: 'model.gguf',
+          expectedSizeBytes: 10,
+          expectedSha256: 'sha256:${'a' * 64}',
+          verifiedSizeBytes: 10,
+          verifiedSha256: 'sha256:${'b' * 64}',
+          state: 'installed',
+          verifiedAt: 1,
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test(
+    'late install journal generations and terminal regressions are ignored',
+    () async {
+      const completed = ModelInstallJournalRecord(
+        operationId: 'operation-cas',
+        modelId: 'model-cas',
+        releaseId: 'release-2',
+        attemptGeneration: 2,
+        operationType: 'replace',
+        phase: 'completed',
+        oldRevision: 'revisions/1',
+        newRevision: 'revisions/2',
+        stagingRoot: '.staging/operation-cas',
+        targetRoot: 'revisions/2',
+        createdAt: 1,
+        updatedAt: 3,
+        completedAt: 3,
+      );
+      await repository.saveInstallJournal(completed);
+      await repository.saveInstallJournal(
+        const ModelInstallJournalRecord(
+          operationId: 'operation-cas',
+          modelId: 'model-cas',
+          releaseId: 'release-1',
+          attemptGeneration: 1,
+          operationType: 'replace',
+          phase: 'installing',
+          oldRevision: 'revisions/0',
+          newRevision: 'revisions/1',
+          stagingRoot: '.staging/operation-cas',
+          targetRoot: 'revisions/1',
+          createdAt: 1,
+          updatedAt: 4,
+        ),
+      );
+      await repository.saveInstallJournal(
+        const ModelInstallJournalRecord(
+          operationId: 'operation-cas',
+          modelId: 'model-cas',
+          releaseId: 'release-2',
+          attemptGeneration: 2,
+          operationType: 'replace',
+          phase: 'installing',
+          oldRevision: 'revisions/1',
+          newRevision: 'revisions/2',
+          stagingRoot: '.staging/operation-cas',
+          targetRoot: 'revisions/2',
+          createdAt: 1,
+          updatedAt: 5,
+        ),
+      );
+
+      final saved = await repository.loadInstallJournal('operation-cas');
+      expect(saved?.attemptGeneration, 2);
+      expect(saved?.releaseId, 'release-2');
+      expect(saved?.phase, 'completed');
+      expect(saved?.completedAt, 3);
+    },
+  );
+
+  test('checkpoint and journal paths must remain model relative', () {
+    expect(
+      () => repository.saveDownloadCheckpoint(
+        ModelDownloadCheckpointRecord(
+          taskId: 'task-outside',
+          modelId: 'model-1',
+          sourceId: 'source-1',
+          status: 'queued',
+          operationId: 'operation-1',
+          attemptGeneration: 1,
+          releaseId: 'release-1',
+          artifactId: 'model',
+          sourceUrl: 'https://example.test/model.bin',
+          stagingPath: '../other-model/model.part',
+          expectedSha256: 'sha256:${'a' * 64}',
+          expectedSizeBytes: 1,
+          checkpoint: 'queued',
+          receivedBytes: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => repository.saveInstallJournal(
+        const ModelInstallJournalRecord(
+          operationId: 'operation-outside',
+          modelId: 'model-1',
+          releaseId: 'release-1',
+          attemptGeneration: 1,
+          operationType: 'install',
+          phase: 'queued',
+          stagingRoot: '../other-model',
+          targetRoot: 'revisions/1',
           createdAt: 1,
           updatedAt: 1,
         ),

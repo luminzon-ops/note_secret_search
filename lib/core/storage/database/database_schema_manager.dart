@@ -70,29 +70,29 @@ class DatabaseSchemaManager implements DatabaseSchemaController {
       '72961f4e65faded09a0b1afdfdadee2b'
       '3fb4cf0bb016a4519692adfdb0adeca8';
   static const String v5ExpectedFingerprint =
-      '788a6b784f6c1e31db0382fa84c663a5'
-      'dcd00e6a99dfc4913bb0ef551a311c0c';
+      'dcec265bbd279f8088a8dbca31242754'
+      '6a474fa5106edac60966e3e3b6cae81b';
   static const String v6MigrationName = 'database_schema_v6';
   static const String v6MigrationChecksum =
       'e91b4d4595beab7f2343439d177d28fa'
       '570300b27eb33de89f5f2447f1d14183';
   static const String v6ExpectedFingerprint =
-      'cdcfbebdc3dff31920a81cb4e6890f12'
-      '28fbdd4a18a226407e67a568d2e1ad41';
+      'ab3649ff2c2397ed655bc7c45f606dea'
+      '2ed14610069ed05a9f72f61a2fa4983f';
   static const String v7MigrationName = 'database_schema_v7';
   static const String v7MigrationChecksum =
       'e153245d83136f5423a8f9500fd2d492'
       'f4fb68b2e655b27c9267f38716be75b6';
   static const String v7ExpectedFingerprint =
-      'c5e2ab18baf246a5e786d4689eb36e93'
-      '9ca929d15644fd496a3f5daf5a6cbaeb';
+      '435752f06ba70ddb6c950a40e1e22800'
+      '35e265e126a393a9c86f0dfbfbaa5ce1';
   static const String v8MigrationName = 'database_schema_v8';
   static const String v8MigrationChecksum =
-      'fa0300b2d01ef06c992bba3fe443bbdb'
-      'ed989d5c36ca9852839f2bd4f78c9747';
+      '40226d53b87b924cae397ef5433ac4da'
+      'ae66fda9a52c430f056574df8b50139f';
   static const String v8ExpectedFingerprint =
-      '28184e5d81049ee0c64a440b175b093a'
-      '010989ec455c3740e36366f47961bcb4';
+      '586f0ef04efbc7895481b34e3ccbc3ae'
+      '557a20ccad096ff2234cb4379b1670d8';
   static const String migrationName = v8MigrationName;
   static const String migrationChecksum = v8MigrationChecksum;
   static const String expectedFingerprint = v8ExpectedFingerprint;

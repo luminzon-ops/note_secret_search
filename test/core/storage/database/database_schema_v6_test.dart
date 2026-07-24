@@ -358,8 +358,8 @@ Future<void> _insertSearchOwners(Database database) async {
     'provider': 'local',
     'name': 'Embedding',
     'version': '1',
-    'integrity_status': 'valid',
-    'enabled': 1,
+    'integrity_status': 'unknown',
+    'enabled': 0,
   });
 }
 

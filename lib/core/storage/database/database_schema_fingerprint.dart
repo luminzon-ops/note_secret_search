@@ -92,5 +92,48 @@ int _compareCanonicalRows(List<Object?> left, List<Object?> right) {
 String _quoteIdentifier(String value) => '"${value.replaceAll('"', '""')}"';
 
 String? _normalizeSql(String? value) {
-  return value?.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  if (value == null) {
+    return null;
+  }
+  final buffer = StringBuffer();
+  var quote = 0;
+  var pendingSpace = false;
+  for (var index = 0; index < value.length; index += 1) {
+    final code = value.codeUnitAt(index);
+    if (quote != 0) {
+      buffer.writeCharCode(code);
+      if (code == quote) {
+        if (quote == 0x27 &&
+            index + 1 < value.length &&
+            value.codeUnitAt(index + 1) == 0x27) {
+          buffer.writeCharCode(value.codeUnitAt(++index));
+        } else {
+          quote = 0;
+        }
+      }
+      continue;
+    }
+    if (code == 0x27 || code == 0x22 || code == 0x60 || code == 0x5b) {
+      if (pendingSpace && buffer.isNotEmpty) {
+        buffer.write(' ');
+      }
+      pendingSpace = false;
+      quote = code == 0x5b ? 0x5d : code;
+      buffer.writeCharCode(code);
+      continue;
+    }
+    if (code == 0x20 || code == 0x09 || code == 0x0a || code == 0x0d) {
+      pendingSpace = buffer.isNotEmpty;
+      continue;
+    }
+    if (pendingSpace) {
+      buffer.write(' ');
+      pendingSpace = false;
+    }
+    buffer.writeCharCode(_asciiLowercase(code));
+  }
+  return buffer.toString().trim();
 }
+
+int _asciiLowercase(int code) =>
+    code >= 0x41 && code <= 0x5a ? code + 0x20 : code;

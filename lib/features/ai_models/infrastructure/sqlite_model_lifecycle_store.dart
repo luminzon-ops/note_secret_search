@@ -5,6 +5,7 @@ import 'package:note_secret_search/core/storage/database/database_schema.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_registry_repository.dart';
 import 'package:sqflite_sqlcipher/sqlite_api.dart';
 
@@ -124,104 +125,12 @@ Future<void> _upsertRegistry(
   DatabaseExecutor executor,
   ModelRegistryEntry entry,
 ) async {
-  await executor.rawInsert(
-    '''
-    INSERT INTO ${DatabaseSchema.modelRegistry} (
-      id,
-      type,
-      provider,
-      name,
-      version,
-      size_bytes,
-      quantization,
-      min_ram_mb,
-      recommended_tier,
-      local_path,
-      artifact_paths_json,
-      checksum,
-      integrity_status,
-      enabled,
-      installed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      type = excluded.type,
-      provider = excluded.provider,
-      name = excluded.name,
-      version = excluded.version,
-      size_bytes = excluded.size_bytes,
-      quantization = excluded.quantization,
-      min_ram_mb = excluded.min_ram_mb,
-      recommended_tier = excluded.recommended_tier,
-      local_path = excluded.local_path,
-      artifact_paths_json = excluded.artifact_paths_json,
-      checksum = excluded.checksum,
-      integrity_status = excluded.integrity_status,
-      enabled = excluded.enabled,
-      installed_at = excluded.installed_at
-    ''',
-    <Object?>[
-      entry.id,
-      entry.type,
-      entry.provider,
-      entry.name,
-      entry.version,
-      entry.sizeBytes,
-      entry.quantization,
-      entry.minRamMb,
-      entry.recommendedTier,
-      entry.localPath,
-      encodeModelArtifactPathsForSqlite(entry.artifacts),
-      entry.checksum,
-      entry.integrityStatus.name,
-      entry.enabled ? 1 : 0,
-      entry.installedAt?.millisecondsSinceEpoch,
-    ],
-  );
+  await writeModelRegistryEntry(executor, entry);
 }
 
 Future<void> _upsertTask(
   DatabaseExecutor executor,
   ModelDownloadTask task,
 ) async {
-  await executor.rawInsert(
-    '''
-    INSERT INTO ${DatabaseSchema.downloadTasks} (
-      id,
-      model_id,
-      source_id,
-      status,
-      total_bytes,
-      downloaded_bytes,
-      average_speed,
-      error_message,
-      resumable,
-      created_at,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      model_id = excluded.model_id,
-      source_id = excluded.source_id,
-      status = excluded.status,
-      total_bytes = excluded.total_bytes,
-      downloaded_bytes = excluded.downloaded_bytes,
-      average_speed = excluded.average_speed,
-      error_message = excluded.error_message,
-      resumable = excluded.resumable,
-      created_at = excluded.created_at,
-      updated_at = excluded.updated_at
-    ''',
-    <Object?>[
-      task.id,
-      task.modelId,
-      task.sourceId,
-      task.status.name,
-      task.totalBytes,
-      task.downloadedBytes,
-      task.averageSpeed,
-      task.errorMessage,
-      task.resumable ? 1 : 0,
-      task.createdAt.millisecondsSinceEpoch,
-      task.updatedAt.millisecondsSinceEpoch,
-    ],
-  );
+  await upsertModelDownloadTask(executor, task);
 }

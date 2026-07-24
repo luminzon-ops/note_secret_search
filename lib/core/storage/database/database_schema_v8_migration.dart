@@ -7,6 +7,18 @@ abstract final class DatabaseSchemaV8Migration {
     await database.execute(DatabaseSchemaV8.registryArtifactsCreateStatement);
     await database.execute(DatabaseSchemaV8.installJournalCreateStatement);
 
+    final registryColumns = {
+      for (final row in await database.rawQuery(
+        'PRAGMA table_info(model_registry)',
+      ))
+        row['name']! as String,
+    };
+    for (final entry in DatabaseSchemaV8.registryColumnStatements.entries) {
+      if (!registryColumns.contains(entry.key)) {
+        await database.execute(entry.value);
+      }
+    }
+
     final columns = {
       for (final row in await database.rawQuery(
         'PRAGMA table_info(download_tasks)',
@@ -26,6 +38,10 @@ abstract final class DatabaseSchemaV8Migration {
     if (receivedBytesAdded) {
       await database.execute(DatabaseSchemaV8.backfillReceivedBytesStatement);
     }
+    await database.execute(DatabaseSchemaV8.quarantineLegacyRegistryStatement);
+    await database.execute(
+      DatabaseSchemaV8.quarantineLegacyDownloadTasksStatement,
+    );
 
     await database.execute(
       DatabaseSchemaV8.createRegistryArtifactsModelIndexStatement,
@@ -38,6 +54,12 @@ abstract final class DatabaseSchemaV8Migration {
     );
     await database.execute(
       DatabaseSchemaV8.createInstallJournalModelIndexStatement,
+    );
+    await database.execute(
+      DatabaseSchemaV8.createTrustedRegistryInsertTriggerStatement,
+    );
+    await database.execute(
+      DatabaseSchemaV8.createTrustedRegistryUpdateTriggerStatement,
     );
   }
 
@@ -67,6 +89,17 @@ abstract final class DatabaseSchemaV8Migration {
     )) {
       throw const DatabaseSchemaV8MigrationException();
     }
+    final registryColumns = {
+      for (final row in await database.rawQuery(
+        'PRAGMA table_info(model_registry)',
+      ))
+        row['name']! as String,
+    };
+    if (!registryColumns.containsAll(
+      DatabaseSchemaV8.registryColumnStatements.keys,
+    )) {
+      throw const DatabaseSchemaV8MigrationException();
+    }
 
     final indexes = {
       for (final row in await database.rawQuery(
@@ -79,6 +112,18 @@ abstract final class DatabaseSchemaV8Migration {
       'uq_download_tasks_identity',
       'idx_download_tasks_operation_checkpoint',
       'idx_model_install_journal_model_phase',
+    })) {
+      throw const DatabaseSchemaV8MigrationException();
+    }
+    final triggers = {
+      for (final row in await database.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger'",
+      ))
+        row['name']! as String,
+    };
+    if (!triggers.containsAll(<String>{
+      'trg_model_registry_trusted_insert',
+      'trg_model_registry_trusted_update',
     })) {
       throw const DatabaseSchemaV8MigrationException();
     }

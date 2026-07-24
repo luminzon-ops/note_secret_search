@@ -69,6 +69,16 @@ void main() {
         'received_bytes',
       }),
     );
+    expect(
+      await _columnNames(database, 'model_registry'),
+      containsAll(<String>{
+        'active_release_id',
+        'catalog_version',
+        'catalog_digest',
+        'install_generation',
+        'revision_root',
+      }),
+    );
   });
 
   test('v8 target fingerprint matches the locked inventory', () async {
@@ -115,6 +125,21 @@ void main() {
       expect(task['checkpoint'], 'legacy');
       expect(task['received_bytes'], 12);
       expect(task['operation_id'], isNull);
+      expect(task['status'], 'paused');
+      expect(task['resumable'], 0);
+      expect(task['retry_reason'], 'legacy_identity_untrusted');
+      final registry = (await database.query(
+        'model_registry',
+        where: 'id = ?',
+        whereArgs: const <Object>['legacy-model'],
+      )).single;
+      expect(registry['enabled'], 0);
+      expect(registry['integrity_status'], 'unknown');
+      expect(registry['active_release_id'], isNull);
+      expect(registry['catalog_version'], isNull);
+      expect(registry['catalog_digest'], isNull);
+      expect(registry['install_generation'], 0);
+      expect(registry['revision_root'], isNull);
       expect(await database.query('model_catalog_state'), isEmpty);
       expect(await database.query('model_registry_artifacts'), isEmpty);
       expect(await database.query('model_install_journal'), isEmpty);
@@ -201,8 +226,68 @@ void main() {
         }),
         throwsA(isA<DatabaseException>()),
       );
+      await expectLater(
+        database.insert('model_registry_artifacts', <String, Object?>{
+          'model_id': 'model-1',
+          'release_id': 'release-1',
+          'artifact_id': 'model',
+          'role': 'model',
+          'required': 1,
+          'relative_path': 'model.onnx',
+          'expected_size_bytes': 0,
+          'expected_sha256': 'sha256:${'a' * 64}',
+          'state': 'unknown',
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
+      await expectLater(
+        database.insert('model_registry_artifacts', <String, Object?>{
+          'model_id': 'model-1',
+          'release_id': 'release-1',
+          'artifact_id': 'model',
+          'role': 'model',
+          'required': 1,
+          'relative_path': 'model.onnx',
+          'expected_size_bytes': 1,
+          'expected_sha256': 'sha256:${'a' * 64}',
+          'verified_size_bytes': 1,
+          'verified_sha256': 'sha256:${'b' * 64}',
+          'state': 'installed',
+          'verified_at': 1,
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
     },
   );
+
+  test('schema fingerprint preserves SQL string literal semantics', () async {
+    final fixture = await _DatabaseFixture.create();
+    addTearDown(fixture.dispose);
+    final manager = DatabaseSchemaManager();
+    final database = await fixture.openManaged(manager);
+    addTearDown(database.close);
+    final original = await manager.fingerprint(database);
+    final row = (await database.rawQuery('''
+      SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = 'model_registry_artifacts'
+      ''')).single;
+    final originalSql = row['sql']! as String;
+    final tamperedSql = originalSql.replaceFirst("'installed'", "'INSTALLED'");
+    expect(tamperedSql, isNot(originalSql));
+    final schemaVersion = await _pragmaInt(database, 'schema_version');
+    await database.execute('PRAGMA writable_schema = ON');
+    await database.rawUpdate(
+      '''
+      UPDATE sqlite_master SET sql = ?
+      WHERE type = 'table' AND name = 'model_registry_artifacts'
+      ''',
+      <Object>[tamperedSql],
+    );
+    await database.execute('PRAGMA writable_schema = OFF');
+    await database.execute('PRAGMA schema_version = ${schemaVersion + 1}');
+
+    expect(await manager.fingerprint(database), isNot(original));
+  });
 }
 
 class _DatabaseFixture {
@@ -287,8 +372,10 @@ class _DatabaseFixture {
             'type': 'embedding',
             'provider': 'legacy',
             'name': 'Legacy',
-            'enabled': 0,
-            'integrity_status': 'unknown',
+            'local_path': '/models/legacy-model/model.onnx',
+            'checksum': 'sha256:${'f' * 64}',
+            'enabled': 1,
+            'integrity_status': 'valid',
           });
           await database.insert('download_tasks', <String, Object?>{
             'id': 'legacy-task',

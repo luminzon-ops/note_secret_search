@@ -1,10 +1,6 @@
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 
-enum ModelIntegrityStatus {
-  unknown,
-  valid,
-  corrupted,
-}
+enum ModelIntegrityStatus { unknown, valid, corrupted }
 
 class ModelRegistryEntry {
   const ModelRegistryEntry({
@@ -24,6 +20,11 @@ class ModelRegistryEntry {
     required this.filePresent,
     this.integrityStatus = ModelIntegrityStatus.unknown,
     this.artifacts = const <ModelArtifactPath>[],
+    this.releaseId,
+    this.catalogVersion,
+    this.catalogDigest,
+    this.generation,
+    this.revisionRoot,
   });
 
   final String id;
@@ -42,22 +43,53 @@ class ModelRegistryEntry {
   final bool filePresent;
   final ModelIntegrityStatus integrityStatus;
   final List<ModelArtifactPath> artifacts;
+  final String? releaseId;
+  final int? catalogVersion;
+  final String? catalogDigest;
+  final int? generation;
+  final String? revisionRoot;
 
   bool get isInstalled {
     final hasPrimaryPath = localPath?.isNotEmpty ?? false;
-    final hasRequiredMultimodalArtifacts = type != 'multimodal_llm' ||
-        (artifactPathForRole('model') != null && artifactPathForRole('mmproj') != null);
+    final trustedRevision =
+        releaseId != null &&
+        releaseId!.isNotEmpty &&
+        (catalogVersion ?? 0) > 0 &&
+        RegExp(r'^[0-9a-f]{64}$').hasMatch(catalogDigest ?? '') &&
+        (generation ?? 0) > 0 &&
+        _isRevisionRoot(revisionRoot);
+    final requiredArtifacts = artifacts.where((artifact) => artifact.required);
+    final hasRequiredArtifacts = artifacts.isEmpty
+        ? false
+        : requiredArtifacts.isNotEmpty &&
+              requiredArtifacts.every(
+                (artifact) =>
+                    artifact.localPath.isNotEmpty && artifact.isVerified,
+              ) &&
+              (type != 'multimodal_llm' ||
+                  (artifactPathForRole('model') != null &&
+                      artifactPathForRole('mmproj') != null));
     return enabled &&
         filePresent &&
-        integrityStatus != ModelIntegrityStatus.corrupted &&
+        integrityStatus == ModelIntegrityStatus.valid &&
         hasPrimaryPath &&
-        hasRequiredMultimodalArtifacts;
+        trustedRevision &&
+        hasRequiredArtifacts;
   }
 
   String? artifactPathForRole(String role) {
     for (final artifact in artifacts) {
       if (artifact.role == role && artifact.localPath.isNotEmpty) {
         return artifact.localPath;
+      }
+    }
+    return null;
+  }
+
+  ModelArtifactPath? artifactById(String artifactId) {
+    for (final artifact in artifacts) {
+      if (artifact.artifactId == artifactId) {
+        return artifact;
       }
     }
     return null;
@@ -88,6 +120,16 @@ class ModelRegistryEntry {
     bool? filePresent,
     ModelIntegrityStatus? integrityStatus,
     List<ModelArtifactPath>? artifacts,
+    String? releaseId,
+    bool clearReleaseId = false,
+    int? catalogVersion,
+    bool clearCatalogVersion = false,
+    String? catalogDigest,
+    bool clearCatalogDigest = false,
+    int? generation,
+    bool clearGeneration = false,
+    String? revisionRoot,
+    bool clearRevisionRoot = false,
   }) {
     return ModelRegistryEntry(
       id: id ?? this.id,
@@ -96,9 +138,13 @@ class ModelRegistryEntry {
       name: name ?? this.name,
       version: clearVersion ? null : (version ?? this.version),
       sizeBytes: clearSizeBytes ? null : (sizeBytes ?? this.sizeBytes),
-      quantization: clearQuantization ? null : (quantization ?? this.quantization),
+      quantization: clearQuantization
+          ? null
+          : (quantization ?? this.quantization),
       minRamMb: clearMinRamMb ? null : (minRamMb ?? this.minRamMb),
-      recommendedTier: clearRecommendedTier ? null : (recommendedTier ?? this.recommendedTier),
+      recommendedTier: clearRecommendedTier
+          ? null
+          : (recommendedTier ?? this.recommendedTier),
       localPath: clearLocalPath ? null : (localPath ?? this.localPath),
       checksum: clearChecksum ? null : (checksum ?? this.checksum),
       enabled: enabled ?? this.enabled,
@@ -106,6 +152,34 @@ class ModelRegistryEntry {
       filePresent: filePresent ?? this.filePresent,
       integrityStatus: integrityStatus ?? this.integrityStatus,
       artifacts: artifacts ?? this.artifacts,
+      releaseId: clearReleaseId ? null : (releaseId ?? this.releaseId),
+      catalogVersion: clearCatalogVersion
+          ? null
+          : (catalogVersion ?? this.catalogVersion),
+      catalogDigest: clearCatalogDigest
+          ? null
+          : (catalogDigest ?? this.catalogDigest),
+      generation: clearGeneration ? null : (generation ?? this.generation),
+      revisionRoot: clearRevisionRoot
+          ? null
+          : (revisionRoot ?? this.revisionRoot),
     );
   }
+}
+
+bool _isRevisionRoot(String? value) {
+  if (value == null ||
+      value.isEmpty ||
+      !value.startsWith('revisions/') ||
+      value.endsWith('/') ||
+      value.contains(r'\') ||
+      value.contains(':') ||
+      value.contains('//')) {
+    return false;
+  }
+  return value
+      .split('/')
+      .every(
+        (segment) => segment.isNotEmpty && segment != '.' && segment != '..',
+      );
 }

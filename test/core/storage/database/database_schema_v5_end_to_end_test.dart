@@ -51,7 +51,7 @@ void main() {
           fixture: fixture,
           testCase: testCase,
           protectedBytes: protectedBytes,
-          expectedCanonicalDigest: testCase.expectedV7CanonicalDigest,
+          expectedCanonicalDigest: testCase.expectedV8CanonicalDigest,
         );
         await _expectSchemaGate(v6, manager);
       },
@@ -162,7 +162,13 @@ Future<void> _expectBusinessData(
     _expectedSecurityMetadata(testCase.sourceSchemaVersion),
   );
   final model = (await database.query('model_registry')).single;
-  expect(model['integrity_status'], testCase.v5IntegrityStatus);
+  expect(model['integrity_status'], 'unknown');
+  expect(model['enabled'], 0);
+  expect(model['active_release_id'], isNull);
+  expect(model['catalog_version'], isNull);
+  expect(model['catalog_digest'], isNull);
+  expect(model['install_generation'], 0);
+  expect(model['revision_root'], isNull);
   if (testCase.v5ArtifactPaths == null) {
     expect(model['artifact_paths_json'], isNull);
   } else {
@@ -345,7 +351,11 @@ Future<void> _expectSchemaGate(
     'idx_download_tasks_operation_checkpoint',
     'idx_model_install_journal_model_phase',
   });
-  expect(await phase3ObjectNames(database, 'trigger'), phase4V6Triggers);
+  expect(await phase3ObjectNames(database, 'trigger'), <String>{
+    ...phase4V6Triggers,
+    'trg_model_registry_trusted_insert',
+    'trg_model_registry_trusted_update',
+  });
   expect(
     await manager.fingerprint(database),
     DatabaseSchemaManager.expectedFingerprint,
@@ -438,6 +448,7 @@ class _MigrationCase {
     required this.v5ArtifactPaths,
     required this.expectedCanonicalDigest,
     required this.expectedV7CanonicalDigest,
+    required this.expectedV8CanonicalDigest,
   });
 
   final LegacyFixtureVersion version;
@@ -450,6 +461,7 @@ class _MigrationCase {
   final List<Object?>? v5ArtifactPaths;
   final String expectedCanonicalDigest;
   final String expectedV7CanonicalDigest;
+  final String expectedV8CanonicalDigest;
 }
 
 const _structuredModelArtifact = <Object?>[
@@ -470,6 +482,8 @@ const _migrationCases = <_MigrationCase>[
         'f17d452ee9d4022c9e9a932545675733d3b1f51d513bce0f1bd6ea94ffab2b16',
     expectedV7CanonicalDigest:
         '33a725d32febf78ae244a3e87f96520ce2873853084b44b974b6a8d34b70c922',
+    expectedV8CanonicalDigest:
+        '436eae19069e1bffadd7a7cc55780c3d0d9e0c2f62a2d6b266af79f8e6ede613',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.v2,
@@ -484,6 +498,8 @@ const _migrationCases = <_MigrationCase>[
         '292f3defcbc27c02e341f7eea25a7cff2c2293896112f60091a78c76fe3a1985',
     expectedV7CanonicalDigest:
         '9109343fa7b2bb193e360272e973720c0eaf12f39dfc868f41bf52960a69cfd5',
+    expectedV8CanonicalDigest:
+        '2351ac2eaba513e21301401c938c2e7ac08be28bf0943c63a117f6b7824a6cf9',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.upgradedV3,
@@ -498,6 +514,8 @@ const _migrationCases = <_MigrationCase>[
         'd20cdb0230f26d4f387d16add55c5a3e09ce58784f61736eef5fa9729b4a2f82',
     expectedV7CanonicalDigest:
         '3ebe17bab1934a20d9d4bc1ba0c472343b4dd878ab815a2e1203e9aef1c13fc5',
+    expectedV8CanonicalDigest:
+        '78693d89bfd5b7e784f5dbb4095691ad8cc84a84fcb4127f230b99518d5fb6b3',
   ),
   _MigrationCase(
     version: LegacyFixtureVersion.freshV3,
@@ -512,5 +530,7 @@ const _migrationCases = <_MigrationCase>[
         'c4077e096892228b9a69c6562c1cbccf5b8d9b8b9cf5a8cd98e404c57f076400',
     expectedV7CanonicalDigest:
         '7b14c344ab8fce6b65fe7555a6442e3b3d6fda0f1f3350cd239723155520a7f5',
+    expectedV8CanonicalDigest:
+        '78693d89bfd5b7e784f5dbb4095691ad8cc84a84fcb4127f230b99518d5fb6b3',
   ),
 ];

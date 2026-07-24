@@ -210,8 +210,8 @@ Future<void> _insertModel(DatabaseExecutor executor) {
     'type': 'embedding',
     'provider': 'local',
     'name': 'Embedding',
-    'integrity_status': 'valid',
-    'enabled': 1,
+    'integrity_status': 'unknown',
+    'enabled': 0,
   });
 }
 
