@@ -14,15 +14,36 @@ class LlmBackendFactory(
     override fun create(file: File): LocalLlmBackend? {
         val extension = file.extension.lowercase()
         return when (extension) {
-            "gguf" -> {
-                if (shouldBlockGgufBackend(Build.MANUFACTURER, hasHuaweiSafeVariant = HAS_HUAWEI_SAFE_GGUF_VARIANT)) {
-                    null
-                } else {
-                    GgufLlamaCppBackend(context)
-                }
+            "gguf" -> createGatedGgufBackend(
+                manufacturer = Build.MANUFACTURER,
+                supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                hasHuaweiSafeVariant = HAS_HUAWEI_SAFE_GGUF_VARIANT,
+            ) {
+                GgufLlamaCppBackend(context)
             }
             else -> null
         }
+    }
+}
+
+internal fun <T> createGatedGgufBackend(
+    manufacturer: String,
+    supportedAbis: List<String>,
+    hasHuaweiSafeVariant: Boolean = false,
+    createBackend: () -> T,
+): T? {
+    if (!supportsPackagedLlmRuntime(supportedAbis)) {
+        return null
+    }
+    if (shouldBlockGgufBackend(manufacturer, hasHuaweiSafeVariant)) {
+        return null
+    }
+    return createBackend()
+}
+
+internal fun supportsPackagedLlmRuntime(supportedAbis: List<String>): Boolean {
+    return supportedAbis.any {
+        it.trim().equals(PACKAGED_LLM_ABI, ignoreCase = true)
     }
 }
 
@@ -45,3 +66,4 @@ internal fun shouldBlockGgufBackend(
 }
 
 internal const val HAS_HUAWEI_SAFE_GGUF_VARIANT = true
+internal const val PACKAGED_LLM_ABI = "arm64-v8a"

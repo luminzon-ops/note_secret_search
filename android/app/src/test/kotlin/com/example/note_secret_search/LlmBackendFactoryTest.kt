@@ -1,5 +1,6 @@
 package com.example.note_secret_search
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -13,6 +14,54 @@ import java.io.File
  * until a proven-safe native path is available.
  */
 class LlmBackendFactoryTest {
+    @Test
+    fun `packaged LLM ABI matrix only accepts arm64`() {
+        val matrix = linkedMapOf(
+            listOf("arm64-v8a") to true,
+            listOf("armeabi-v7a") to false,
+            listOf("x86_64") to false,
+            listOf("x86") to false,
+            emptyList<String>() to false,
+        )
+
+        matrix.forEach { (abis, expected) ->
+            assertEquals(abis.joinToString(), expected, supportsPackagedLlmRuntime(abis))
+        }
+    }
+
+    @Test
+    fun `unsupported ABI returns null before constructing the native backend`() {
+        listOf("armeabi-v7a", "x86_64", "x86").forEach { abi ->
+            var createCalls = 0
+
+            val backend = createGatedGgufBackend(
+                manufacturer = "Google",
+                supportedAbis = listOf(abi),
+            ) {
+                createCalls += 1
+                FakeBackend()
+            }
+
+            assertTrue(backend == null)
+            assertEquals(0, createCalls)
+        }
+    }
+
+    @Test
+    fun `arm64 constructs the backend after ABI and vendor gates pass`() {
+        var createCalls = 0
+
+        val backend = createGatedGgufBackend(
+            manufacturer = "Google",
+            supportedAbis = listOf("arm64-v8a"),
+        ) {
+            createCalls += 1
+            FakeBackend()
+        }
+
+        assertTrue(backend != null)
+        assertEquals(1, createCalls)
+    }
 
     @Test
     fun `shouldBlockGgufBackend returns true for HUAWEI manufacturer`() {
