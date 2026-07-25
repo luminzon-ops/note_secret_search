@@ -365,6 +365,66 @@ void main() {
     },
   );
 
+  test(
+    'install journal phases cannot move backwards within a generation',
+    () async {
+      const staging = ModelInstallJournalRecord(
+        operationId: 'operation-phase-cas',
+        modelId: 'model-phase-cas',
+        releaseId: 'release-1',
+        attemptGeneration: 1,
+        operationType: 'install',
+        phase: 'staging',
+        newRevision: 'revisions/1',
+        stagingRoot: '.staging/operation-phase-cas',
+        targetRoot: 'revisions/1',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      await repository.saveInstallJournal(staging);
+      await repository.saveInstallJournal(
+        const ModelInstallJournalRecord(
+          operationId: 'operation-phase-cas',
+          modelId: 'model-phase-cas',
+          releaseId: 'release-1',
+          attemptGeneration: 1,
+          operationType: 'install',
+          phase: 'queued',
+          newRevision: 'revisions/1',
+          stagingRoot: '.staging/operation-phase-cas',
+          targetRoot: 'revisions/1',
+          createdAt: 1,
+          updatedAt: 3,
+        ),
+      );
+
+      expect(
+        (await repository.loadInstallJournal('operation-phase-cas'))?.phase,
+        'staging',
+      );
+
+      await repository.saveInstallJournal(
+        const ModelInstallJournalRecord(
+          operationId: 'operation-phase-cas',
+          modelId: 'model-phase-cas',
+          releaseId: 'release-1',
+          attemptGeneration: 1,
+          operationType: 'install',
+          phase: 'staged',
+          newRevision: 'revisions/1',
+          stagingRoot: '.staging/operation-phase-cas',
+          targetRoot: 'revisions/1',
+          createdAt: 1,
+          updatedAt: 4,
+        ),
+      );
+      expect(
+        (await repository.loadInstallJournal('operation-phase-cas'))?.phase,
+        'staged',
+      );
+    },
+  );
+
   test('checkpoint and journal paths must remain model relative', () {
     expect(
       () => repository.saveDownloadCheckpoint(

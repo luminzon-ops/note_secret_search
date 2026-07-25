@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/storage/database/model_state_records.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
@@ -16,6 +17,8 @@ import 'package:note_secret_search/features/ai_models/infrastructure/io_model_re
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
+
+part 'model_download_structured_failure_recovery_test.dart';
 
 void main() {
   test(
@@ -59,42 +62,21 @@ void main() {
       expect(registry.entry?.artifacts, hasLength(2));
       expect(registry.entry?.isInstalled, isTrue);
       expect(bridge.ensureCalls, 1);
+      expect(lifecycle.journals.map((journal) => journal.phase), <String>[
+        'queued',
+        'staging',
+        'staged',
+        'runtime_validating',
+        'releasing_sessions',
+        'installing',
+        'committing',
+        'completed',
+      ]);
+      expect(lifecycle.journals.last.completedAt, isNotNull);
     },
   );
 
-  test(
-    'required artifact failure does not publish a partial revision',
-    () async {
-      final downloads = _MemoryDownloadRepository();
-      const oldEntry = _trustedOldEntry;
-      final registry = _MemoryRegistryRepository()..entry = oldEntry;
-      final lifecycle = _RecordingLifecycleStore(
-        downloads: downloads,
-        registry: registry,
-      );
-      final service = _StructuredDownloadService(failingArtifactId: 'sidecar');
-      final revisions = _RecordingRevisionStore();
-      final container = _container(
-        downloads: downloads,
-        registry: registry,
-        lifecycle: lifecycle,
-        service: service,
-        revisions: revisions,
-        bridge: _ReadyEmbeddingBridge(),
-      );
-      addTearDown(container.dispose);
-
-      await container
-          .read(modelDownloadControllerProvider)
-          .startDownload(entry: _entry, source: _entry.sources.single);
-
-      expect(lifecycle.commitCalls, 0);
-      expect(revisions.installCalls, 0);
-      expect(registry.entry?.generation, oldEntry.generation);
-      expect(registry.entry?.revisionRoot, oldEntry.revisionRoot);
-      expect(downloads.tasks, isNotEmpty);
-    },
-  );
+  _registerStructuredFailureRecoveryTests();
 }
 
 ProviderContainer _container({
@@ -288,12 +270,27 @@ class _MemoryRegistryRepository implements ModelRegistryRepository {
   Future<void> save(ModelRegistryEntry value) async => entry = value;
 }
 
-class _RecordingLifecycleStore implements ModelLifecycleStore {
-  _RecordingLifecycleStore({required this.downloads, required this.registry});
+class _RecordingLifecycleStore
+    implements ModelLifecycleStore, ModelInstallJournalStore {
+  _RecordingLifecycleStore({
+    required this.downloads,
+    required this.registry,
+    this.commitError,
+    List<ModelInstallJournalRecord> initialJournals =
+        const <ModelInstallJournalRecord>[],
+  }) : journals = <ModelInstallJournalRecord>[...initialJournals];
 
   final _MemoryDownloadRepository downloads;
   final _MemoryRegistryRepository registry;
+  final Object? commitError;
+  final List<ModelInstallJournalRecord> journals;
   int commitCalls = 0;
+
+  ModelInstallJournalRecord? latestJournal(String operationId) {
+    return journals
+        .where((journal) => journal.operationId == operationId)
+        .lastOrNull;
+  }
 
   @override
   Future<void> commitInstallation({
@@ -301,6 +298,10 @@ class _RecordingLifecycleStore implements ModelLifecycleStore {
     required List<ModelDownloadTask> completedTasks,
   }) async {
     commitCalls += 1;
+    final error = commitError;
+    if (error != null) {
+      throw error;
+    }
     await registry.save(registryEntry);
     for (final task in completedTasks) {
       await downloads.saveTask(task);
@@ -313,6 +314,29 @@ class _RecordingLifecycleStore implements ModelLifecycleStore {
 
   @override
   Future<void> purgeModelData(String modelId) => registry.deleteById(modelId);
+
+  @override
+  Future<void> saveInstallJournal(ModelInstallJournalRecord journal) async {
+    journals.add(journal);
+  }
+
+  @override
+  Future<ModelInstallJournalRecord?> loadInstallJournal(
+    String operationId,
+  ) async {
+    return latestJournal(operationId);
+  }
+
+  @override
+  Future<List<ModelInstallJournalRecord>> listOpenInstallJournals() async {
+    final latest = <String, ModelInstallJournalRecord>{};
+    for (final journal in journals) {
+      latest[journal.operationId] = journal;
+    }
+    return latest.values
+        .where((journal) => journal.completedAt == null)
+        .toList(growable: false);
+  }
 }
 
 class _StructuredDownloadService extends ModelDownloadService {
@@ -372,6 +396,7 @@ class _StructuredDownloadService extends ModelDownloadService {
 class _RecordingRevisionStore implements ModelRevisionStore {
   int installCalls = 0;
   List<StagedModelArtifact> artifacts = const <StagedModelArtifact>[];
+  final List<String> discardedRevisionRoots = <String>[];
 
   @override
   Future<InstalledModelRevision> installVerifiedRevision({
@@ -399,7 +424,9 @@ class _RecordingRevisionStore implements ModelRevisionStore {
   Future<void> discardInstalledRevision({
     required String modelId,
     required String revisionRoot,
-  }) async {}
+  }) async {
+    discardedRevisionRoots.add(revisionRoot);
+  }
 }
 
 class _ReadyEmbeddingBridge implements EmbeddingRuntimeBridge {

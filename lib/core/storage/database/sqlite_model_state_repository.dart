@@ -5,6 +5,8 @@ import 'package:path/path.dart' as p;
 
 export 'package:note_secret_search/core/storage/database/model_state_records.dart';
 
+part 'sqlite_model_state_validation.dart';
+
 class SqliteModelStateRepository {
   SqliteModelStateRepository({required AppDatabase database})
     : _database = database;
@@ -305,6 +307,7 @@ class SqliteModelStateRepository {
   Future<void> saveInstallJournal(ModelInstallJournalRecord journal) {
     _requireText(journal.operationId, 'operationId');
     _requireText(journal.modelId, 'modelId');
+    _requireInstallJournalPhase(journal);
     if (journal.attemptGeneration < 0) {
       throw ArgumentError.value(journal.attemptGeneration, 'attemptGeneration');
     }
@@ -317,8 +320,18 @@ class SqliteModelStateRepository {
       allowRoot: true,
     );
     _requireRevisionPath(journal.targetRoot, 'targetRoot');
-    return _database.run((db) {
-      return db.rawInsert(
+    return _database.transaction((db) async {
+      final rows = await db.query(
+        DatabaseSchema.modelInstallJournal,
+        where: 'operation_id = ?',
+        whereArgs: <Object>[journal.operationId],
+        limit: 1,
+      );
+      if (rows.isNotEmpty &&
+          !_canAdvanceInstallJournal(journalFromRow(rows.single), journal)) {
+        return;
+      }
+      await db.rawInsert(
         '''
         INSERT INTO ${DatabaseSchema.modelInstallJournal} (
           operation_id,
@@ -407,105 +420,5 @@ class SqliteModelStateRepository {
       );
       return rows.map(journalFromRow).toList(growable: false);
     });
-  }
-}
-
-void _requireText(String value, String name) {
-  if (value.trim().isEmpty) {
-    throw ArgumentError.value(value, name, 'Value is required.');
-  }
-}
-
-void _requireCatalogDigest(String value, String name) {
-  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {
-    throw ArgumentError.value(value, name, 'Lowercase SHA-256 is required.');
-  }
-}
-
-void _requireArtifactDigest(String value, String name) {
-  if (!RegExp(r'^sha256:[0-9a-f]{64}$').hasMatch(value)) {
-    throw ArgumentError.value(
-      value,
-      name,
-      'A sha256:<64 lowercase hex> digest is required.',
-    );
-  }
-}
-
-void _requireRelativePath(String value, String name) {
-  _requireText(value, name);
-  final segments = p.posix.split(value);
-  if (value.contains(r'\') ||
-      value.contains(':') ||
-      p.posix.isAbsolute(value) ||
-      p.windows.isAbsolute(value) ||
-      p.posix.normalize(value) != value ||
-      segments.any((segment) => segment == '.' || segment == '..') ||
-      value.endsWith('/')) {
-    throw ArgumentError.value(
-      value,
-      name,
-      'A normalized relative path is required.',
-    );
-  }
-}
-
-void _validateArtifactVerification(ModelRegistryArtifactRecord artifact) {
-  if (artifact.expectedSizeBytes <= 0) {
-    throw ArgumentError.value(
-      artifact.expectedSizeBytes,
-      'expectedSizeBytes',
-      'A positive artifact size is required.',
-    );
-  }
-  const trustedStates = <String>{'verified', 'staged', 'installed'};
-  if (!trustedStates.contains(artifact.state)) {
-    return;
-  }
-  if (artifact.verifiedSizeBytes != artifact.expectedSizeBytes ||
-      artifact.verifiedSha256 != artifact.expectedSha256 ||
-      artifact.verifiedAt == null) {
-    throw ArgumentError.value(
-      artifact,
-      'artifact',
-      'Trusted artifact state requires matching verified identity.',
-    );
-  }
-}
-
-void _requireStagingPath(
-  String? value, {
-  required String? operationId,
-  required String name,
-  bool allowRoot = false,
-}) {
-  if (value == null) {
-    return;
-  }
-  _requireRelativePath(value, name);
-  final root = '.staging/$operationId';
-  if (operationId == null ||
-      operationId.trim().isEmpty ||
-      (!allowRoot && !value.startsWith('$root/')) ||
-      (allowRoot && value != root && !value.startsWith('$root/'))) {
-    throw ArgumentError.value(
-      value,
-      name,
-      'A model-owned staging path is required.',
-    );
-  }
-}
-
-void _requireRevisionPath(String? value, String name) {
-  if (value == null) {
-    return;
-  }
-  _requireRelativePath(value, name);
-  if (!value.startsWith('revisions/')) {
-    throw ArgumentError.value(
-      value,
-      name,
-      'A model-owned revision path is required.',
-    );
   }
 }

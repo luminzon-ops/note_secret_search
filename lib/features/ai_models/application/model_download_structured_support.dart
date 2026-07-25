@@ -1,6 +1,153 @@
 part of 'model_download_providers.dart';
 
 extension _StructuredModelDownloadSupport on ModelDownloadController {
+  Future<void> _recoverStructuredJournals(String modelId) async {
+    final store = _installJournalStore;
+    if (store == null) {
+      return;
+    }
+    final openJournals = await store.listOpenInstallJournals();
+    final current = await _registryRepository.getById(modelId);
+    for (final journal in openJournals) {
+      if (journal.modelId != modelId) {
+        continue;
+      }
+      _modelGenerations[modelId] = _maxInt(
+        _modelGenerations[modelId] ?? 0,
+        journal.attemptGeneration,
+      );
+      final target = journal.targetRoot ?? journal.newRevision;
+      final committed =
+          current?.isInstalled == true &&
+          current?.generation == journal.attemptGeneration &&
+          current?.releaseId == journal.releaseId &&
+          current?.revisionRoot == target;
+      if (committed) {
+        await store.saveInstallJournal(
+          _recoveredJournal(journal, phase: 'completed', completed: true),
+        );
+        final previous = journal.oldRevision;
+        if (previous != null && previous != target) {
+          try {
+            await _revisionStore.discardInstalledRevision(
+              modelId: modelId,
+              revisionRoot: previous,
+            );
+          } catch (_) {
+            _logger.warning('model_previous_revision_cleanup_deferred');
+          }
+        }
+        continue;
+      }
+      if (target != null) {
+        if (current?.revisionRoot == target) {
+          await store.saveInstallJournal(
+            _recoveredJournal(
+              journal,
+              phase: 'rollback_pending',
+              errorCode: 'interrupted_install_registry_conflict',
+            ),
+          );
+          throw StateError('interrupted_install_registry_conflict');
+        }
+        try {
+          await _revisionStore.discardInstalledRevision(
+            modelId: modelId,
+            revisionRoot: target,
+          );
+        } catch (_) {
+          await store.saveInstallJournal(
+            _recoveredJournal(
+              journal,
+              phase: 'rollback_pending',
+              errorCode: 'interrupted_install_cleanup_failed',
+            ),
+          );
+          rethrow;
+        }
+      }
+      await store.saveInstallJournal(
+        _recoveredJournal(
+          journal,
+          phase: 'failed',
+          completed: true,
+          errorCode: 'interrupted_install_rolled_back',
+        ),
+      );
+    }
+  }
+
+  Future<void> _recordStructuredJournal({
+    required ModelCatalogEntry entry,
+    required _StructuredOperation operation,
+    required ModelRegistryEntry? existing,
+    required String phase,
+    bool completed = false,
+    String? errorCode,
+  }) async {
+    final store = _installJournalStore;
+    if (store == null) {
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await store.saveInstallJournal(
+      ModelInstallJournalRecord(
+        operationId: operation.operationId,
+        modelId: entry.id,
+        releaseId: entry.releaseId,
+        attemptGeneration: operation.generation,
+        operationType: existing == null ? 'install' : 'replace',
+        phase: phase,
+        oldRevision: existing?.revisionRoot,
+        newRevision: 'revisions/${operation.generation}',
+        stagingRoot: '.staging/${operation.operationId}',
+        targetRoot: 'revisions/${operation.generation}',
+        errorCode: errorCode,
+        createdAt: operation.createdAt,
+        updatedAt: now,
+        completedAt: completed ? now : null,
+      ),
+    );
+  }
+
+  Future<void> _tryRecordStructuredFailure({
+    required ModelCatalogEntry entry,
+    required _StructuredOperation operation,
+    required ModelRegistryEntry? existing,
+  }) async {
+    try {
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'failed',
+        completed: true,
+        errorCode: 'structured_install_failed',
+      );
+    } catch (error, stackTrace) {
+      _logger.error('model_install_journal_failed', error, stackTrace);
+    }
+  }
+
+  Future<void> _discardPreviousRevision({
+    required ModelCatalogEntry entry,
+    required ModelRegistryEntry? existing,
+    required _StructuredOperation operation,
+  }) async {
+    final previous = existing?.revisionRoot;
+    if (previous == null || previous == 'revisions/${operation.generation}') {
+      return;
+    }
+    try {
+      await _revisionStore.discardInstalledRevision(
+        modelId: entry.id,
+        revisionRoot: previous,
+      );
+    } catch (_) {
+      _logger.warning('model_previous_revision_cleanup_deferred');
+    }
+  }
+
   List<ModelSourceEntry> _orderedArtifactSources({
     required ModelArtifactSpec artifact,
     required ModelSourceEntry selectedSource,
@@ -203,3 +350,31 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
 }
 
 int _maxInt(int first, int second) => first > second ? first : second;
+
+ModelInstallJournalRecord _recoveredJournal(
+  ModelInstallJournalRecord journal, {
+  required String phase,
+  bool completed = false,
+  String? errorCode,
+}) {
+  final now = _maxInt(
+    DateTime.now().millisecondsSinceEpoch,
+    journal.updatedAt + 1,
+  );
+  return ModelInstallJournalRecord(
+    operationId: journal.operationId,
+    modelId: journal.modelId,
+    releaseId: journal.releaseId,
+    attemptGeneration: journal.attemptGeneration,
+    operationType: journal.operationType,
+    phase: phase,
+    oldRevision: journal.oldRevision,
+    newRevision: journal.newRevision,
+    stagingRoot: journal.stagingRoot,
+    targetRoot: journal.targetRoot,
+    errorCode: errorCode,
+    createdAt: journal.createdAt,
+    updatedAt: now,
+    completedAt: completed ? now : null,
+  );
+}

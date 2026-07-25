@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/storage/database/model_state_records.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/multimodal_llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
@@ -49,6 +50,7 @@ class ModelDownloadController {
     required ModelArtifactStore artifactStore,
     required AppLogger logger,
     ModelRevisionStore? revisionStore,
+    ModelInstallJournalStore? installJournalStore,
     ModelSessionReleaser? sessionReleaser,
   }) : _ref = ref,
        _repository = repository,
@@ -56,6 +58,11 @@ class ModelDownloadController {
        _downloadService = downloadService,
        _lifecycleStore = lifecycleStore,
        _revisionStore = revisionStore ?? IoModelRevisionStore(),
+       _installJournalStore =
+           installJournalStore ??
+           (lifecycleStore is ModelInstallJournalStore
+               ? lifecycleStore as ModelInstallJournalStore
+               : null),
        _modelLifecycleController = ModelLifecycleController(
          lifecycleStore: lifecycleStore,
          artifactStore: artifactStore,
@@ -99,6 +106,7 @@ class ModelDownloadController {
   final ModelDownloadService _downloadService;
   final ModelLifecycleStore _lifecycleStore;
   final ModelRevisionStore _revisionStore;
+  final ModelInstallJournalStore? _installJournalStore;
   final ModelLifecycleController _modelLifecycleController;
   final AppLogger _logger;
   final Map<String, Future<void>> _modelOperationLocks =

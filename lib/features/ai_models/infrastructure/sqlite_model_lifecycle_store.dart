@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/sqlite_model_state_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
@@ -19,7 +20,8 @@ enum ModelLifecycleCheckpoint {
 typedef ModelLifecycleCheckpointCallback =
     FutureOr<void> Function(ModelLifecycleCheckpoint checkpoint);
 
-class SqliteModelLifecycleStore implements ModelLifecycleStore {
+class SqliteModelLifecycleStore
+    implements ModelLifecycleStore, ModelInstallJournalStore {
   SqliteModelLifecycleStore({
     required AppDatabase database,
     ModelLifecycleCheckpointCallback? checkpoint,
@@ -27,12 +29,14 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
   }) : _database = database,
        _checkpoint = checkpoint,
        _beforeMutation = beforeMutation,
-       _registryRepository = SqliteModelRegistryRepository(database: database);
+       _registryRepository = SqliteModelRegistryRepository(database: database),
+       _stateRepository = SqliteModelStateRepository(database: database);
 
   final AppDatabase _database;
   final ModelLifecycleCheckpointCallback? _checkpoint;
   final void Function()? _beforeMutation;
   final SqliteModelRegistryRepository _registryRepository;
+  final SqliteModelStateRepository _stateRepository;
 
   @override
   Future<void> commitInstallation({
@@ -82,6 +86,21 @@ class SqliteModelLifecycleStore implements ModelLifecycleStore {
     });
   }
 
+  @override
+  Future<void> saveInstallJournal(ModelInstallJournalRecord journal) {
+    return _stateRepository.saveInstallJournal(journal);
+  }
+
+  @override
+  Future<ModelInstallJournalRecord?> loadInstallJournal(String operationId) {
+    return _stateRepository.loadInstallJournal(operationId);
+  }
+
+  @override
+  Future<List<ModelInstallJournalRecord>> listOpenInstallJournals() {
+    return _stateRepository.listOpenInstallJournals();
+  }
+
   Future<void> _notify(ModelLifecycleCheckpoint checkpoint) {
     final callback = _checkpoint;
     if (callback == null) {
@@ -125,7 +144,10 @@ Future<void> _upsertRegistry(
   DatabaseExecutor executor,
   ModelRegistryEntry entry,
 ) async {
-  await writeModelRegistryEntry(executor, entry);
+  final written = await writeModelRegistryEntry(executor, entry);
+  if (!written) {
+    throw StateError('model_registry_generation_stale');
+  }
 }
 
 Future<void> _upsertTask(

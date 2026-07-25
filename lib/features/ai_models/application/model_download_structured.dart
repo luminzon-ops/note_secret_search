@@ -4,10 +4,12 @@ class _StructuredOperation {
   const _StructuredOperation({
     required this.operationId,
     required this.generation,
+    required this.createdAt,
   });
 
   final String operationId;
   final int generation;
+  final int createdAt;
 }
 
 class _StagedStructuredArtifact {
@@ -72,10 +74,20 @@ extension _StructuredModelDownload on ModelDownloadController {
     var generation = _modelGenerations[modelId] ?? 0;
     generation = _maxInt(generation, existing?.generation ?? 0);
     generation = _maxInt(generation, latestTask?.attemptGeneration ?? 0) + 1;
+    final journalStore = _installJournalStore;
+    if (journalStore != null) {
+      final openJournals = await journalStore.listOpenInstallJournals();
+      for (final journal in openJournals) {
+        if (journal.modelId == modelId) {
+          generation = _maxInt(generation, journal.attemptGeneration + 1);
+        }
+      }
+    }
     _modelGenerations[modelId] = generation;
     return _StructuredOperation(
       operationId: ModelDownloadController._uuid.v4(),
       generation: generation,
+      createdAt: DateTime.now().millisecondsSinceEpoch,
     );
   }
 
@@ -86,8 +98,22 @@ extension _StructuredModelDownload on ModelDownloadController {
   }) async {
     final tasks = <ModelDownloadTask>[];
     final staged = <String, _StagedStructuredArtifact>{};
+    final existing = await _registryRepository.getById(entry.id);
     try {
+      await _recoverStructuredJournals(entry.id);
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'queued',
+      );
       await _revisionStore.recoverInterruptedInstalls(modelId: entry.id);
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'staging',
+      );
       for (final artifact in entry.artifacts) {
         final result = artifact.isBundledAsset
             ? await _stageBundledArtifact(
@@ -105,14 +131,37 @@ extension _StructuredModelDownload on ModelDownloadController {
         staged[artifact.id] = result;
       }
 
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'staged',
+      );
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'runtime_validating',
+      );
       final runtime = await _validateStructuredRuntime(
         entry: entry,
         staged: staged,
       );
-      final existing = await _registryRepository.getById(entry.id);
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'releasing_sessions',
+      );
       await _modelLifecycleController.prepareForMutation(
         entry.id,
         modelType: existing?.type ?? entry.type,
+      );
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'installing',
       );
       final installed = await _revisionStore.installVerifiedRevision(
         modelId: entry.id,
@@ -128,6 +177,12 @@ extension _StructuredModelDownload on ModelDownloadController {
         staged: staged,
         installed: installed,
         enabled: runtime.enabled,
+      );
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'committing',
       );
       final completedTasks = tasks
           .map(
@@ -153,12 +208,29 @@ extension _StructuredModelDownload on ModelDownloadController {
         );
         rethrow;
       }
+      await _recordStructuredJournal(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+        phase: 'completed',
+        completed: true,
+      );
+      await _discardPreviousRevision(
+        entry: entry,
+        existing: existing,
+        operation: operation,
+      );
       _ref.invalidate(modelDownloadTasksProvider);
       _ref.invalidate(modelRegistryEntriesProvider);
       _ref.invalidate(embeddingRuntimeStatesProvider);
       _ref.invalidate(llmRuntimeStatesProvider);
     } catch (error, stackTrace) {
       _logger.error('structured_model_download_failed', error, stackTrace);
+      await _tryRecordStructuredFailure(
+        entry: entry,
+        operation: operation,
+        existing: existing,
+      );
       await _markStructuredTasksFailed(tasks, error.toString());
     }
   }
