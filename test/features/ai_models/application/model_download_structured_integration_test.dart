@@ -435,6 +435,7 @@ class _RecordingRevisionStore implements ModelRevisionStore {
     discardedRevisionRoots.add(revisionRoot);
   }
 
+  @override
   Future<StagedModelArtifact> stageExistingArtifact({
     required String modelId,
     required String operationId,
