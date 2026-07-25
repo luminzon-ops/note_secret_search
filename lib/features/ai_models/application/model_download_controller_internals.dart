@@ -47,6 +47,10 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       return error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout ||
           error.type == DioExceptionType.receiveTimeout ||
+          error.response?.statusCode == 403 ||
+          error.response?.statusCode == 404 ||
+          error.response?.statusCode == 408 ||
+          error.response?.statusCode == 410 ||
           error.response?.statusCode == 429 ||
           ((error.response?.statusCode ?? 0) >= 500);
     }
@@ -57,6 +61,10 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
         message.contains('connection') ||
         message.contains('socket') ||
         message.contains('dns') ||
+        message.contains('403') ||
+        message.contains('404') ||
+        message.contains('408') ||
+        message.contains('410') ||
         message.contains('429') ||
         message.contains('503') ||
         message.contains('502') ||

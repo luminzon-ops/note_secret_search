@@ -1,7 +1,10 @@
 part of 'model_download_providers.dart';
 
 extension _StructuredModelDownloadSupport on ModelDownloadController {
-  Future<void> _recoverStructuredJournals(String modelId) async {
+  Future<void> _recoverStructuredJournals(
+    String modelId, {
+    String? excludedOperationId,
+  }) async {
     final store = _installJournalStore;
     if (store == null) {
       return;
@@ -9,7 +12,8 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
     final openJournals = await store.listOpenInstallJournals();
     final current = await _registryRepository.getById(modelId);
     for (final journal in openJournals) {
-      if (journal.modelId != modelId) {
+      if (journal.modelId != modelId ||
+          journal.operationId == excludedOperationId) {
         continue;
       }
       _modelGenerations[modelId] = _maxInt(
@@ -151,18 +155,30 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
   List<ModelSourceEntry> _orderedArtifactSources({
     required ModelArtifactSpec artifact,
     required ModelSourceEntry selectedSource,
+    String? preferredSourceId,
   }) {
     final sources = artifact.sources.toList(growable: false);
+    final preferred = sources
+        .where((candidate) => candidate.id == preferredSourceId)
+        .firstOrNull;
     final selected = sources
         .where((candidate) => candidate.id == selectedSource.id)
         .firstOrNull;
     final ordered = <ModelSourceEntry>[];
+    if (preferred != null) {
+      ordered.add(preferred);
+    }
     if (selected != null) {
-      ordered.add(selected);
+      if (selected.id != preferred?.id) {
+        ordered.add(selected);
+      }
     }
     final remaining =
         sources
-            .where((candidate) => candidate.id != selected?.id)
+            .where(
+              (candidate) =>
+                  candidate.id != preferred?.id && candidate.id != selected?.id,
+            )
             .toList(growable: false)
           ..sort((a, b) => a.priority.compareTo(b.priority));
     ordered.addAll(remaining);
@@ -212,15 +228,62 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
     if (_activeOperationIds[task.modelId] != operation.operationId) {
       return;
     }
+    var current =
+        await _findStructuredTask(
+          operationId: operation.operationId,
+          generation: operation.generation,
+          artifactId: task.artifactId!,
+        ) ??
+        task;
+    if (current.status == ModelDownloadStatus.paused ||
+        current.phase == ModelDownloadPhase.paused) {
+      return;
+    }
+    if (progress.restarted) {
+      if (current.phase != ModelDownloadPhase.retryableFailed) {
+        current = current.copyWith(
+          status: ModelDownloadStatus.failed,
+          phase: ModelDownloadPhase.retryableFailed,
+          errorMessage: 'download_validator_restart',
+          retryReason: 'download_validator_restart',
+          updatedAt: _nextTaskTimestamp(current.updatedAt),
+        );
+        await _repository.saveTask(current);
+      }
+      await _repository.saveTask(
+        current.copyWith(
+          status: ModelDownloadStatus.downloading,
+          phase: ModelDownloadPhase.downloading,
+          downloadedBytes: 0,
+          receivedBytes: 0,
+          resumable: false,
+          clearAverageSpeed: true,
+          clearErrorMessage: true,
+          clearRetryReason: true,
+          clearEtag: true,
+          clearLastModified: true,
+          updatedAt: _nextTaskTimestamp(current.updatedAt),
+        ),
+      );
+      return;
+    }
     await _repository.saveTask(
-      task.copyWith(
+      current.copyWith(
         status: ModelDownloadStatus.downloading,
         phase: ModelDownloadPhase.downloading,
-        totalBytes: progress.totalBytes ?? task.totalBytes,
+        totalBytes: progress.totalBytes ?? current.totalBytes,
         downloadedBytes: progress.receivedBytes,
         receivedBytes: progress.receivedBytes,
         averageSpeed: progress.averageSpeedBytesPerSecond,
-        updatedAt: DateTime.now(),
+        etag: progress.etag,
+        clearEtag: progress.resumable != null && progress.etag == null,
+        lastModified: progress.lastModified,
+        clearLastModified:
+            progress.resumable != null && progress.lastModified == null,
+        resumable: progress.resumable ?? current.resumable,
+        clearErrorMessage: true,
+        clearRetryReason: true,
+        updatedAt: _nextTaskTimestamp(current.updatedAt),
       ),
     );
   }

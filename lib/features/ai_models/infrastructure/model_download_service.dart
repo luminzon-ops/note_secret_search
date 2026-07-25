@@ -15,11 +15,19 @@ class ModelDownloadProgress {
     required this.receivedBytes,
     required this.totalBytes,
     required this.averageSpeedBytesPerSecond,
+    this.etag,
+    this.lastModified,
+    this.resumable,
+    this.restarted = false,
   });
 
   final int receivedBytes;
   final int? totalBytes;
   final double? averageSpeedBytesPerSecond;
+  final String? etag;
+  final String? lastModified;
+  final bool? resumable;
+  final bool restarted;
 }
 
 class ModelDownloadStagingTarget {

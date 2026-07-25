@@ -110,6 +110,49 @@ void main() {
     expect(saved?.effectiveReceivedBytes, 100);
   });
 
+  test(
+    'retryable artifact task switches mirror only after a full reset',
+    () async {
+      await repository.saveTask(
+        _task(
+          generation: 3,
+          receivedBytes: 512,
+          phase: ModelDownloadPhase.retryableFailed,
+          status: ModelDownloadStatus.failed,
+          etag: '"mirror-a"',
+        ),
+      );
+      await repository.saveTask(
+        _task(
+          generation: 3,
+          receivedBytes: 0,
+          phase: ModelDownloadPhase.downloading,
+          sourceId: 'source-b',
+          sourceUrl: 'https://example.test/mirror-b.bin',
+          updatedAt: DateTime(2026, 7, 24, 10, 1),
+        ),
+      );
+
+      final saved = await repository.findLatestTaskByModel('model-1');
+      expect(saved?.sourceId, 'source-b');
+      expect(saved?.sourceUrl, 'https://example.test/mirror-b.bin');
+      expect(saved?.effectiveReceivedBytes, 0);
+      expect(saved?.etag, isNull);
+      expect(
+        await database.run(
+          (db) => db.rawQuery(
+            'SELECT COUNT(*) AS count FROM download_tasks '
+            'WHERE operation_id = ? AND artifact_id = ?',
+            <Object>['operation-1', 'artifact-1'],
+          ),
+        ),
+        const <Map<String, Object?>>[
+          <String, Object?>{'count': 1},
+        ],
+      );
+    },
+  );
+
   test('terminal checkpoint only reopens with a newer generation', () async {
     await repository.saveTask(
       _task(

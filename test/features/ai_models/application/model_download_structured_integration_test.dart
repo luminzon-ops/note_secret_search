@@ -19,6 +19,7 @@ import 'package:note_secret_search/features/search/application/embedding_runtime
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
 part 'model_download_structured_failure_recovery_test.dart';
+part 'model_download_structured_resume_failover_test.dart';
 
 void main() {
   test(
@@ -77,6 +78,7 @@ void main() {
   );
 
   _registerStructuredFailureRecoveryTests();
+  _registerStructuredResumeFailoverTests();
 }
 
 ProviderContainer _container({

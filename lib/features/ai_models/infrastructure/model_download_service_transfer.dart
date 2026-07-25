@@ -73,6 +73,7 @@ extension _ModelDownloadServiceTransfer on ModelDownloadService {
                 offset: offset,
                 total: total,
                 bodySize: acceptedRange.end - acceptedRange.start + 1,
+                validator: validator,
               );
               await _checkSize(files.partial, total);
               resumed = true;
@@ -93,6 +94,19 @@ extension _ModelDownloadServiceTransfer on ModelDownloadService {
 
       if (!resumed) {
         await _clear(files);
+        if (restarted) {
+          await Future.sync(
+            () => job.onProgress(
+              ModelDownloadProgress(
+                receivedBytes: 0,
+                totalBytes: job.expectedSizeBytes,
+                averageSpeedBytesPerSecond: null,
+                resumable: false,
+                restarted: true,
+              ),
+            ),
+          );
+        }
         final full = await _full(job, files, token, startedAt);
         total = full.total;
         validator = full.validator;
@@ -177,6 +191,7 @@ extension _ModelDownloadServiceTransfer on ModelDownloadService {
       offset: 0,
       total: total,
       bodySize: total,
+      validator: validator,
     );
     await _checkSize(files.partial, total);
     return (total: total, validator: validator);
@@ -241,6 +256,7 @@ extension _ModelDownloadServiceTransfer on ModelDownloadService {
     required int offset,
     required int? total,
     required int? bodySize,
+    required _Validator validator,
   }) async {
     final body = response.data;
     if (body == null) {
@@ -264,6 +280,9 @@ extension _ModelDownloadServiceTransfer on ModelDownloadService {
               averageSpeedBytesPerSecond: elapsed <= 0
                   ? null
                   : current * 1000 / elapsed,
+              etag: validator.etag,
+              lastModified: validator.lastModified,
+              resumable: validator.resumable,
             ),
           ),
         );

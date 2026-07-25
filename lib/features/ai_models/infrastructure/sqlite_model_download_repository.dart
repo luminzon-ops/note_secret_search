@@ -109,10 +109,15 @@ class SqliteModelDownloadRepository implements ModelDownloadRepository {
     if (raw == null) {
       return ModelDownloadPhase.legacy;
     }
-    return ModelDownloadPhase.values.firstWhere(
-      (value) => value.name == raw,
-      orElse: () => ModelDownloadPhase.legacy,
-    );
+    return switch (raw) {
+      'runtime_validating' => ModelDownloadPhase.runtimeValidating,
+      'releasing_sessions' => ModelDownloadPhase.releasingSessions,
+      'retryable_failed' => ModelDownloadPhase.retryableFailed,
+      _ => ModelDownloadPhase.values.firstWhere(
+        (value) => value.name == raw,
+        orElse: () => ModelDownloadPhase.legacy,
+      ),
+    };
   }
 }
 
@@ -177,18 +182,31 @@ Future<void> upsertModelDownloadTask(
           OR (
             excluded.attempt_generation = download_tasks.attempt_generation
             AND excluded.model_id = download_tasks.model_id
-            AND excluded.source_id = download_tasks.source_id
             AND excluded.operation_id IS download_tasks.operation_id
             AND excluded.release_id IS download_tasks.release_id
             AND excluded.artifact_id IS download_tasks.artifact_id
-            AND excluded.source_url IS download_tasks.source_url
             AND excluded.staging_path IS download_tasks.staging_path
             AND excluded.expected_sha256 IS download_tasks.expected_sha256
             AND excluded.expected_size_bytes IS download_tasks.expected_size_bytes
             AND excluded.updated_at >= download_tasks.updated_at
             AND (
-              download_tasks.checkpoint = 'legacy'
-              OR excluded.received_bytes >= download_tasks.received_bytes
+              (
+                excluded.source_id = download_tasks.source_id
+                AND excluded.source_url IS download_tasks.source_url
+                AND (
+                  download_tasks.checkpoint = 'legacy'
+                  OR excluded.received_bytes >= download_tasks.received_bytes
+                )
+              )
+              OR (
+                download_tasks.checkpoint = 'retryable_failed'
+                AND excluded.checkpoint = 'downloading'
+                AND excluded.status = 'downloading'
+                AND excluded.downloaded_bytes = 0
+                AND excluded.received_bytes = 0
+                AND excluded.etag IS NULL
+                AND excluded.last_modified IS NULL
+              )
             )
             AND (
               download_tasks.checkpoint NOT IN ('completed', 'failed')
@@ -216,11 +234,20 @@ Future<void> upsertModelDownloadTask(
       task.stagingPath,
       task.expectedChecksum,
       task.expectedSizeBytes ?? task.totalBytes,
-      task.phase.name,
+      _phaseStorageName(task.phase),
       task.retryReason,
       task.effectiveReceivedBytes,
       task.etag,
       task.lastModified,
     ],
   );
+}
+
+String _phaseStorageName(ModelDownloadPhase phase) {
+  return switch (phase) {
+    ModelDownloadPhase.runtimeValidating => 'runtime_validating',
+    ModelDownloadPhase.releasingSessions => 'releasing_sessions',
+    ModelDownloadPhase.retryableFailed => 'retryable_failed',
+    _ => phase.name,
+  };
 }

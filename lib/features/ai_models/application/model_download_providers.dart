@@ -38,6 +38,7 @@ part 'model_download_sensitive_providers.dart';
 part 'model_download_controller_internals.dart';
 part 'model_download_dependencies.dart';
 part 'model_download_structured.dart';
+part 'model_download_structured_resume.dart';
 part 'model_download_structured_support.dart';
 
 class ModelDownloadController {
@@ -380,14 +381,16 @@ class ModelDownloadController {
       return;
     }
 
-    _downloadService.cancel(task.id);
-
     await _repository.saveTask(
       task.copyWith(
         status: ModelDownloadStatus.paused,
-        updatedAt: DateTime.now(),
+        phase: task.operationId == null
+            ? task.phase
+            : ModelDownloadPhase.paused,
+        updatedAt: _nextTaskTimestamp(task.updatedAt),
       ),
     );
+    _downloadService.cancel(task.id);
     _ref.invalidate(modelDownloadTasksProvider);
   }
 

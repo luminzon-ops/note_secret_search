@@ -1,37 +1,5 @@
 part of 'model_download_providers.dart';
 
-class _StructuredOperation {
-  const _StructuredOperation({
-    required this.operationId,
-    required this.generation,
-    required this.createdAt,
-  });
-
-  final String operationId;
-  final int generation;
-  final int createdAt;
-}
-
-class _StagedStructuredArtifact {
-  const _StagedStructuredArtifact({
-    required this.artifact,
-    required this.staged,
-    required this.sourceId,
-    required this.task,
-  });
-
-  final ModelArtifactSpec artifact;
-  final StagedModelArtifact staged;
-  final String sourceId;
-  final ModelDownloadTask task;
-}
-
-class _StructuredRuntimeResult {
-  const _StructuredRuntimeResult({required this.enabled});
-
-  final bool enabled;
-}
-
 extension _StructuredModelDownload on ModelDownloadController {
   Future<void> _startStructuredDownload({
     required ModelCatalogEntry entry,
@@ -47,7 +15,7 @@ extension _StructuredModelDownload on ModelDownloadController {
           // A failed operation must not permanently block a later retry.
         }
       }
-      final operation = await _beginStructuredOperation(entry.id);
+      final operation = await _beginStructuredOperation(entry);
       _activeOperationIds[entry.id] = operation.operationId;
       try {
         await _performStructuredDownload(
@@ -68,26 +36,48 @@ extension _StructuredModelDownload on ModelDownloadController {
     return current;
   }
 
-  Future<_StructuredOperation> _beginStructuredOperation(String modelId) async {
+  Future<_StructuredOperation> _beginStructuredOperation(
+    ModelCatalogEntry entry,
+  ) async {
+    final modelId = entry.id;
     final existing = await _registryRepository.getById(modelId);
     final latestTask = await _repository.findLatestTaskByModel(modelId);
-    var generation = _modelGenerations[modelId] ?? 0;
-    generation = _maxInt(generation, existing?.generation ?? 0);
-    generation = _maxInt(generation, latestTask?.attemptGeneration ?? 0) + 1;
     final journalStore = _installJournalStore;
+    var openJournals = const <ModelInstallJournalRecord>[];
     if (journalStore != null) {
-      final openJournals = await journalStore.listOpenInstallJournals();
-      for (final journal in openJournals) {
-        if (journal.modelId == modelId) {
-          generation = _maxInt(generation, journal.attemptGeneration + 1);
-        }
+      openJournals = await journalStore.listOpenInstallJournals();
+      final resumable = await _findResumableStructuredJournal(
+        entry: entry,
+        journals: openJournals,
+      );
+      if (resumable != null) {
+        _modelGenerations[modelId] = _maxInt(
+          _modelGenerations[modelId] ?? 0,
+          resumable.attemptGeneration,
+        );
+        return _StructuredOperation(
+          operationId: resumable.operationId,
+          generation: resumable.attemptGeneration,
+          createdAt: resumable.createdAt,
+          resuming: true,
+        );
       }
     }
+    var generation = _modelGenerations[modelId] ?? 0;
+    generation = _maxInt(generation, existing?.generation ?? 0);
+    generation = _maxInt(generation, latestTask?.attemptGeneration ?? 0);
+    for (final journal in openJournals) {
+      if (journal.modelId == modelId) {
+        generation = _maxInt(generation, journal.attemptGeneration);
+      }
+    }
+    generation += 1;
     _modelGenerations[modelId] = generation;
     return _StructuredOperation(
       operationId: ModelDownloadController._uuid.v4(),
       generation: generation,
       createdAt: DateTime.now().millisecondsSinceEpoch,
+      resuming: false,
     );
   }
 
@@ -100,13 +90,18 @@ extension _StructuredModelDownload on ModelDownloadController {
     final staged = <String, _StagedStructuredArtifact>{};
     final existing = await _registryRepository.getById(entry.id);
     try {
-      await _recoverStructuredJournals(entry.id);
-      await _recordStructuredJournal(
-        entry: entry,
-        operation: operation,
-        existing: existing,
-        phase: 'queued',
+      await _recoverStructuredJournals(
+        entry.id,
+        excludedOperationId: operation.resuming ? operation.operationId : null,
       );
+      if (!operation.resuming) {
+        await _recordStructuredJournal(
+          entry: entry,
+          operation: operation,
+          existing: existing,
+          phase: 'queued',
+        );
+      }
       await _revisionStore.recoverInterruptedInstalls(modelId: entry.id);
       await _recordStructuredJournal(
         entry: entry,
@@ -224,6 +219,9 @@ extension _StructuredModelDownload on ModelDownloadController {
       _ref.invalidate(modelRegistryEntriesProvider);
       _ref.invalidate(embeddingRuntimeStatesProvider);
       _ref.invalidate(llmRuntimeStatesProvider);
+    } on _StructuredDownloadPaused {
+      _logger.info('structured_model_download_paused');
+      _ref.invalidate(modelDownloadTasksProvider);
     } catch (error, stackTrace) {
       _logger.error('structured_model_download_failed', error, stackTrace);
       await _tryRecordStructuredFailure(
@@ -241,45 +239,74 @@ extension _StructuredModelDownload on ModelDownloadController {
     required ModelSourceEntry selectedSource,
     required _StructuredOperation operation,
   }) async {
+    final target = await _downloadService.resolveArtifactStagingTarget(
+      modelId: entry.id,
+      operationId: operation.operationId,
+      artifactId: artifact.id,
+    );
+    var task = await _findStructuredTask(
+      operationId: operation.operationId,
+      generation: operation.generation,
+      artifactId: artifact.id,
+    );
+    if (task != null &&
+        !_structuredTaskMatchesArtifact(
+          task: task,
+          entry: entry,
+          artifact: artifact,
+          operation: operation,
+          stagingPath: target.stagingPath,
+        )) {
+      throw StateError('structured_resume_identity_mismatch');
+    }
+    final reused = await _reuseStagedStructuredArtifact(
+      entry: entry,
+      artifact: artifact,
+      task: task,
+    );
+    if (reused != null) {
+      return reused;
+    }
     final candidates = _orderedArtifactSources(
       artifact: artifact,
       selectedSource: selectedSource,
+      preferredSourceId: task?.sourceId,
     );
     Object? lastError;
-    for (final candidate in candidates) {
+    for (var index = 0; index < candidates.length; index++) {
+      final candidate = candidates[index];
       if (candidate.checksum != artifact.checksum) {
         throw StateError('artifact_source_digest_mismatch');
       }
-      final target = await _downloadService.resolveArtifactStagingTarget(
-        modelId: entry.id,
-        operationId: operation.operationId,
-        artifactId: artifact.id,
-      );
-      final task = _newStructuredTask(
+      final prepared = await _prepareStructuredTask(
         entry: entry,
         artifact: artifact,
+        operation: operation,
         sourceId: candidate.id,
         sourceUrl: candidate.url,
         stagingPath: target.stagingPath,
-        operation: operation,
+        sourceResumable: true,
+        existing: task,
       );
-      await _repository.saveTask(task);
+      final activeTask = prepared.task;
+      task = activeTask;
       try {
         final result = await _downloadService.stageArtifact(
-          taskId: task.id,
+          taskId: activeTask.id,
           modelId: entry.id,
           operationId: operation.operationId,
           artifactId: artifact.id,
           sourceUrl: candidate.url,
           expectedChecksum: artifact.checksum,
           expectedSizeBytes: artifact.sizeBytes,
+          resumeFromBytes: prepared.resumeFromBytes,
           onProgress: (progress) => _saveStructuredProgress(
-            task: task,
+            task: activeTask,
             progress: progress,
             operation: operation,
           ),
         );
-        final completed = task.copyWith(
+        final completed = activeTask.copyWith(
           status: ModelDownloadStatus.downloading,
           phase: ModelDownloadPhase.staged,
           downloadedBytes: result.totalBytes,
@@ -306,16 +333,30 @@ extension _StructuredModelDownload on ModelDownloadController {
         );
       } catch (error) {
         lastError = error;
+        task =
+            await _findStructuredTask(
+              operationId: operation.operationId,
+              generation: operation.generation,
+              artifactId: artifact.id,
+            ) ??
+            task;
+        if (_isStructuredPause(error, task)) {
+          throw const _StructuredDownloadPaused();
+        }
+        final canFailover =
+            _isFailoverEligible(error) && index < candidates.length - 1;
         await _repository.saveTask(
           task.copyWith(
             status: ModelDownloadStatus.failed,
-            phase: ModelDownloadPhase.retryableFailed,
+            phase: canFailover
+                ? ModelDownloadPhase.retryableFailed
+                : ModelDownloadPhase.failed,
             errorMessage: error.toString(),
             retryReason: error.toString(),
-            updatedAt: DateTime.now(),
+            updatedAt: _nextTaskTimestamp(task.updatedAt),
           ),
         );
-        if (!_isFailoverEligible(error) || candidate == candidates.last) {
+        if (!canFailover) {
           rethrow;
         }
       }
@@ -329,21 +370,46 @@ extension _StructuredModelDownload on ModelDownloadController {
     required _StructuredOperation operation,
   }) async {
     final sourceId = 'asset-${artifact.id}';
+    final sourceUrl = 'asset:${artifact.relativePath}';
     final target = await _downloadService.resolveArtifactStagingTarget(
       modelId: entry.id,
       operationId: operation.operationId,
       artifactId: artifact.id,
     );
-    final task = _newStructuredTask(
+    var task = await _findStructuredTask(
+      operationId: operation.operationId,
+      generation: operation.generation,
+      artifactId: artifact.id,
+    );
+    if (task != null &&
+        !_structuredTaskMatchesArtifact(
+          task: task,
+          entry: entry,
+          artifact: artifact,
+          operation: operation,
+          stagingPath: target.stagingPath,
+        )) {
+      throw StateError('structured_resume_identity_mismatch');
+    }
+    final reused = await _reuseStagedStructuredArtifact(
       entry: entry,
       artifact: artifact,
-      sourceId: sourceId,
-      sourceUrl: 'asset:${artifact.relativePath}',
-      stagingPath: target.stagingPath,
-      operation: operation,
-      resumable: false,
+      task: task,
     );
-    await _repository.saveTask(task);
+    if (reused != null) {
+      return reused;
+    }
+    final prepared = await _prepareStructuredTask(
+      entry: entry,
+      artifact: artifact,
+      operation: operation,
+      sourceId: sourceId,
+      sourceUrl: sourceUrl,
+      stagingPath: target.stagingPath,
+      sourceResumable: false,
+      existing: task,
+    );
+    task = prepared.task;
     try {
       final data = await rootBundle.load(artifact.relativePath);
       final bytes = data.buffer.asUint8List(
@@ -384,12 +450,19 @@ extension _StructuredModelDownload on ModelDownloadController {
         task: completed,
       );
     } catch (error) {
+      task =
+          await _findStructuredTask(
+            operationId: operation.operationId,
+            generation: operation.generation,
+            artifactId: artifact.id,
+          ) ??
+          task;
       await _repository.saveTask(
         task.copyWith(
           status: ModelDownloadStatus.failed,
           phase: ModelDownloadPhase.failed,
           errorMessage: error.toString(),
-          updatedAt: DateTime.now(),
+          updatedAt: _nextTaskTimestamp(task.updatedAt),
         ),
       );
       rethrow;
