@@ -5,6 +5,46 @@ import 'package:note_secret_search/features/ai_models/infrastructure/io_model_re
 import 'package:path/path.dart' as p;
 
 void main() {
+  test('stages a verified artifact from the current revision', () async {
+    final support = await Directory.systemTemp.createTemp(
+      'note_secret_search_revision_reuse_',
+    );
+    addTearDown(() => support.delete(recursive: true));
+    final store = IoModelRevisionStore(
+      applicationSupportDirectoryProvider: () async => support,
+    );
+    final source = File(
+      p.join(
+        support.path,
+        'models',
+        'model-1',
+        'revisions',
+        '1',
+        'runtime',
+        'model.bin',
+      ),
+    );
+    await source.create(recursive: true);
+    await source.writeAsBytes(<int>[1, 2, 3]);
+
+    final staged = await store.stageExistingArtifact(
+      modelId: 'model-1',
+      operationId: 'operation-repair',
+      artifactId: 'model',
+      relativePath: 'runtime/model.bin',
+      sourcePath: source.path,
+      expectedSizeBytes: 3,
+      expectedChecksum: _sha123,
+    );
+
+    expect(await File(staged.stagingPath).readAsBytes(), <int>[1, 2, 3]);
+    expect(await source.readAsBytes(), <int>[1, 2, 3]);
+    expect(
+      staged.stagingPath,
+      endsWith(p.join('.staging', 'operation-repair', 'model.part')),
+    );
+  });
+
   test(
     'installs all staged artifacts atomically and preserves old revision',
     () async {

@@ -79,6 +79,57 @@ class ModelArtifactPath {
 
   int? get effectiveVerifiedSizeBytes => verifiedSizeBytes;
 
+  ModelArtifactPath copyWith({
+    String? role,
+    String? sourceId,
+    String? localPath,
+    String? artifactId,
+    String? releaseId,
+    String? relativePath,
+    bool? required,
+    String? expectedChecksum,
+    bool clearExpectedChecksum = false,
+    String? verifiedChecksum,
+    bool clearVerifiedChecksum = false,
+    int? expectedSizeBytes,
+    bool clearExpectedSizeBytes = false,
+    int? verifiedSizeBytes,
+    bool clearVerifiedSizeBytes = false,
+    String? checksum,
+    bool clearChecksum = false,
+    int? sizeBytes,
+    bool clearSizeBytes = false,
+    String? state,
+    int? verifiedAt,
+    bool clearVerifiedAt = false,
+  }) {
+    return ModelArtifactPath(
+      role: role ?? this.role,
+      sourceId: sourceId ?? this.sourceId,
+      localPath: localPath ?? this.localPath,
+      artifactId: artifactId ?? this.artifactId,
+      releaseId: releaseId ?? this.releaseId,
+      relativePath: relativePath ?? this.relativePath,
+      required: required ?? this.required,
+      expectedChecksum: clearExpectedChecksum
+          ? null
+          : (expectedChecksum ?? this.expectedChecksum),
+      verifiedChecksum: clearVerifiedChecksum
+          ? null
+          : (verifiedChecksum ?? this.verifiedChecksum),
+      expectedSizeBytes: clearExpectedSizeBytes
+          ? null
+          : (expectedSizeBytes ?? this.expectedSizeBytes),
+      verifiedSizeBytes: clearVerifiedSizeBytes
+          ? null
+          : (verifiedSizeBytes ?? this.verifiedSizeBytes),
+      checksum: clearChecksum ? null : (checksum ?? this.checksum),
+      sizeBytes: clearSizeBytes ? null : (sizeBytes ?? this.sizeBytes),
+      state: state ?? this.state,
+      verifiedAt: clearVerifiedAt ? null : (verifiedAt ?? this.verifiedAt),
+    );
+  }
+
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'role': role,

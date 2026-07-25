@@ -10,6 +10,9 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
       final repository = ref.watch(modelRegistryRepositoryProvider);
       final lifecycleStore = ref.watch(modelLifecycleStoreProvider);
       final downloadService = ref.watch(modelDownloadServiceProvider);
+      final integrityVerifier = ModelRegistryIntegrityVerifier(
+        downloadService: downloadService,
+      );
       final downloadRepository = ref.watch(modelDownloadRepositoryProvider);
       final catalogEntries = await ref.watch(
         modelCatalogEntriesProvider.future,
@@ -112,41 +115,8 @@ final modelRegistryEntriesProvider = FutureProvider<List<ModelRegistryEntry>>((
           resolved.add(entry);
           continue;
         }
-        final present = await downloadService.fileExists(entry.localPath);
-        var normalized = entry.copyWith(
-          filePresent: present,
-          enabled: entry.enabled && present,
-          integrityStatus: present
-              ? entry.integrityStatus
-              : ModelIntegrityStatus.unknown,
-        );
-
-        if (present &&
-            entry.localPath != null &&
-            entry.localPath!.trim().isNotEmpty) {
-          final expectedChecksum = entry.checksum?.trim() ?? '';
-          if (expectedChecksum.isNotEmpty) {
-            try {
-              await downloadService.verifyChecksum(
-                filePath: entry.localPath!,
-                expectedChecksum: expectedChecksum,
-              );
-              normalized = normalized.copyWith(
-                integrityStatus: ModelIntegrityStatus.valid,
-              );
-            } catch (_) {
-              normalized = normalized.copyWith(
-                enabled: false,
-                integrityStatus: ModelIntegrityStatus.corrupted,
-              );
-            }
-          }
-        }
-
-        if (normalized.enabled != entry.enabled ||
-            normalized.filePresent != entry.filePresent) {
-          await repository.save(normalized);
-        } else if (normalized.integrityStatus != entry.integrityStatus) {
+        final normalized = await integrityVerifier.verify(entry);
+        if (modelRegistryIntegrityChanged(entry, normalized)) {
           await repository.save(normalized);
         }
         resolved.add(normalized);

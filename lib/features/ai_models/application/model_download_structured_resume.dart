@@ -6,12 +6,14 @@ class _StructuredOperation {
     required this.generation,
     required this.createdAt,
     required this.resuming,
+    required this.operationType,
   });
 
   final String operationId;
   final int generation;
   final int createdAt;
   final bool resuming;
+  final String operationType;
 }
 
 class _StagedStructuredArtifact {
@@ -42,16 +44,16 @@ extension _StructuredModelDownloadResume on ModelDownloadController {
   Future<ModelInstallJournalRecord?> _findResumableStructuredJournal({
     required ModelCatalogEntry entry,
     required List<ModelInstallJournalRecord> journals,
+    required String operationType,
   }) async {
     final current = await _registryRepository.getById(entry.id);
-    final expectedOperationType = current == null ? 'install' : 'replace';
     final candidates =
         journals
             .where(
               (journal) =>
                   journal.modelId == entry.id &&
                   journal.releaseId == entry.releaseId &&
-                  journal.operationType == expectedOperationType &&
+                  journal.operationType == operationType &&
                   journal.oldRevision == current?.revisionRoot &&
                   (journal.phase == 'queued' || journal.phase == 'staging') &&
                   journal.attemptGeneration > 0 &&
@@ -105,6 +107,7 @@ extension _StructuredModelDownloadResume on ModelDownloadController {
             generation: journal.attemptGeneration,
             createdAt: journal.createdAt,
             resuming: true,
+            operationType: journal.operationType,
           ),
           stagingPath: target.stagingPath,
         )) {

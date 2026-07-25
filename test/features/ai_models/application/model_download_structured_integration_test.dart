@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/storage/database/model_state_records.dart';
+import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
@@ -19,7 +20,9 @@ import 'package:note_secret_search/features/search/application/embedding_runtime
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
 part 'model_download_structured_failure_recovery_test.dart';
+part 'model_download_structured_repair_test.dart';
 part 'model_download_structured_resume_failover_test.dart';
+part 'model_download_structured_test_doubles.dart';
 
 void main() {
   test(
@@ -78,6 +81,7 @@ void main() {
   );
 
   _registerStructuredFailureRecoveryTests();
+  _registerStructuredRepairTests();
   _registerStructuredResumeFailoverTests();
 }
 
@@ -399,6 +403,7 @@ class _RecordingRevisionStore implements ModelRevisionStore {
   int installCalls = 0;
   List<StagedModelArtifact> artifacts = const <StagedModelArtifact>[];
   final List<String> discardedRevisionRoots = <String>[];
+  final List<String> reusedArtifactIds = <String>[];
 
   @override
   Future<InstalledModelRevision> installVerifiedRevision({
@@ -429,50 +434,24 @@ class _RecordingRevisionStore implements ModelRevisionStore {
   }) async {
     discardedRevisionRoots.add(revisionRoot);
   }
-}
 
-class _ReadyEmbeddingBridge implements EmbeddingRuntimeBridge {
-  int ensureCalls = 0;
-
-  @override
-  Future<Map<String, dynamic>> ensureModelReady({
+  Future<StagedModelArtifact> stageExistingArtifact({
     required String modelId,
-    required String modelPath,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
+    required String operationId,
+    required String artifactId,
+    required String relativePath,
+    required String sourcePath,
+    required int expectedSizeBytes,
+    required String expectedChecksum,
   }) async {
-    ensureCalls += 1;
-    return <String, dynamic>{
-      'status': 'ready',
-      'ready': true,
-      'modelPath': modelPath,
-    };
+    reusedArtifactIds.add(artifactId);
+    return StagedModelArtifact(
+      artifactId: artifactId,
+      relativePath: relativePath,
+      stagingPath:
+          '/support/models/$modelId/.staging/$operationId/$artifactId.part',
+      expectedSizeBytes: expectedSizeBytes,
+      expectedChecksum: expectedChecksum,
+    );
   }
-
-  @override
-  Future<Map<String, dynamic>> embedText({
-    required String modelId,
-    required String modelPath,
-    required String text,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
-    String? requestId,
-  }) => throw UnimplementedError();
-
-  @override
-  Future<Map<String, dynamic>> inspectModel({
-    required String modelId,
-    required String modelPath,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
-  }) => throw UnimplementedError();
-
-  @override
-  Future<void> cancelRequest({required String requestId}) async {}
-
-  @override
-  Future<void> releaseModel({required String modelId}) async {}
 }

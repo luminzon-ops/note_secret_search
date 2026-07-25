@@ -100,7 +100,7 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
         modelId: entry.id,
         releaseId: entry.releaseId,
         attemptGeneration: operation.generation,
-        operationType: existing == null ? 'install' : 'replace',
+        operationType: operation.operationType,
         phase: phase,
         oldRevision: existing?.revisionRoot,
         newRevision: 'revisions/${operation.generation}',

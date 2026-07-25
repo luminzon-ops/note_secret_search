@@ -241,6 +241,14 @@ class ModelDownloadService {
     return File(path).exists();
   }
 
+  Future<int?> fileLength(String? path) async {
+    if (path == null || path.trim().isEmpty) {
+      return null;
+    }
+    final file = File(path);
+    return await file.exists() ? file.length() : null;
+  }
+
   Future<void> deleteLocalFile(String? path) async {
     if (path == null || path.trim().isEmpty) {
       return;

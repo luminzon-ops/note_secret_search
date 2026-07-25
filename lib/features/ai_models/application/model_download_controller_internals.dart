@@ -349,40 +349,5 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
 
   Future<ModelRegistryEntry> _normalizeRegistryEntry(
     ModelRegistryEntry entry,
-  ) async {
-    final present = await _downloadService.fileExists(entry.localPath);
-
-    var normalized = entry.copyWith(
-      filePresent: present,
-      enabled: entry.enabled && present,
-      integrityStatus: present
-          ? entry.integrityStatus
-          : ModelIntegrityStatus.unknown,
-    );
-
-    if (present &&
-        entry.localPath != null &&
-        entry.localPath!.trim().isNotEmpty) {
-      final expectedChecksum = entry.checksum?.trim() ?? '';
-      if (expectedChecksum.isNotEmpty) {
-        try {
-          await _downloadService.verifyChecksum(
-            filePath: entry.localPath!,
-            expectedChecksum: expectedChecksum,
-          );
-          normalized = normalized.copyWith(
-            enabled: true,
-            integrityStatus: ModelIntegrityStatus.valid,
-          );
-        } catch (_) {
-          normalized = normalized.copyWith(
-            enabled: false,
-            integrityStatus: ModelIntegrityStatus.corrupted,
-          );
-        }
-      }
-    }
-
-    return normalized;
-  }
+  ) => _integrityVerifier.verify(entry, enableWhenValid: true);
 }

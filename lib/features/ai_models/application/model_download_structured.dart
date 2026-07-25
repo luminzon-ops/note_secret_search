@@ -4,6 +4,7 @@ extension _StructuredModelDownload on ModelDownloadController {
   Future<void> _startStructuredDownload({
     required ModelCatalogEntry entry,
     required ModelSourceEntry source,
+    String? operationType,
   }) async {
     final previous = _modelOperationLocks[entry.id];
     late final Future<void> current;
@@ -15,7 +16,10 @@ extension _StructuredModelDownload on ModelDownloadController {
           // A failed operation must not permanently block a later retry.
         }
       }
-      final operation = await _beginStructuredOperation(entry);
+      final operation = await _beginStructuredOperation(
+        entry,
+        requestedOperationType: operationType,
+      );
       _activeOperationIds[entry.id] = operation.operationId;
       try {
         await _performStructuredDownload(
@@ -37,10 +41,13 @@ extension _StructuredModelDownload on ModelDownloadController {
   }
 
   Future<_StructuredOperation> _beginStructuredOperation(
-    ModelCatalogEntry entry,
-  ) async {
+    ModelCatalogEntry entry, {
+    String? requestedOperationType,
+  }) async {
     final modelId = entry.id;
     final existing = await _registryRepository.getById(modelId);
+    final operationType =
+        requestedOperationType ?? (existing == null ? 'install' : 'replace');
     final latestTask = await _repository.findLatestTaskByModel(modelId);
     final journalStore = _installJournalStore;
     var openJournals = const <ModelInstallJournalRecord>[];
@@ -49,6 +56,7 @@ extension _StructuredModelDownload on ModelDownloadController {
       final resumable = await _findResumableStructuredJournal(
         entry: entry,
         journals: openJournals,
+        operationType: operationType,
       );
       if (resumable != null) {
         _modelGenerations[modelId] = _maxInt(
@@ -60,6 +68,7 @@ extension _StructuredModelDownload on ModelDownloadController {
           generation: resumable.attemptGeneration,
           createdAt: resumable.createdAt,
           resuming: true,
+          operationType: resumable.operationType,
         );
       }
     }
@@ -78,6 +87,7 @@ extension _StructuredModelDownload on ModelDownloadController {
       generation: generation,
       createdAt: DateTime.now().millisecondsSinceEpoch,
       resuming: false,
+      operationType: operationType,
     );
   }
 
@@ -89,6 +99,10 @@ extension _StructuredModelDownload on ModelDownloadController {
     final tasks = <ModelDownloadTask>[];
     final staged = <String, _StagedStructuredArtifact>{};
     final existing = await _registryRepository.getById(entry.id);
+    final verifiedExisting =
+        operation.operationType == 'repair' && existing != null
+        ? await _integrityVerifier.verify(existing)
+        : existing;
     try {
       await _recoverStructuredJournals(
         entry.id,
@@ -110,18 +124,28 @@ extension _StructuredModelDownload on ModelDownloadController {
         phase: 'staging',
       );
       for (final artifact in entry.artifacts) {
-        final result = artifact.isBundledAsset
-            ? await _stageBundledArtifact(
+        final reusable = verifiedExisting == null
+            ? null
+            : await _stageReusableInstalledArtifact(
                 entry: entry,
                 artifact: artifact,
-                operation: operation,
-              )
-            : await _stageDownloadedArtifact(
-                entry: entry,
-                artifact: artifact,
-                selectedSource: selectedSource,
+                existing: verifiedExisting,
                 operation: operation,
               );
+        final result =
+            reusable ??
+            (artifact.isBundledAsset
+                ? await _stageBundledArtifact(
+                    entry: entry,
+                    artifact: artifact,
+                    operation: operation,
+                  )
+                : await _stageDownloadedArtifact(
+                    entry: entry,
+                    artifact: artifact,
+                    selectedSource: selectedSource,
+                    operation: operation,
+                  ));
         tasks.add(result.task);
         staged[artifact.id] = result;
       }
@@ -231,6 +255,79 @@ extension _StructuredModelDownload on ModelDownloadController {
       );
       await _markStructuredTasksFailed(tasks, error.toString());
     }
+  }
+
+  Future<_StagedStructuredArtifact?> _stageReusableInstalledArtifact({
+    required ModelCatalogEntry entry,
+    required ModelArtifactSpec artifact,
+    required ModelRegistryEntry existing,
+    required _StructuredOperation operation,
+  }) async {
+    if (operation.operationType != 'repair' ||
+        existing.releaseId != entry.releaseId) {
+      return null;
+    }
+    final installed = existing.artifactById(artifact.id);
+    if (installed == null ||
+        !installed.isVerified ||
+        installed.releaseId != artifact.releaseId ||
+        installed.role != artifact.role ||
+        installed.required != artifact.required ||
+        installed.relativePath != artifact.relativePath ||
+        installed.effectiveExpectedChecksum != artifact.checksum ||
+        installed.effectiveExpectedSizeBytes != artifact.sizeBytes) {
+      return null;
+    }
+
+    late final String sourceId;
+    late final String sourceUrl;
+    if (artifact.isBundledAsset) {
+      sourceId = 'asset-${artifact.id}';
+      sourceUrl = 'asset:${artifact.relativePath}';
+    } else {
+      final source = artifact.sources
+          .where((candidate) => candidate.id == installed.sourceId)
+          .firstOrNull;
+      if (source == null) {
+        return null;
+      }
+      sourceId = source.id;
+      sourceUrl = source.url;
+    }
+
+    final staged = await _revisionStore.stageExistingArtifact(
+      modelId: entry.id,
+      operationId: operation.operationId,
+      artifactId: artifact.id,
+      relativePath: artifact.relativePath,
+      sourcePath: installed.localPath,
+      expectedSizeBytes: artifact.sizeBytes,
+      expectedChecksum: artifact.checksum,
+    );
+    final now = DateTime.now();
+    final task =
+        _newStructuredTask(
+          entry: entry,
+          artifact: artifact,
+          sourceId: sourceId,
+          sourceUrl: sourceUrl,
+          stagingPath: staged.stagingPath,
+          operation: operation,
+          resumable: false,
+        ).copyWith(
+          phase: ModelDownloadPhase.staged,
+          downloadedBytes: artifact.sizeBytes,
+          receivedBytes: artifact.sizeBytes,
+          totalBytes: artifact.sizeBytes,
+          updatedAt: now,
+        );
+    await _repository.saveTask(task);
+    return _StagedStructuredArtifact(
+      artifact: artifact,
+      staged: staged,
+      sourceId: sourceId,
+      task: task,
+    );
   }
 
   Future<_StagedStructuredArtifact> _stageDownloadedArtifact({

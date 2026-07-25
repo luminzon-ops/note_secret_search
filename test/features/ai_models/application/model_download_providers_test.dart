@@ -7,6 +7,7 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
@@ -15,6 +16,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_sto
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
+import 'package:note_secret_search/features/ai_models/infrastructure/model_catalog_trust.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_source_probe_service.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/multimodal_llm_runtime_providers.dart';
@@ -25,8 +27,16 @@ import 'package:note_secret_search/features/search/application/embedding_runtime
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
+const _embeddingChecksum =
+    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _qwenChecksum =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _llmChecksum =
+    'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
 class _MemoryDownloadRepository implements ModelDownloadRepository {
-  final Map<String, ModelDownloadTask> tasksById = <String, ModelDownloadTask>{};
+  final Map<String, ModelDownloadTask> tasksById =
+      <String, ModelDownloadTask>{};
 
   ModelDownloadTask? tasksByModelAndSource(String modelId, String sourceId) {
     for (final task in tasksById.values) {
@@ -48,22 +58,26 @@ class _MemoryDownloadRepository implements ModelDownloadRepository {
   }
 
   @override
-  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(String modelId, String sourceId) async {
+  Future<ModelDownloadTask?> findLatestTaskByModelAndSource(
+    String modelId,
+    String sourceId,
+  ) async {
     return tasksByModelAndSource(modelId, sourceId);
   }
 
   @override
-  Future<List<ModelDownloadTask>> listTasks() async => tasksById.values.toList(growable: false);
+  Future<List<ModelDownloadTask>> listTasks() async =>
+      tasksById.values.toList(growable: false);
 
   @override
   Future<void> saveTask(ModelDownloadTask task) async {
     tasksById[task.id] = task;
   }
-
 }
 
 class _MemoryRegistryRepository implements ModelRegistryRepository {
-  final Map<String, ModelRegistryEntry> entries = <String, ModelRegistryEntry>{};
+  final Map<String, ModelRegistryEntry> entries =
+      <String, ModelRegistryEntry>{};
 
   @override
   Future<void> deleteById(String id) async {
@@ -74,7 +88,8 @@ class _MemoryRegistryRepository implements ModelRegistryRepository {
   Future<ModelRegistryEntry?> getById(String id) async => entries[id];
 
   @override
-  Future<List<ModelRegistryEntry>> listInstalledModels() async => entries.values.toList(growable: false);
+  Future<List<ModelRegistryEntry>> listInstalledModels() async =>
+      entries.values.toList(growable: false);
 
   @override
   Future<void> save(ModelRegistryEntry entry) async {
@@ -82,11 +97,12 @@ class _MemoryRegistryRepository implements ModelRegistryRepository {
   }
 }
 
-ProviderContainer _modelProviderContainer({
-  required List<Override> overrides,
-}) {
+ProviderContainer _modelProviderContainer({required List<Override> overrides}) {
   return ProviderContainer(
     overrides: <Override>[
+      modelCatalogAcceptanceStoreProvider.overrideWith(
+        (ref) => _MemoryCatalogAcceptanceStore(),
+      ),
       modelLifecycleStoreProvider.overrideWith((ref) {
         return _RepositoryBackedTestLifecycleStore(
           downloadRepository: ref.watch(modelDownloadRepositoryProvider),
@@ -96,6 +112,18 @@ ProviderContainer _modelProviderContainer({
       ...overrides,
     ],
   );
+}
+
+class _MemoryCatalogAcceptanceStore implements ModelCatalogAcceptanceStore {
+  ModelCatalogAcceptanceState? state;
+
+  @override
+  Future<ModelCatalogAcceptanceState?> read() async => state;
+
+  @override
+  Future<void> accept(ModelCatalogAcceptanceState state) async {
+    this.state = state;
+  }
 }
 
 class _RepositoryBackedTestLifecycleStore implements ModelLifecycleStore {
@@ -146,15 +174,19 @@ class _MemoryCatalogRepository implements ModelCatalogRepository {
 }
 
 class _FakeDownloadService extends ModelDownloadService {
-  _FakeDownloadService({this.result, this.error}) : super(dio: Dio(), logger: const AppLogger());
+  _FakeDownloadService({this.result, this.error})
+    : super(dio: Dio(), logger: const AppLogger());
 
   final ModelDownloadResult? result;
   final Object? error;
   final Set<String> existingPaths = <String>{};
+  final Map<String, int> fileLengths = <String, int>{};
   final Set<String> checksumMismatchPaths = <String>{};
-  final Map<String, ModelDownloadResult> resultsBySourceUrl = <String, ModelDownloadResult>{};
+  final Map<String, ModelDownloadResult> resultsBySourceUrl =
+      <String, ModelDownloadResult>{};
   final Map<String, Object> errorsBySourceUrl = <String, Object>{};
-  final Map<String, ModelDownloadTarget> targetsByKey = <String, ModelDownloadTarget>{};
+  final Map<String, ModelDownloadTarget> targetsByKey =
+      <String, ModelDownloadTarget>{};
   final List<String> inspectedKeys = <String>[];
   final List<_DownloadInvocation> invocations = <_DownloadInvocation>[];
   final List<String> deletedPaths = <String>[];
@@ -189,10 +221,7 @@ class _FakeDownloadService extends ModelDownloadService {
     resultsBySourceUrl[sourceUrl] = result;
   }
 
-  void setErrorForSource({
-    required String sourceUrl,
-    required Object error,
-  }) {
+  void setErrorForSource({required String sourceUrl, required Object error}) {
     errorsBySourceUrl[sourceUrl] = error;
   }
 
@@ -259,7 +288,16 @@ class _FakeDownloadService extends ModelDownloadService {
   @override
   Future<bool> fileExists(String? path) async {
     fileExistsPaths.add(path);
-    return path != null && (existingPaths.contains(path) || path == result?.localPath);
+    return path != null &&
+        (existingPaths.contains(path) || path == result?.localPath);
+  }
+
+  @override
+  Future<int?> fileLength(String? path) async {
+    if (path == null || !await fileExists(path)) {
+      return null;
+    }
+    return fileLengths[path] ?? 4096;
   }
 
   @override
@@ -303,7 +341,8 @@ class _DownloadInvocation {
 class _FakeModelSourceProbeService extends ModelSourceProbeService {
   _FakeModelSourceProbeService() : super(dio: Dio(), logger: const AppLogger());
 
-  final Map<String, ModelSourceProbeResult> resultsBySourceId = <String, ModelSourceProbeResult>{};
+  final Map<String, ModelSourceProbeResult> resultsBySourceId =
+      <String, ModelSourceProbeResult>{};
 
   void setResult(ModelSourceProbeResult result) {
     resultsBySourceId[result.sourceId] = result;
@@ -409,17 +448,22 @@ class _RecordingLlmRuntimeBridge implements LlmRuntimeBridge {
   final Set<String> readyModelIds = <String>{};
 
   @override
-  Future<Map<String, dynamic>> ensureModelReady({required String modelId, required String modelPath}) async {
+  Future<Map<String, dynamic>> ensureModelReady({
+    required String modelId,
+    required String modelPath,
+  }) async {
     ensureCalls++;
     lastModelId = modelId;
     lastModelPath = modelPath;
-    final result = ensureResult ?? <String, dynamic>{
-      'ready': true,
-      'status': 'ready',
-      'reason': 'validated',
-      'modelPath': modelPath,
-      'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
-    };
+    final result =
+        ensureResult ??
+        <String, dynamic>{
+          'ready': true,
+          'status': 'ready',
+          'reason': 'validated',
+          'modelPath': modelPath,
+          'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
+        };
     if (result['status'] == 'ready' || result['ready'] == true) {
       readyModelIds.add(modelId);
     } else {
@@ -449,7 +493,10 @@ class _RecordingLlmRuntimeBridge implements LlmRuntimeBridge {
   }
 
   @override
-  Future<Map<String, dynamic>> inspectModel({required String modelId, required String modelPath}) async {
+  Future<Map<String, dynamic>> inspectModel({
+    required String modelId,
+    required String modelPath,
+  }) async {
     inspectCalls++;
     if (readyModelIds.contains(modelId)) {
       return <String, dynamic>{
@@ -471,7 +518,8 @@ class _RecordingLlmRuntimeBridge implements LlmRuntimeBridge {
   Future<void> releaseModel({required String modelId}) async {}
 }
 
-class _RecordingMultimodalLlmRuntimeBridge implements MultimodalLlmRuntimeBridge {
+class _RecordingMultimodalLlmRuntimeBridge
+    implements MultimodalLlmRuntimeBridge {
   _RecordingMultimodalLlmRuntimeBridge({required this.ensureResult});
 
   final Map<String, dynamic> ensureResult;
@@ -533,275 +581,345 @@ void main() {
     );
   }
 
-  test('startDownload validates embedding runtime after download completes', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-embed-1',
-      ),
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            tokenizer: EmbeddingTokenizerSpec(
-              format: 'tokenizer_json',
-              assetPath: 'assets/model_catalog/tokenizers/all_minilm/tokenizer.json',
-              maxSequenceLength: 256,
-              lowercase: true,
-            ),
-            runtime: EmbeddingRuntimeSpec(
-              inputIdsName: 'input_ids',
-              attentionMaskName: 'attention_mask',
-              outputName: 'last_hidden_state',
-              pooling: 'mean',
-              normalization: 'l2',
-            ),
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-1',
-                label: '镜像源',
-                url: 'https://example.com/embed-1.onnx',
-                checksum: 'sha256:verified-embed-1',
-              ),
-            ],
-          ),
-           source: const ModelSourceEntry(
-             id: 'source-1',
-             label: '镜像源',
-             url: 'https://example.com/embed-1.onnx',
-             checksum: 'sha256:verified-embed-1',
-           ),
-         );
-
-    expect(bridge.ensureCalls, 1);
-    expect(bridge.lastModelId, 'embed-1');
-    expect(bridge.lastModelPath, '/models/embed-1.onnx');
-    expect(bridge.lastTokenizer, isNotNull);
-    expect(bridge.lastTokenizer?.maxSequenceLength, 256);
-    expect(bridge.lastRuntime, isNotNull);
-    expect(bridge.lastRuntime?.pooling, 'mean');
-    expect(bridge.lastVerifiedChecksum, 'sha256:verified-embed-1');
-    expect(registryRepository.entries['embed-1']?.localPath, '/models/embed-1.onnx');
-    expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
-  });
-
-  test('startDownload rejects repeated multimodal attempts without tasks or side effects', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final runtimeBridge = _RecordingMultimodalLlmRuntimeBridge(
-      ensureResult: <String, dynamic>{
-        'status': 'runtime_unavailable',
-        'ready': false,
-        'message': '当前 native runtime 不支持 MiniCPM-V 4.6 多模态推理，请更新 runtime。',
-      },
-    );
-    const modelUrl = 'https://example.com/MiniCPM-V-4_6-Q4_K_M.gguf';
-    const mmprojUrl = 'https://example.com/mmproj-model-f16.gguf';
-    downloadService.setResultForSource(
-      sourceUrl: modelUrl,
-      result: const ModelDownloadResult(
-        localPath: '/models/minicpm/MiniCPM-V-4_6-Q4_K_M.gguf',
-        totalBytes: 10,
-        verifiedChecksum: 'sha256:model',
-      ),
-    );
-    downloadService.setResultForSource(
-      sourceUrl: mmprojUrl,
-      result: const ModelDownloadResult(
-        localPath: '/models/minicpm/mmproj-model-f16.gguf',
-        totalBytes: 20,
-        verifiedChecksum: 'sha256:mmproj',
-      ),
-    );
-    const entry = ModelCatalogEntry(
-      id: 'minicpm_v_4_6_q4_k_m',
-      type: 'multimodal_llm',
-      tier: 'local_multimodal',
-      displayName: 'MiniCPM-V 4.6 Q4_K_M Multimodal',
-      description: 'Requires LLM GGUF plus mmproj-model-f16.gguf.',
-      sizeBytes: 30,
-      minRamMb: 6144,
-      recommendedTier: 'vision_language_local',
-      sources: <ModelSourceEntry>[
-        ModelSourceEntry(
-          id: 'minicpm-v-4-6-q4-k-m-llm',
-          label: 'HuggingFace MiniCPM-V 4.6 GGUF LLM',
-          role: 'model',
-          url: modelUrl,
-          checksum: 'sha256:model',
+  test(
+    'startDownload validates embedding runtime after download completes',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-embed-1',
         ),
-        ModelSourceEntry(
-          id: 'minicpm-v-4-6-mmproj-f16',
-          label: 'HuggingFace MiniCPM-V 4.6 mmproj',
-          role: 'mmproj',
-          url: mmprojUrl,
-          checksum: 'sha256:mmproj',
-        ),
-      ],
-    );
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        multimodalLlmRuntimeBridgeProvider.overrideWithValue(runtimeBridge),
-      ],
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    final controller = container.read(modelDownloadControllerProvider);
-    final unsupportedError = isA<UnsupportedError>().having(
-      (error) => error.message,
-      'message',
-      contains('multimodal_llm'),
-    );
-
-    await expectLater(
-      controller.startDownload(entry: entry, source: entry.sources.first),
-      throwsA(unsupportedError),
-    );
-    await expectLater(
-      controller.startDownload(entry: entry, source: entry.sources.first),
-      throwsA(unsupportedError),
-    );
-
-    expect(downloadRepository.tasksById, isEmpty);
-    expect(downloadService.invocations, isEmpty);
-    expect(downloadService.inspectedKeys, isEmpty);
-    expect(downloadService.fileExistsPaths, isEmpty);
-    expect(downloadService.verifiedPaths, isEmpty);
-    expect(downloadService.deletedPaths, isEmpty);
-    expect(runtimeBridge.ensureCalls, 0);
-    expect(registryRepository.entries['minicpm_v_4_6_q4_k_m'], isNull);
-  });
-
-  test('startDownload persists downloading status before first progress callback', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-embed-1',
-      ),
-    );
-    downloadService.progressGate = Completer<void>();
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final startFuture = container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-1',
-                label: '镜像源',
-                url: 'https://example.com/embed-1.onnx',
-                checksum: 'sha256:verified-embed-1',
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              tokenizer: EmbeddingTokenizerSpec(
+                format: 'tokenizer_json',
+                assetPath:
+                    'assets/model_catalog/tokenizers/all_minilm/tokenizer.json',
+                maxSequenceLength: 256,
+                lowercase: true,
               ),
-            ],
+              runtime: EmbeddingRuntimeSpec(
+                inputIdsName: 'input_ids',
+                attentionMaskName: 'attention_mask',
+                outputName: 'last_hidden_state',
+                pooling: 'mean',
+                normalization: 'l2',
+              ),
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: '镜像源',
+                  url: 'https://example.com/embed-1.onnx',
+                  checksum: 'sha256:verified-embed-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-1',
+              label: '镜像源',
+              url: 'https://example.com/embed-1.onnx',
+              checksum: 'sha256:verified-embed-1',
+            ),
+          );
+
+      expect(bridge.ensureCalls, 1);
+      expect(bridge.lastModelId, 'embed-1');
+      expect(bridge.lastModelPath, '/models/embed-1.onnx');
+      expect(bridge.lastTokenizer, isNotNull);
+      expect(bridge.lastTokenizer?.maxSequenceLength, 256);
+      expect(bridge.lastRuntime, isNotNull);
+      expect(bridge.lastRuntime?.pooling, 'mean');
+      expect(bridge.lastVerifiedChecksum, 'sha256:verified-embed-1');
+      expect(
+        registryRepository.entries['embed-1']?.localPath,
+        '/models/embed-1.onnx',
+      );
+      expect(
+        registryRepository.entries['embed-1']?.checksum,
+        'sha256:verified-embed-1',
+      );
+    },
+  );
+
+  test(
+    'startDownload rejects repeated multimodal attempts without tasks or side effects',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final runtimeBridge = _RecordingMultimodalLlmRuntimeBridge(
+        ensureResult: <String, dynamic>{
+          'status': 'runtime_unavailable',
+          'ready': false,
+          'message': '当前 native runtime 不支持 MiniCPM-V 4.6 多模态推理，请更新 runtime。',
+        },
+      );
+      const modelUrl = 'https://example.com/MiniCPM-V-4_6-Q4_K_M.gguf';
+      const mmprojUrl = 'https://example.com/mmproj-model-f16.gguf';
+      downloadService.setResultForSource(
+        sourceUrl: modelUrl,
+        result: const ModelDownloadResult(
+          localPath: '/models/minicpm/MiniCPM-V-4_6-Q4_K_M.gguf',
+          totalBytes: 10,
+          verifiedChecksum: 'sha256:model',
+        ),
+      );
+      downloadService.setResultForSource(
+        sourceUrl: mmprojUrl,
+        result: const ModelDownloadResult(
+          localPath: '/models/minicpm/mmproj-model-f16.gguf',
+          totalBytes: 20,
+          verifiedChecksum: 'sha256:mmproj',
+        ),
+      );
+      const entry = ModelCatalogEntry(
+        id: 'minicpm_v_4_6_q4_k_m',
+        type: 'multimodal_llm',
+        tier: 'local_multimodal',
+        displayName: 'MiniCPM-V 4.6 Q4_K_M Multimodal',
+        description: 'Requires LLM GGUF plus mmproj-model-f16.gguf.',
+        sizeBytes: 30,
+        minRamMb: 6144,
+        recommendedTier: 'vision_language_local',
+        sources: <ModelSourceEntry>[
+          ModelSourceEntry(
+            id: 'minicpm-v-4-6-q4-k-m-llm',
+            label: 'HuggingFace MiniCPM-V 4.6 GGUF LLM',
+            role: 'model',
+            url: modelUrl,
+            checksum: 'sha256:model',
           ),
-          source: const ModelSourceEntry(
-            id: 'source-1',
-            label: '镜像源',
-            url: 'https://example.com/embed-1.onnx',
-            checksum: 'sha256:verified-embed-1',
+          ModelSourceEntry(
+            id: 'minicpm-v-4-6-mmproj-f16',
+            label: 'HuggingFace MiniCPM-V 4.6 mmproj',
+            role: 'mmproj',
+            url: mmprojUrl,
+            checksum: 'sha256:mmproj',
           ),
-        );
+        ],
+      );
 
-    await Future<void>.delayed(Duration.zero);
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          multimodalLlmRuntimeBridgeProvider.overrideWithValue(runtimeBridge),
+        ],
+      );
 
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-1')?.status,
-      ModelDownloadStatus.downloading,
-    );
+      addTearDown(container.dispose);
 
-    downloadService.progressGate!.complete();
-    await startFuture;
-  });
+      final controller = container.read(modelDownloadControllerProvider);
+      final unsupportedError = isA<UnsupportedError>().having(
+        (error) => error.message,
+        'message',
+        contains('multimodal_llm'),
+      );
 
-  test('startDownload resumes a paused task from existing partial bytes for the same source', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-embed-1',
-      ),
-    );
+      await expectLater(
+        controller.startDownload(entry: entry, source: entry.sources.first),
+        throwsA(unsupportedError),
+      );
+      await expectLater(
+        controller.startDownload(entry: entry, source: entry.sources.first),
+        throwsA(unsupportedError),
+      );
 
-    downloadRepository.tasksById['task-source-a'] = buildTask(
-      id: 'task-source-a',
-      modelId: 'embed-1',
-      sourceId: 'source-a',
-      status: ModelDownloadStatus.paused,
-      downloadedBytes: 1536,
-    );
-    downloadService.setTarget(
-      modelId: 'embed-1',
-      sourceUrl: 'https://example.com/embed-1.onnx',
-      existingBytes: 1536,
-      localPath: '/partials/embed-1-source-a.partial',
-    );
+      expect(downloadRepository.tasksById, isEmpty);
+      expect(downloadService.invocations, isEmpty);
+      expect(downloadService.inspectedKeys, isEmpty);
+      expect(downloadService.fileExistsPaths, isEmpty);
+      expect(downloadService.verifiedPaths, isEmpty);
+      expect(downloadService.deletedPaths, isEmpty);
+      expect(runtimeBridge.ensureCalls, 0);
+      expect(registryRepository.entries['minicpm_v_4_6_q4_k_m'], isNull);
+    },
+  );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
+  test(
+    'startDownload persists downloading status before first progress callback',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-embed-1',
+        ),
+      );
+      downloadService.progressGate = Completer<void>();
 
-    addTearDown(container.dispose);
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
+      addTearDown(container.dispose);
+
+      final startFuture = container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: '镜像源',
+                  url: 'https://example.com/embed-1.onnx',
+                  checksum: 'sha256:verified-embed-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-1',
+              label: '镜像源',
+              url: 'https://example.com/embed-1.onnx',
+              checksum: 'sha256:verified-embed-1',
+            ),
+          );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-1')?.status,
+        ModelDownloadStatus.downloading,
+      );
+
+      downloadService.progressGate!.complete();
+      await startFuture;
+    },
+  );
+
+  test(
+    'startDownload resumes a paused task from existing partial bytes for the same source',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-embed-1',
+        ),
+      );
+
+      downloadRepository.tasksById['task-source-a'] = buildTask(
+        id: 'task-source-a',
+        modelId: 'embed-1',
+        sourceId: 'source-a',
+        status: ModelDownloadStatus.paused,
+        downloadedBytes: 1536,
+      );
+      downloadService.setTarget(
+        modelId: 'embed-1',
+        sourceUrl: 'https://example.com/embed-1.onnx',
+        existingBytes: 1536,
+        localPath: '/partials/embed-1-source-a.partial',
+      );
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-a',
+                  label: '主镜像',
+                  url: 'https://example.com/embed-1.onnx',
+                  checksum: 'sha256:verified-embed-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-a',
+              label: '主镜像',
+              url: 'https://example.com/embed-1.onnx',
+              checksum: 'sha256:verified-embed-1',
+            ),
+          );
+
+      expect(
+        downloadService.inspectedKeys,
+        contains('embed-1|https://example.com/embed-1.onnx'),
+      );
+      expect(downloadService.lastResumeFromBytes, 1536);
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
+        ModelDownloadStatus.completed,
+      );
+    },
+  );
+
+  test(
+    'modelDownloadTasksProvider normalizes stale downloading task to paused with local partial bytes when catalog source exists',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final catalogRepository = _MemoryCatalogRepository(
+        const <ModelCatalogEntry>[
+          ModelCatalogEntry(
             id: 'embed-1',
             type: 'embedding',
             tier: 'mvp',
@@ -819,124 +937,96 @@ void main() {
               ),
             ],
           ),
-          source: const ModelSourceEntry(
-            id: 'source-a',
-            label: '主镜像',
-            url: 'https://example.com/embed-1.onnx',
-            checksum: 'sha256:verified-embed-1',
-          ),
-        );
+        ],
+      );
 
-    expect(downloadService.inspectedKeys, contains('embed-1|https://example.com/embed-1.onnx'));
-    expect(downloadService.lastResumeFromBytes, 1536);
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
-      ModelDownloadStatus.completed,
-    );
-  });
+      downloadRepository.tasksById['task-downloading'] = buildTask(
+        id: 'task-downloading',
+        modelId: 'embed-1',
+        sourceId: 'source-a',
+        status: ModelDownloadStatus.downloading,
+        downloadedBytes: 32,
+      );
 
-  test('modelDownloadTasksProvider normalizes stale downloading task to paused with local partial bytes when catalog source exists', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final catalogRepository = _MemoryCatalogRepository(
-      const <ModelCatalogEntry>[
-        ModelCatalogEntry(
-          id: 'embed-1',
-          type: 'embedding',
-          tier: 'mvp',
-          displayName: 'MiniLM Embedding',
-          description: '用于本地语义检索。',
-          sizeBytes: 4096,
-          minRamMb: 512,
-          recommendedTier: 'mvp',
-          sources: <ModelSourceEntry>[
-            ModelSourceEntry(
-              id: 'source-a',
-              label: '主镜像',
-              url: 'https://example.com/embed-1.onnx',
-              checksum: 'sha256:verified-embed-1',
-            ),
-          ],
-        ),
-      ],
-    );
+      downloadService.setTarget(
+        modelId: 'embed-1',
+        sourceUrl: 'https://example.com/embed-1.onnx',
+        existingBytes: 1536,
+        localPath: '/partials/embed-1-source-a.partial',
+      );
 
-    downloadRepository.tasksById['task-downloading'] = buildTask(
-      id: 'task-downloading',
-      modelId: 'embed-1',
-      sourceId: 'source-a',
-      status: ModelDownloadStatus.downloading,
-      downloadedBytes: 32,
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
+        ],
+      );
 
-    downloadService.setTarget(
-      modelId: 'embed-1',
-      sourceUrl: 'https://example.com/embed-1.onnx',
-      existingBytes: 1536,
-      localPath: '/partials/embed-1-source-a.partial',
-    );
+      addTearDown(container.dispose);
 
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
-      ],
-    );
+      final tasks = await container.read(modelDownloadTasksProvider.future);
+      final normalized = tasks.singleWhere(
+        (task) => task.id == 'task-downloading',
+      );
 
-    addTearDown(container.dispose);
+      expect(normalized.status, ModelDownloadStatus.paused);
+      expect(normalized.downloadedBytes, 1536);
+      expect(
+        downloadRepository.tasksById['task-downloading']?.status,
+        ModelDownloadStatus.paused,
+      );
+      expect(
+        downloadRepository.tasksById['task-downloading']?.downloadedBytes,
+        1536,
+      );
+    },
+  );
 
-    final tasks = await container.read(modelDownloadTasksProvider.future);
-    final normalized = tasks.singleWhere((task) => task.id == 'task-downloading');
+  test(
+    'modelRegistryEntriesProvider marks checksum-mismatched installed file as corrupted',
+    () async {
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
 
-    expect(normalized.status, ModelDownloadStatus.paused);
-    expect(normalized.downloadedBytes, 1536);
-    expect(downloadRepository.tasksById['task-downloading']?.status, ModelDownloadStatus.paused);
-    expect(downloadRepository.tasksById['task-downloading']?.downloadedBytes, 1536);
-  });
+      registryRepository.entries['embed-1'] = const ModelRegistryEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'MiniLM Embedding',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
+        localPath: '/models/embed-1.onnx',
+        checksum: _embeddingChecksum,
+        enabled: true,
+        installedAt: null,
+        filePresent: true,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
+      downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
 
-  test('modelRegistryEntriesProvider marks checksum-mismatched installed file as corrupted', () async {
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+        ],
+      );
 
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:expected-embed-1',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
-    downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
+      addTearDown(container.dispose);
 
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-      ],
-    );
+      final entries = await container.read(modelRegistryEntriesProvider.future);
 
-    addTearDown(container.dispose);
-
-    final entries = await container.read(modelRegistryEntriesProvider.future);
-
-    expect(entries.single.filePresent, isTrue);
-    expect(entries.single.enabled, isFalse);
-    expect(entries.single.integrityStatus, ModelIntegrityStatus.corrupted);
-  });
+      expect(entries.single.filePresent, isTrue);
+      expect(entries.single.enabled, isFalse);
+      expect(entries.single.integrityStatus, ModelIntegrityStatus.corrupted);
+    },
+  );
 
   test(
     'modelRegistryEntriesProvider keeps legacy multimodal cleanup entries but skips catalog adoption',
@@ -949,22 +1039,23 @@ void main() {
           'https://example.com/catalog-multimodal.gguf';
       const embeddingPath = '/models/embed-1.onnx';
 
-      registryRepository.entries['legacy-multimodal'] = const ModelRegistryEntry(
-        id: 'legacy-multimodal',
-        type: 'multimodal_llm',
-        provider: 'legacy',
-        name: 'Legacy Multimodal',
-        version: '1.0.0',
-        sizeBytes: 8192,
-        quantization: 'Q4',
-        minRamMb: 4096,
-        recommendedTier: 'local_multimodal',
-        localPath: registryMultimodalPath,
-        checksum: 'sha256:legacy-multimodal',
-        enabled: true,
-        installedAt: null,
-        filePresent: true,
-      );
+      registryRepository.entries['legacy-multimodal'] =
+          const ModelRegistryEntry(
+            id: 'legacy-multimodal',
+            type: 'multimodal_llm',
+            provider: 'legacy',
+            name: 'Legacy Multimodal',
+            version: '1.0.0',
+            sizeBytes: 8192,
+            quantization: 'Q4',
+            minRamMb: 4096,
+            recommendedTier: 'local_multimodal',
+            localPath: registryMultimodalPath,
+            checksum: 'sha256:legacy-multimodal',
+            enabled: true,
+            installedAt: null,
+            filePresent: true,
+          );
       registryRepository.entries['embed-1'] = const ModelRegistryEntry(
         id: 'embed-1',
         type: 'embedding',
@@ -976,7 +1067,7 @@ void main() {
         minRamMb: 512,
         recommendedTier: 'mvp',
         localPath: embeddingPath,
-        checksum: 'sha256:embed-1',
+        checksum: _embeddingChecksum,
         enabled: true,
         installedAt: null,
         filePresent: true,
@@ -1002,28 +1093,26 @@ void main() {
           modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
           modelDownloadServiceProvider.overrideWithValue(downloadService),
           modelCatalogRepositoryProvider.overrideWithValue(
-            _MemoryCatalogRepository(
-              const <ModelCatalogEntry>[
-                ModelCatalogEntry(
-                  id: 'catalog-multimodal',
-                  type: 'multimodal_llm',
-                  tier: 'local_multimodal',
-                  displayName: 'Catalog Multimodal',
-                  description: 'Legacy catalog entry.',
-                  sizeBytes: 8192,
-                  minRamMb: 4096,
-                  recommendedTier: 'local_multimodal',
-                  sources: <ModelSourceEntry>[
-                    ModelSourceEntry(
-                      id: 'catalog-multimodal-source',
-                      label: 'Catalog source',
-                      url: catalogMultimodalUrl,
-                      checksum: 'sha256:catalog-multimodal',
-                    ),
-                  ],
-                ),
-              ],
-            ),
+            _MemoryCatalogRepository(const <ModelCatalogEntry>[
+              ModelCatalogEntry(
+                id: 'catalog-multimodal',
+                type: 'multimodal_llm',
+                tier: 'local_multimodal',
+                displayName: 'Catalog Multimodal',
+                description: 'Legacy catalog entry.',
+                sizeBytes: 8192,
+                minRamMb: 4096,
+                recommendedTier: 'local_multimodal',
+                sources: <ModelSourceEntry>[
+                  ModelSourceEntry(
+                    id: 'catalog-multimodal-source',
+                    label: 'Catalog source',
+                    url: catalogMultimodalUrl,
+                    checksum: 'sha256:catalog-multimodal',
+                  ),
+                ],
+              ),
+            ]),
           ),
         ],
       );
@@ -1069,328 +1158,19 @@ void main() {
     },
   );
 
-  test('modelRegistryEntriesProvider adopts a complete local llm file from catalog when registry entry is missing', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final catalogRepository = _MemoryCatalogRepository(
-      const <ModelCatalogEntry>[
-        ModelCatalogEntry(
-          id: 'qwen-local',
-          type: 'llm',
-          tier: 'local',
-          displayName: 'Qwen Local',
-          description: '用于本地问答。',
-          sizeBytes: 8192,
-          minRamMb: 2048,
-          recommendedTier: 'local',
-          sources: <ModelSourceEntry>[
-            ModelSourceEntry(
-              id: 'source-1',
-              label: '镜像源',
-              url: 'https://example.com/qwen.gguf',
-              checksum: 'sha256:verified-qwen',
-            ),
-          ],
-        ),
-      ],
-    );
-
-    downloadService.existingPaths.add('/models/qwen-local.gguf');
-    downloadService.setTarget(
-      modelId: 'qwen-local',
-      sourceUrl: 'https://example.com/qwen.gguf',
-      existingBytes: 8192,
-      localPath: '/models/qwen-local.gguf',
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final entries = await container.read(modelRegistryEntriesProvider.future);
-    final adopted = entries.singleWhere((entry) => entry.id == 'qwen-local');
-
-    expect(adopted.localPath, '/models/qwen-local.gguf');
-    expect(adopted.checksum, 'sha256:verified-qwen');
-    expect(adopted.sizeBytes, 8192);
-    expect(adopted.filePresent, isTrue);
-    expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
-    expect(adopted.enabled, isTrue);
-    expect(registryRepository.entries['qwen-local']?.localPath, '/models/qwen-local.gguf');
-    final adoptedTask = downloadRepository.tasksByModelAndSource(
-      'qwen-local',
-      'source-1',
-    );
-    expect(adoptedTask?.id, 'adopted:qwen-local:source-1');
-    expect(adoptedTask?.status, ModelDownloadStatus.completed);
-
-    container.invalidate(modelRegistryEntriesProvider);
-    await container.read(modelRegistryEntriesProvider.future);
-    expect(downloadRepository.tasksById, hasLength(1));
-  });
-
-  test('modelRegistryEntriesProvider adopts a checksum-valid local llm file even when catalog size is stale', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final catalogRepository = _MemoryCatalogRepository(
-      const <ModelCatalogEntry>[
-        ModelCatalogEntry(
-          id: 'qwen-local',
-          type: 'llm',
-          tier: 'local',
-          displayName: 'Qwen Local',
-          description: '用于本地问答。',
-          sizeBytes: 16384,
-          minRamMb: 2048,
-          recommendedTier: 'local',
-          sources: <ModelSourceEntry>[
-            ModelSourceEntry(
-              id: 'source-1',
-              label: '镜像源',
-              url: 'https://example.com/qwen.gguf',
-              checksum: 'sha256:verified-qwen',
-            ),
-          ],
-        ),
-      ],
-    );
-
-    downloadService.existingPaths.add('/models/qwen-local.gguf');
-    downloadService.setTarget(
-      modelId: 'qwen-local',
-      sourceUrl: 'https://example.com/qwen.gguf',
-      existingBytes: 8192,
-      localPath: '/models/qwen-local.gguf',
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final entries = await container.read(modelRegistryEntriesProvider.future);
-    final adopted = entries.singleWhere((entry) => entry.id == 'qwen-local');
-
-    expect(adopted.localPath, '/models/qwen-local.gguf');
-    expect(adopted.checksum, 'sha256:verified-qwen');
-    expect(adopted.sizeBytes, 8192);
-    expect(adopted.filePresent, isTrue);
-    expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
-    expect(adopted.enabled, isTrue);
-    expect(
-      downloadRepository.tasksByModelAndSource('qwen-local', 'source-1')?.status,
-      ModelDownloadStatus.completed,
-    );
-  });
-
-  test('startDownload re-downloads a disabled installed model instead of short-circuiting on file presence', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-embed-1',
-      ),
-    );
-
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:expected-embed-1',
-      enabled: false,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.corrupted,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-a',
-                label: '主镜像',
-                url: 'https://example.com/embed-1.onnx',
-                checksum: 'sha256:verified-embed-1',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-a',
-            label: '主镜像',
-            url: 'https://example.com/embed-1.onnx',
-            checksum: 'sha256:verified-embed-1',
-          ),
-        );
-
-    expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
-    expect(downloadService.invocations, hasLength(1));
-    expect(bridge.releasedModelIds, <String>['embed-1']);
-  });
-
-  test('embeddingRuntimeStatesProvider reports corrupted when installed embedding file fails checksum revalidation', () async {
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:expected-embed-1',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
-    downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    final states = await container.read(embeddingRuntimeStatesProvider.future);
-
-    expect(states['embed-1']?.ready, isFalse);
-    expect(states['embed-1']?.status, EmbeddingRuntimeStatus.corrupted);
-    expect(states['embed-1']?.reason, contains('校验失败'));
-    expect(bridge.inspectCalls, 0);
-  });
-
-  test('llmRuntimeStatesProvider reports corrupted when installed llm file fails checksum revalidation', () async {
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final bridge = _RecordingLlmRuntimeBridge();
-
-    registryRepository.entries['llm-1'] = const ModelRegistryEntry(
-      id: 'llm-1',
-      type: 'llm',
-      provider: 'builtin_catalog',
-      name: 'Phi Local',
-      version: '1.0.0',
-      sizeBytes: 8192,
-      quantization: 'Q4_K_M',
-      minRamMb: 2048,
-      recommendedTier: 'local',
-      localPath: '/models/phi.gguf',
-      checksum: 'sha256:expected-llm-1',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-    );
-    downloadService.existingPaths.add('/models/phi.gguf');
-    downloadService.checksumMismatchPaths.add('/models/phi.gguf');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelRegistryEntriesProvider.future);
-
-    final states = await container.read(llmRuntimeStatesProvider.future);
-
-    expect(states['llm-1']?.ready, isFalse);
-    expect(states['llm-1']?.status, LlmRuntimeStatus.corrupted);
-    expect(states['llm-1']?.reason, contains('校验失败'));
-    expect(bridge.inspectCalls, 0);
-  });
-
-  test('startDownload validates llm runtime after download completes', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final llmBridge = _RecordingLlmRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/phi.gguf',
-        totalBytes: 8192,
-        verifiedChecksum: 'sha256:verified-llm-1',
-      ),
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'llm-1',
+  test(
+    'modelRegistryEntriesProvider adopts a complete local llm file from catalog when registry entry is missing',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final catalogRepository = _MemoryCatalogRepository(
+        const <ModelCatalogEntry>[
+          ModelCatalogEntry(
+            id: 'qwen-local',
             type: 'llm',
             tier: 'local',
-            displayName: 'Phi Local',
+            displayName: 'Qwen Local',
             description: '用于本地问答。',
             sizeBytes: 8192,
             minRamMb: 2048,
@@ -1399,214 +1179,578 @@ void main() {
               ModelSourceEntry(
                 id: 'source-1',
                 label: '镜像源',
-                url: 'https://example.com/phi.gguf',
-                checksum: 'sha256:verified-llm-1',
+                url: 'https://example.com/qwen.gguf',
+                checksum: _qwenChecksum,
               ),
             ],
           ),
-           source: const ModelSourceEntry(
-             id: 'source-1',
-             label: '镜像源',
-             url: 'https://example.com/phi.gguf',
-             checksum: 'sha256:verified-llm-1',
-           ),
-         );
+        ],
+      );
 
-    expect(llmBridge.ensureCalls, 1);
-    expect(llmBridge.lastModelId, 'llm-1');
-    expect(llmBridge.lastModelPath, '/models/phi.gguf');
-    expect(registryRepository.entries['llm-1']?.localPath, '/models/phi.gguf');
-    expect(registryRepository.entries['llm-1']?.checksum, 'sha256:verified-llm-1');
-  });
+      downloadService.existingPaths.add('/models/qwen-local.gguf');
+      downloadService.setTarget(
+        modelId: 'qwen-local',
+        sourceUrl: 'https://example.com/qwen.gguf',
+        existingBytes: 8192,
+        localPath: '/models/qwen-local.gguf',
+      );
 
-  test('startDownload keeps llm model disabled when runtime verification returns degraded', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final llmBridge = _RecordingLlmRuntimeBridge(
-      ensureResult: <String, dynamic>{
-        'ready': false,
-        'status': 'degraded',
-        'reason': '真实 probe failed',
-        'modelPath': '/models/phi.gguf',
-        'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
-      },
-    );
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/phi.gguf',
-        totalBytes: 8192,
-        verifiedChecksum: 'sha256:verified-llm-1',
-      ),
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
+        ],
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
-      ],
-    );
+      addTearDown(container.dispose);
 
-    addTearDown(container.dispose);
+      final entries = await container.read(modelRegistryEntriesProvider.future);
+      final adopted = entries.singleWhere((entry) => entry.id == 'qwen-local');
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'llm-1',
+      expect(adopted.localPath, '/models/qwen-local.gguf');
+      expect(adopted.checksum, _qwenChecksum);
+      expect(adopted.sizeBytes, 8192);
+      expect(adopted.filePresent, isTrue);
+      expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
+      expect(adopted.enabled, isTrue);
+      expect(
+        registryRepository.entries['qwen-local']?.localPath,
+        '/models/qwen-local.gguf',
+      );
+      final adoptedTask = downloadRepository.tasksByModelAndSource(
+        'qwen-local',
+        'source-1',
+      );
+      expect(adoptedTask?.id, 'adopted:qwen-local:source-1');
+      expect(adoptedTask?.status, ModelDownloadStatus.completed);
+
+      container.invalidate(modelRegistryEntriesProvider);
+      await container.read(modelRegistryEntriesProvider.future);
+      expect(downloadRepository.tasksById, hasLength(1));
+    },
+  );
+
+  test(
+    'modelRegistryEntriesProvider adopts a checksum-valid local llm file even when catalog size is stale',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final catalogRepository = _MemoryCatalogRepository(
+        const <ModelCatalogEntry>[
+          ModelCatalogEntry(
+            id: 'qwen-local',
             type: 'llm',
             tier: 'local',
-            displayName: 'Phi Local',
+            displayName: 'Qwen Local',
             description: '用于本地问答。',
-            sizeBytes: 8192,
+            sizeBytes: 16384,
             minRamMb: 2048,
             recommendedTier: 'local',
             sources: <ModelSourceEntry>[
               ModelSourceEntry(
                 id: 'source-1',
                 label: '镜像源',
-                url: 'https://example.com/phi.gguf',
-                checksum: 'sha256:verified-llm-1',
+                url: 'https://example.com/qwen.gguf',
+                checksum: _qwenChecksum,
               ),
             ],
           ),
-           source: const ModelSourceEntry(
-             id: 'source-1',
-             label: '镜像源',
-             url: 'https://example.com/phi.gguf',
-             checksum: 'sha256:verified-llm-1',
-           ),
-         );
+        ],
+      );
 
-    expect(llmBridge.ensureCalls, 1);
-    expect(registryRepository.entries['llm-1']?.enabled, isFalse);
-    expect(registryRepository.entries['llm-1']?.filePresent, isTrue);
-    expect(registryRepository.entries['llm-1']?.checksum, 'sha256:verified-llm-1');
-  });
+      downloadService.existingPaths.add('/models/qwen-local.gguf');
+      downloadService.setTarget(
+        modelId: 'qwen-local',
+        sourceUrl: 'https://example.com/qwen.gguf',
+        existingBytes: 8192,
+        localPath: '/models/qwen-local.gguf',
+      );
 
-  test('startDownload marks task failed and skips registry write on checksum mismatch', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      error: StateError('Checksum mismatch for embed-2'),
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
+        ],
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
+      addTearDown(container.dispose);
 
-    addTearDown(container.dispose);
+      final entries = await container.read(modelRegistryEntriesProvider.future);
+      final adopted = entries.singleWhere((entry) => entry.id == 'qwen-local');
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-2',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding 2',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-2',
-                label: '镜像源',
-                url: 'https://example.com/embed-2.onnx',
-                checksum: 'sha256:expected-embed-2',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-2',
-            label: '镜像源',
-            url: 'https://example.com/embed-2.onnx',
-            checksum: 'sha256:expected-embed-2',
-          ),
-        );
+      expect(adopted.localPath, '/models/qwen-local.gguf');
+      expect(adopted.checksum, _qwenChecksum);
+      expect(adopted.sizeBytes, 8192);
+      expect(adopted.filePresent, isTrue);
+      expect(adopted.integrityStatus, ModelIntegrityStatus.valid);
+      expect(adopted.enabled, isTrue);
+      expect(
+        downloadRepository
+            .tasksByModelAndSource('qwen-local', 'source-1')
+            ?.status,
+        ModelDownloadStatus.completed,
+      );
+    },
+  );
 
-    expect(bridge.ensureCalls, 0);
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-2', 'source-2')?.status,
-      ModelDownloadStatus.failed,
-    );
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-2', 'source-2')?.errorMessage,
-      contains('Checksum mismatch'),
-    );
-    expect(registryRepository.entries.containsKey('embed-2'), isFalse);
-  });
+  test(
+    'startDownload re-downloads a disabled installed model instead of short-circuiting on file presence',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-embed-1',
+        ),
+      );
 
-  test('startDownload keeps source-specific tasks separate for the same model', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
+      registryRepository.entries['embed-1'] = const ModelRegistryEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'MiniLM Embedding',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
         localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-source-b',
-      ),
-    );
+        checksum: _embeddingChecksum,
+        enabled: false,
+        installedAt: null,
+        filePresent: true,
+        integrityStatus: ModelIntegrityStatus.corrupted,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
 
-    downloadRepository.tasksById['task-source-a'] = buildTask(
-      id: 'task-source-a',
-      modelId: 'embed-1',
-      sourceId: 'source-a',
-      status: ModelDownloadStatus.paused,
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
+      addTearDown(container.dispose);
 
-    addTearDown(container.dispose);
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-a',
+                  label: '主镜像',
+                  url: 'https://example.com/embed-1.onnx',
+                  checksum: 'sha256:verified-embed-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-a',
+              label: '主镜像',
+              url: 'https://example.com/embed-1.onnx',
+              checksum: 'sha256:verified-embed-1',
+            ),
+          );
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-b',
-                label: '备选镜像',
-                url: 'https://example.com/embed-1-b.onnx',
-                checksum: 'sha256:verified-source-b',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-b',
-            label: '备选镜像',
-            url: 'https://example.com/embed-1-b.onnx',
-            checksum: 'sha256:verified-source-b',
-          ),
-        );
+      expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
+      expect(downloadService.invocations, hasLength(1));
+      expect(bridge.releasedModelIds, <String>['embed-1']);
+    },
+  );
 
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
-      ModelDownloadStatus.paused,
-    );
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-b')?.status,
-      ModelDownloadStatus.completed,
-    );
-  });
+  test(
+    'embeddingRuntimeStatesProvider reports corrupted when installed embedding file fails checksum revalidation',
+    () async {
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+
+      registryRepository.entries['embed-1'] = const ModelRegistryEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'MiniLM Embedding',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
+        localPath: '/models/embed-1.onnx',
+        checksum: _embeddingChecksum,
+        enabled: true,
+        installedAt: null,
+        filePresent: true,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
+      downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      final states = await container.read(
+        embeddingRuntimeStatesProvider.future,
+      );
+
+      expect(states['embed-1']?.ready, isFalse);
+      expect(states['embed-1']?.status, EmbeddingRuntimeStatus.corrupted);
+      expect(states['embed-1']?.reason, contains('校验失败'));
+      expect(bridge.inspectCalls, 0);
+    },
+  );
+
+  test(
+    'llmRuntimeStatesProvider reports corrupted when installed llm file fails checksum revalidation',
+    () async {
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final bridge = _RecordingLlmRuntimeBridge();
+
+      registryRepository.entries['llm-1'] = const ModelRegistryEntry(
+        id: 'llm-1',
+        type: 'llm',
+        provider: 'builtin_catalog',
+        name: 'Phi Local',
+        version: '1.0.0',
+        sizeBytes: 8192,
+        quantization: 'Q4_K_M',
+        minRamMb: 2048,
+        recommendedTier: 'local',
+        localPath: '/models/phi.gguf',
+        checksum: _llmChecksum,
+        enabled: true,
+        installedAt: null,
+        filePresent: true,
+      );
+      downloadService.existingPaths.add('/models/phi.gguf');
+      downloadService.checksumMismatchPaths.add('/models/phi.gguf');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container.read(modelRegistryEntriesProvider.future);
+
+      final states = await container.read(llmRuntimeStatesProvider.future);
+
+      expect(states['llm-1']?.ready, isFalse);
+      expect(states['llm-1']?.status, LlmRuntimeStatus.corrupted);
+      expect(states['llm-1']?.reason, contains('校验失败'));
+      expect(bridge.inspectCalls, 0);
+    },
+  );
+
+  test(
+    'startDownload validates llm runtime after download completes',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final llmBridge = _RecordingLlmRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/phi.gguf',
+          totalBytes: 8192,
+          verifiedChecksum: 'sha256:verified-llm-1',
+        ),
+      );
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'llm-1',
+              type: 'llm',
+              tier: 'local',
+              displayName: 'Phi Local',
+              description: '用于本地问答。',
+              sizeBytes: 8192,
+              minRamMb: 2048,
+              recommendedTier: 'local',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: '镜像源',
+                  url: 'https://example.com/phi.gguf',
+                  checksum: 'sha256:verified-llm-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-1',
+              label: '镜像源',
+              url: 'https://example.com/phi.gguf',
+              checksum: 'sha256:verified-llm-1',
+            ),
+          );
+
+      expect(llmBridge.ensureCalls, 1);
+      expect(llmBridge.lastModelId, 'llm-1');
+      expect(llmBridge.lastModelPath, '/models/phi.gguf');
+      expect(
+        registryRepository.entries['llm-1']?.localPath,
+        '/models/phi.gguf',
+      );
+      expect(
+        registryRepository.entries['llm-1']?.checksum,
+        'sha256:verified-llm-1',
+      );
+    },
+  );
+
+  test(
+    'startDownload keeps llm model disabled when runtime verification returns degraded',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final llmBridge = _RecordingLlmRuntimeBridge(
+        ensureResult: <String, dynamic>{
+          'ready': false,
+          'status': 'degraded',
+          'reason': '真实 probe failed',
+          'modelPath': '/models/phi.gguf',
+          'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
+        },
+      );
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/phi.gguf',
+          totalBytes: 8192,
+          verifiedChecksum: 'sha256:verified-llm-1',
+        ),
+      );
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'llm-1',
+              type: 'llm',
+              tier: 'local',
+              displayName: 'Phi Local',
+              description: '用于本地问答。',
+              sizeBytes: 8192,
+              minRamMb: 2048,
+              recommendedTier: 'local',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: '镜像源',
+                  url: 'https://example.com/phi.gguf',
+                  checksum: 'sha256:verified-llm-1',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-1',
+              label: '镜像源',
+              url: 'https://example.com/phi.gguf',
+              checksum: 'sha256:verified-llm-1',
+            ),
+          );
+
+      expect(llmBridge.ensureCalls, 1);
+      expect(registryRepository.entries['llm-1']?.enabled, isFalse);
+      expect(registryRepository.entries['llm-1']?.filePresent, isTrue);
+      expect(
+        registryRepository.entries['llm-1']?.checksum,
+        'sha256:verified-llm-1',
+      );
+    },
+  );
+
+  test(
+    'startDownload marks task failed and skips registry write on checksum mismatch',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        error: StateError('Checksum mismatch for embed-2'),
+      );
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-2',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding 2',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-2',
+                  label: '镜像源',
+                  url: 'https://example.com/embed-2.onnx',
+                  checksum: 'sha256:expected-embed-2',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-2',
+              label: '镜像源',
+              url: 'https://example.com/embed-2.onnx',
+              checksum: 'sha256:expected-embed-2',
+            ),
+          );
+
+      expect(bridge.ensureCalls, 0);
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-2', 'source-2')?.status,
+        ModelDownloadStatus.failed,
+      );
+      expect(
+        downloadRepository
+            .tasksByModelAndSource('embed-2', 'source-2')
+            ?.errorMessage,
+        contains('Checksum mismatch'),
+      );
+      expect(registryRepository.entries.containsKey('embed-2'), isFalse);
+    },
+  );
+
+  test(
+    'startDownload keeps source-specific tasks separate for the same model',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-source-b',
+        ),
+      );
+
+      downloadRepository.tasksById['task-source-a'] = buildTask(
+        id: 'task-source-a',
+        modelId: 'embed-1',
+        sourceId: 'source-a',
+        status: ModelDownloadStatus.paused,
+      );
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-b',
+                  label: '备选镜像',
+                  url: 'https://example.com/embed-1-b.onnx',
+                  checksum: 'sha256:verified-source-b',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-b',
+              label: '备选镜像',
+              url: 'https://example.com/embed-1-b.onnx',
+              checksum: 'sha256:verified-source-b',
+            ),
+          );
+
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
+        ModelDownloadStatus.paused,
+      );
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-b')?.status,
+        ModelDownloadStatus.completed,
+      );
+    },
+  );
 
   test('pause only affects the latest task for the selected source', () async {
     final downloadRepository = _MemoryDownloadRepository();
@@ -1642,7 +1786,9 @@ void main() {
 
     addTearDown(container.dispose);
 
-    await container.read(modelDownloadControllerProvider).pause('embed-1', sourceId: 'source-b');
+    await container
+        .read(modelDownloadControllerProvider)
+        .pause('embed-1', sourceId: 'source-b');
 
     expect(
       downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
@@ -1654,648 +1800,766 @@ void main() {
     );
   });
 
-  test('startDownload adopts pre-existing complete local GGUF file matching size and checksum without re-downloading', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final llmBridge = _RecordingLlmRuntimeBridge();
-    final downloadService = _FakeDownloadService();
+  test(
+    'startDownload adopts pre-existing complete local GGUF file matching size and checksum without re-downloading',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final llmBridge = _RecordingLlmRuntimeBridge();
+      final downloadService = _FakeDownloadService();
 
-    // Pre-existing complete GGUF file at target path
-    // File size matches catalog entry sizeBytes
-    // Checksum will pass verification
-    downloadService.existingPaths.add('/models/qwen.gguf');
-    downloadService.setTarget(
-      modelId: 'qwen-local',
-      sourceUrl: 'https://example.com/qwen.gguf',
-      existingBytes: 8192,
-      localPath: '/models/qwen.gguf',
-    );
+      // Pre-existing complete GGUF file at target path
+      // File size matches catalog entry sizeBytes
+      // Checksum will pass verification
+      downloadService.existingPaths.add('/models/qwen.gguf');
+      downloadService.setTarget(
+        modelId: 'qwen-local',
+        sourceUrl: 'https://example.com/qwen.gguf',
+        existingBytes: 8192,
+        localPath: '/models/qwen.gguf',
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
-      ],
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'qwen-local',
-            type: 'llm',
-            tier: 'local',
-            displayName: 'Qwen Local',
-            description: '用于本地问答。',
-            sizeBytes: 8192,
-            minRamMb: 2048,
-            recommendedTier: 'local',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-1',
-                label: '镜像源',
-                url: 'https://example.com/qwen.gguf',
-                checksum: 'sha256:verified-qwen',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-1',
-            label: '镜像源',
-            url: 'https://example.com/qwen.gguf',
-            checksum: 'sha256:verified-qwen',
-          ),
-        );
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'qwen-local',
+              type: 'llm',
+              tier: 'local',
+              displayName: 'Qwen Local',
+              description: '用于本地问答。',
+              sizeBytes: 8192,
+              minRamMb: 2048,
+              recommendedTier: 'local',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-1',
+                  label: '镜像源',
+                  url: 'https://example.com/qwen.gguf',
+                  checksum: _qwenChecksum,
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-1',
+              label: '镜像源',
+              url: 'https://example.com/qwen.gguf',
+              checksum: _qwenChecksum,
+            ),
+          );
 
-    // No download should have been triggered
-    expect(downloadService.invocations, isEmpty);
-    // Registry should be written with the local path and valid checksum
-    expect(registryRepository.entries['qwen-local'], isNotNull);
-    expect(registryRepository.entries['qwen-local']?.localPath, '/models/qwen.gguf');
-    expect(registryRepository.entries['qwen-local']?.checksum, 'sha256:verified-qwen');
-    expect(registryRepository.entries['qwen-local']?.sizeBytes, 8192);
-    expect(registryRepository.entries['qwen-local']?.integrityStatus, ModelIntegrityStatus.valid);
-    expect(registryRepository.entries['qwen-local']?.enabled, isTrue);
-    // Task should be marked completed
-    expect(
-      downloadRepository.tasksByModelAndSource('qwen-local', 'source-1')?.status,
-      ModelDownloadStatus.completed,
-    );
-    // LLM runtime ensureModelReady should have been called for llm entry
-    expect(llmBridge.ensureCalls, 1);
-    expect(llmBridge.lastModelId, 'qwen-local');
-    expect(llmBridge.lastModelPath, '/models/qwen.gguf');
-  });
+      // No download should have been triggered
+      expect(downloadService.invocations, isEmpty);
+      // Registry should be written with the local path and valid checksum
+      expect(registryRepository.entries['qwen-local'], isNotNull);
+      expect(
+        registryRepository.entries['qwen-local']?.localPath,
+        '/models/qwen.gguf',
+      );
+      expect(registryRepository.entries['qwen-local']?.checksum, _qwenChecksum);
+      expect(registryRepository.entries['qwen-local']?.sizeBytes, 8192);
+      expect(
+        registryRepository.entries['qwen-local']?.integrityStatus,
+        ModelIntegrityStatus.valid,
+      );
+      expect(registryRepository.entries['qwen-local']?.enabled, isTrue);
+      // Task should be marked completed
+      expect(
+        downloadRepository
+            .tasksByModelAndSource('qwen-local', 'source-1')
+            ?.status,
+        ModelDownloadStatus.completed,
+      );
+      // LLM runtime ensureModelReady should have been called for llm entry
+      expect(llmBridge.ensureCalls, 1);
+      expect(llmBridge.lastModelId, 'qwen-local');
+      expect(llmBridge.lastModelPath, '/models/qwen.gguf');
+    },
+  );
 
-  test('startDownload retries fallback source when selected source fails with checksum mismatch', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService();
+  test(
+    'startDownload retries fallback source when selected source fails with checksum mismatch',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService();
 
-    downloadService.setErrorForSource(
-      sourceUrl: 'https://example.com/embed-1-a.onnx',
-      error: StateError('Checksum mismatch for source-a'),
-    );
-    downloadService.setResultForSource(
-      sourceUrl: 'https://example.com/embed-1-b.onnx',
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-source-b',
-      ),
-    );
+      downloadService.setErrorForSource(
+        sourceUrl: 'https://example.com/embed-1-a.onnx',
+        error: StateError('Checksum mismatch for source-a'),
+      );
+      downloadService.setResultForSource(
+        sourceUrl: 'https://example.com/embed-1-b.onnx',
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-source-b',
+        ),
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-a',
-                label: '主镜像',
-                url: 'https://example.com/embed-1-a.onnx',
-                checksum: 'sha256:verified-source-a',
-              ),
-              ModelSourceEntry(
-                id: 'source-b',
-                label: '备用镜像',
-                url: 'https://example.com/embed-1-b.onnx',
-                checksum: 'sha256:verified-source-b',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-a',
-            label: '主镜像',
-            url: 'https://example.com/embed-1-a.onnx',
-            checksum: 'sha256:verified-source-a',
-          ),
-        );
-
-    expect(downloadService.invocations.length, 2);
-    expect(downloadService.invocations[0].sourceUrl, 'https://example.com/embed-1-a.onnx');
-    expect(downloadService.invocations[1].sourceUrl, 'https://example.com/embed-1-b.onnx');
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
-      ModelDownloadStatus.failed,
-    );
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-b')?.status,
-      ModelDownloadStatus.completed,
-    );
-    expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-source-b');
-  });
-
-  test('startDownload resets resumeFromBytes to zero when switching to a different source', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService();
-
-    downloadService.setErrorForSource(
-      sourceUrl: 'https://example.com/embed-1-a.onnx',
-      error: StateError('Checksum mismatch for source-a'),
-    );
-    downloadService.setResultForSource(
-      sourceUrl: 'https://example.com/embed-1-b.onnx',
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-source-b',
-      ),
-    );
-    downloadService.setTarget(
-      modelId: 'embed-1',
-      sourceUrl: 'https://example.com/embed-1-a.onnx',
-      existingBytes: 1024,
-      localPath: '/partials/embed-1.partial',
-    );
-    downloadService.setTarget(
-      modelId: 'embed-1',
-      sourceUrl: 'https://example.com/embed-1-b.onnx',
-      existingBytes: 2048,
-      localPath: '/partials/embed-1.partial',
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-a',
-                label: '主镜像',
-                url: 'https://example.com/embed-1-a.onnx',
-                checksum: 'sha256:verified-source-a',
-              ),
-              ModelSourceEntry(
-                id: 'source-b',
-                label: '备用镜像',
-                url: 'https://example.com/embed-1-b.onnx',
-                checksum: 'sha256:verified-source-b',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-a',
-            label: '主镜像',
-            url: 'https://example.com/embed-1-a.onnx',
-            checksum: 'sha256:verified-source-a',
-          ),
-        );
-
-    expect(downloadService.invocations.length, 2);
-    expect(downloadService.invocations[0].resumeFromBytes, 1024);
-    expect(downloadService.invocations[1].resumeFromBytes, 0);
-  });
-
-  test('startDownload probes fallback sources and prefers healthier fallback ordering after selected source fails', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService();
-    final probeService = _FakeModelSourceProbeService();
-
-    downloadService.setErrorForSource(
-      sourceUrl: 'https://example.com/embed-1-a.onnx',
-      error: StateError('Checksum mismatch for source-a'),
-    );
-    downloadService.setResultForSource(
-      sourceUrl: 'https://example.com/embed-1-c.onnx',
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-source-c',
-      ),
-    );
-
-    probeService.setResult(
-      const ModelSourceProbeResult(
-        sourceId: 'source-b',
-        reachable: true,
-        statusCode: 200,
-        contentLength: 4096,
-        rangeSupported: false,
-        latencyMs: 180,
-        usedFallbackRangeProbe: false,
-      ),
-    );
-    probeService.setResult(
-      const ModelSourceProbeResult(
-        sourceId: 'source-c',
-        reachable: true,
-        statusCode: 200,
-        contentLength: 4096,
-        rangeSupported: true,
-        latencyMs: 40,
-        usedFallbackRangeProbe: false,
-      ),
-    );
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelSourceProbeServiceProvider.overrideWithValue(probeService),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).startDownload(
-          entry: const ModelCatalogEntry(
-            id: 'embed-1',
-            type: 'embedding',
-            tier: 'mvp',
-            displayName: 'MiniLM Embedding',
-            description: '用于本地语义检索。',
-            sizeBytes: 4096,
-            minRamMb: 512,
-            recommendedTier: 'mvp',
-            sources: <ModelSourceEntry>[
-              ModelSourceEntry(
-                id: 'source-a',
-                label: '主镜像',
-                url: 'https://example.com/embed-1-a.onnx',
-                checksum: 'sha256:verified-source-a',
-              ),
-              ModelSourceEntry(
-                id: 'source-b',
-                label: '次优镜像',
-                url: 'https://example.com/embed-1-b.onnx',
-                checksum: 'sha256:verified-source-b',
-              ),
-              ModelSourceEntry(
-                id: 'source-c',
-                label: '健康镜像',
-                url: 'https://example.com/embed-1-c.onnx',
-                checksum: 'sha256:verified-source-c',
-              ),
-            ],
-          ),
-          source: const ModelSourceEntry(
-            id: 'source-a',
-            label: '主镜像',
-            url: 'https://example.com/embed-1-a.onnx',
-            checksum: 'sha256:verified-source-a',
-          ),
-        );
-
-    expect(downloadService.invocations.length, 2);
-    expect(downloadService.invocations[0].sourceUrl, 'https://example.com/embed-1-a.onnx');
-    expect(downloadService.invocations[1].sourceUrl, 'https://example.com/embed-1-c.onnx');
-    expect(downloadRepository.tasksByModelAndSource('embed-1', 'source-b'), isNull);
-    expect(
-      downloadRepository.tasksByModelAndSource('embed-1', 'source-c')?.status,
-      ModelDownloadStatus.completed,
-    );
-  });
-
-  test('revalidateInstalledModel marks checksum-mismatched installed model as corrupted and disabled', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-
-    // Registry entry with corrupted file (checksum mismatch)
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:expected-embed-1',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.unknown,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
-    downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).revalidateInstalledModel('embed-1');
-
-    // Should persist the corrupted state
-    expect(registryRepository.entries['embed-1']?.filePresent, isTrue);
-    expect(registryRepository.entries['embed-1']?.enabled, isFalse);
-    expect(registryRepository.entries['embed-1']?.integrityStatus, ModelIntegrityStatus.corrupted);
-  });
-
-  test('revalidateInstalledModel marks valid installed model as valid and enabled', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:expected-embed-1',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.unknown,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
-    // No checksumMismatchPaths entry → checksum passes
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).revalidateInstalledModel('embed-1');
-
-    expect(registryRepository.entries['embed-1']?.filePresent, isTrue);
-    expect(registryRepository.entries['embed-1']?.enabled, isTrue);
-    expect(registryRepository.entries['embed-1']?.integrityStatus, ModelIntegrityStatus.valid);
-  });
-
-  test('revalidateInstalledModel re-enables a recovered installed model after checksum passes', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final llmBridge = _RecordingLlmRuntimeBridge();
-
-    registryRepository.entries['llm-1'] = const ModelRegistryEntry(
-      id: 'llm-1',
-      type: 'llm',
-      provider: 'builtin_catalog',
-      name: 'Qwen Local',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q4_K_M',
-      minRamMb: 2048,
-      recommendedTier: 'local',
-      localPath: '/models/qwen.gguf',
-      checksum: 'sha256:expected-qwen',
-      enabled: false,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.corrupted,
-    );
-    downloadService.existingPaths.add('/models/qwen.gguf');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).revalidateInstalledModel('llm-1');
-
-    expect(registryRepository.entries['llm-1']?.filePresent, isTrue);
-    expect(registryRepository.entries['llm-1']?.enabled, isTrue);
-    expect(registryRepository.entries['llm-1']?.integrityStatus, ModelIntegrityStatus.valid);
-    expect(llmBridge.ensureCalls, 1);
-  });
-
-  test('revalidateInstalledModel runs llm readiness probe and exposes ready runtime state', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final llmBridge = _RecordingLlmRuntimeBridge(
-      ensureResult: <String, dynamic>{
-        'ready': true,
-        'status': 'ready',
-        'reason': 'validated',
-        'modelPath': '/models/qwen.gguf',
-        'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
-      },
-    );
-
-    registryRepository.entries['llm-1'] = const ModelRegistryEntry(
-      id: 'llm-1',
-      type: 'llm',
-      provider: 'builtin_catalog',
-      name: 'Qwen Local',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q4_K_M',
-      minRamMb: 2048,
-      recommendedTier: 'local',
-      localPath: '/models/qwen.gguf',
-      checksum: 'sha256:expected-qwen',
-      enabled: false,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.corrupted,
-    );
-    downloadService.existingPaths.add('/models/qwen.gguf');
-
-    final container = _modelProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
-      ],
-    );
-
-    addTearDown(container.dispose);
-
-    await container.read(modelDownloadControllerProvider).revalidateInstalledModel('llm-1');
-    final runtimeStates = await container.read(llmRuntimeStatesProvider.future);
-
-    expect(llmBridge.ensureCalls, greaterThanOrEqualTo(1));
-    expect(llmBridge.lastModelId, 'llm-1');
-    expect(llmBridge.lastModelPath, '/models/qwen.gguf');
-    expect(runtimeStates['llm-1']?.ready, isTrue);
-    expect(runtimeStates['llm-1']?.status, LlmRuntimeStatus.ready);
-  });
-
-  test('repairInstalledModel triggers fresh download for a broken installed model using catalog entry', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final bridge = _RecordingEmbeddingRuntimeBridge();
-    final downloadService = _FakeDownloadService(
-      result: const ModelDownloadResult(
-        localPath: '/models/embed-1.onnx',
-        totalBytes: 4096,
-        verifiedChecksum: 'sha256:verified-embed-1',
-      ),
-    );
-    final catalogRepository = _MemoryCatalogRepository(
-      const <ModelCatalogEntry>[
-        ModelCatalogEntry(
-          id: 'embed-1',
-          type: 'embedding',
-          tier: 'mvp',
-          displayName: 'MiniLM Embedding',
-          description: '用于本地语义检索。',
-          sizeBytes: 4096,
-          minRamMb: 512,
-          recommendedTier: 'mvp',
-          sources: <ModelSourceEntry>[
-            ModelSourceEntry(
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-a',
+                  label: '主镜像',
+                  url: 'https://example.com/embed-1-a.onnx',
+                  checksum: 'sha256:verified-source-a',
+                ),
+                ModelSourceEntry(
+                  id: 'source-b',
+                  label: '备用镜像',
+                  url: 'https://example.com/embed-1-b.onnx',
+                  checksum: 'sha256:verified-source-b',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
               id: 'source-a',
               label: '主镜像',
-              url: 'https://example.com/embed-1.onnx',
-              checksum: 'sha256:verified-embed-1',
+              url: 'https://example.com/embed-1-a.onnx',
+              checksum: 'sha256:verified-source-a',
             ),
-          ],
+          );
+
+      expect(downloadService.invocations.length, 2);
+      expect(
+        downloadService.invocations[0].sourceUrl,
+        'https://example.com/embed-1-a.onnx',
+      );
+      expect(
+        downloadService.invocations[1].sourceUrl,
+        'https://example.com/embed-1-b.onnx',
+      );
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-a')?.status,
+        ModelDownloadStatus.failed,
+      );
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-b')?.status,
+        ModelDownloadStatus.completed,
+      );
+      expect(
+        registryRepository.entries['embed-1']?.checksum,
+        'sha256:verified-source-b',
+      );
+    },
+  );
+
+  test(
+    'startDownload resets resumeFromBytes to zero when switching to a different source',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService();
+
+      downloadService.setErrorForSource(
+        sourceUrl: 'https://example.com/embed-1-a.onnx',
+        error: StateError('Checksum mismatch for source-a'),
+      );
+      downloadService.setResultForSource(
+        sourceUrl: 'https://example.com/embed-1-b.onnx',
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-source-b',
         ),
-      ],
-    );
+      );
+      downloadService.setTarget(
+        modelId: 'embed-1',
+        sourceUrl: 'https://example.com/embed-1-a.onnx',
+        existingBytes: 1024,
+        localPath: '/partials/embed-1.partial',
+      );
+      downloadService.setTarget(
+        modelId: 'embed-1',
+        sourceUrl: 'https://example.com/embed-1-b.onnx',
+        existingBytes: 2048,
+        localPath: '/partials/embed-1.partial',
+      );
 
-    // Broken installed model (corrupted file)
-    registryRepository.entries['embed-1'] = const ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'MiniLM Embedding',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/embed-1.onnx',
-      checksum: 'sha256:old-checksum',
-      enabled: false,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.corrupted,
-    );
-    downloadService.existingPaths.add('/models/embed-1.onnx');
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
-        embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
-      ],
-    );
+      addTearDown(container.dispose);
 
-    addTearDown(container.dispose);
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-a',
+                  label: '主镜像',
+                  url: 'https://example.com/embed-1-a.onnx',
+                  checksum: 'sha256:verified-source-a',
+                ),
+                ModelSourceEntry(
+                  id: 'source-b',
+                  label: '备用镜像',
+                  url: 'https://example.com/embed-1-b.onnx',
+                  checksum: 'sha256:verified-source-b',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-a',
+              label: '主镜像',
+              url: 'https://example.com/embed-1-a.onnx',
+              checksum: 'sha256:verified-source-a',
+            ),
+          );
 
-    await container.read(modelDownloadControllerProvider).repairInstalledModel('embed-1');
+      expect(downloadService.invocations.length, 2);
+      expect(downloadService.invocations[0].resumeFromBytes, 1024);
+      expect(downloadService.invocations[1].resumeFromBytes, 0);
+    },
+  );
 
-    // Should have triggered download via startDownload
-    expect(downloadService.invocations, hasLength(1));
-    expect(downloadService.invocations[0].modelId, 'embed-1');
-    expect(downloadService.invocations[0].sourceUrl, 'https://example.com/embed-1.onnx');
-    expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
-    expect(bridge.releasedModelIds, <String>['embed-1']);
-    // After repair, model should be re-registered as valid
-    expect(registryRepository.entries['embed-1']?.checksum, 'sha256:verified-embed-1');
-    expect(registryRepository.entries['embed-1']?.integrityStatus, ModelIntegrityStatus.valid);
-  });
+  test(
+    'startDownload probes fallback sources and prefers healthier fallback ordering after selected source fails',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService();
+      final probeService = _FakeModelSourceProbeService();
 
-  test('repairInstalledModel safely handles missing catalog entry with no-op', () async {
-    final downloadRepository = _MemoryDownloadRepository();
-    final registryRepository = _MemoryRegistryRepository();
-    final downloadService = _FakeDownloadService();
-    final catalogRepository = _MemoryCatalogRepository(const <ModelCatalogEntry>[]);
+      downloadService.setErrorForSource(
+        sourceUrl: 'https://example.com/embed-1-a.onnx',
+        error: StateError('Checksum mismatch for source-a'),
+      );
+      downloadService.setResultForSource(
+        sourceUrl: 'https://example.com/embed-1-c.onnx',
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-source-c',
+        ),
+      );
 
-    registryRepository.entries['unknown-model'] = const ModelRegistryEntry(
-      id: 'unknown-model',
-      type: 'embedding',
-      provider: 'builtin_catalog',
-      name: 'Unknown',
-      version: '1.0.0',
-      sizeBytes: 4096,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/models/unknown.onnx',
-      checksum: 'sha256:old-checksum',
-      enabled: false,
-      installedAt: null,
-      filePresent: true,
-      integrityStatus: ModelIntegrityStatus.corrupted,
-    );
-    downloadService.existingPaths.add('/models/unknown.onnx');
+      probeService.setResult(
+        const ModelSourceProbeResult(
+          sourceId: 'source-b',
+          reachable: true,
+          statusCode: 200,
+          contentLength: 4096,
+          rangeSupported: false,
+          latencyMs: 180,
+          usedFallbackRangeProbe: false,
+        ),
+      );
+      probeService.setResult(
+        const ModelSourceProbeResult(
+          sourceId: 'source-c',
+          reachable: true,
+          statusCode: 200,
+          contentLength: 4096,
+          rangeSupported: true,
+          latencyMs: 40,
+          usedFallbackRangeProbe: false,
+        ),
+      );
 
-    final container = _modelProviderContainer(
-      overrides: [
-        modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
-        modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
-        modelDownloadServiceProvider.overrideWithValue(downloadService),
-        modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
-      ],
-    );
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelSourceProbeServiceProvider.overrideWithValue(probeService),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
 
-    addTearDown(container.dispose);
+      addTearDown(container.dispose);
 
-    // Should not throw even though model has no catalog entry
-    await container.read(modelDownloadControllerProvider).repairInstalledModel('unknown-model');
+      await container
+          .read(modelDownloadControllerProvider)
+          .startDownload(
+            entry: const ModelCatalogEntry(
+              id: 'embed-1',
+              type: 'embedding',
+              tier: 'mvp',
+              displayName: 'MiniLM Embedding',
+              description: '用于本地语义检索。',
+              sizeBytes: 4096,
+              minRamMb: 512,
+              recommendedTier: 'mvp',
+              sources: <ModelSourceEntry>[
+                ModelSourceEntry(
+                  id: 'source-a',
+                  label: '主镜像',
+                  url: 'https://example.com/embed-1-a.onnx',
+                  checksum: 'sha256:verified-source-a',
+                ),
+                ModelSourceEntry(
+                  id: 'source-b',
+                  label: '次优镜像',
+                  url: 'https://example.com/embed-1-b.onnx',
+                  checksum: 'sha256:verified-source-b',
+                ),
+                ModelSourceEntry(
+                  id: 'source-c',
+                  label: '健康镜像',
+                  url: 'https://example.com/embed-1-c.onnx',
+                  checksum: 'sha256:verified-source-c',
+                ),
+              ],
+            ),
+            source: const ModelSourceEntry(
+              id: 'source-a',
+              label: '主镜像',
+              url: 'https://example.com/embed-1-a.onnx',
+              checksum: 'sha256:verified-source-a',
+            ),
+          );
 
-    // No download should have been triggered
-    expect(downloadService.invocations, isEmpty);
-    // Registry entry remains unchanged (no crash)
-    expect(registryRepository.entries['unknown-model']?.enabled, isFalse);
-  });
+      expect(downloadService.invocations.length, 2);
+      expect(
+        downloadService.invocations[0].sourceUrl,
+        'https://example.com/embed-1-a.onnx',
+      );
+      expect(
+        downloadService.invocations[1].sourceUrl,
+        'https://example.com/embed-1-c.onnx',
+      );
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-b'),
+        isNull,
+      );
+      expect(
+        downloadRepository.tasksByModelAndSource('embed-1', 'source-c')?.status,
+        ModelDownloadStatus.completed,
+      );
+    },
+  );
+
+  test(
+    'revalidateInstalledModel marks checksum-mismatched installed model as corrupted and disabled',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+
+      // Registry entry with corrupted file (checksum mismatch)
+      registryRepository.entries['embed-1'] = _trustedSingleArtifactEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        name: 'MiniLM Embedding',
+        path: '/models/embed-1.onnx',
+        quantization: 'Q8',
+        enabled: true,
+        integrityStatus: ModelIntegrityStatus.unknown,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
+      downloadService.checksumMismatchPaths.add('/models/embed-1.onnx');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .revalidateInstalledModel('embed-1');
+
+      // Should persist the corrupted state
+      expect(registryRepository.entries['embed-1']?.filePresent, isTrue);
+      expect(registryRepository.entries['embed-1']?.enabled, isFalse);
+      expect(
+        registryRepository.entries['embed-1']?.integrityStatus,
+        ModelIntegrityStatus.corrupted,
+      );
+    },
+  );
+
+  test(
+    'revalidateInstalledModel marks valid installed model as valid and enabled',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+
+      registryRepository.entries['embed-1'] = _trustedSingleArtifactEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        name: 'MiniLM Embedding',
+        path: '/models/embed-1.onnx',
+        quantization: 'Q8',
+        enabled: true,
+        integrityStatus: ModelIntegrityStatus.unknown,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
+      // No checksumMismatchPaths entry → checksum passes
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .revalidateInstalledModel('embed-1');
+
+      expect(registryRepository.entries['embed-1']?.filePresent, isTrue);
+      expect(registryRepository.entries['embed-1']?.enabled, isTrue);
+      expect(
+        registryRepository.entries['embed-1']?.integrityStatus,
+        ModelIntegrityStatus.valid,
+      );
+    },
+  );
+
+  test(
+    'revalidateInstalledModel re-enables a recovered installed model after checksum passes',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final llmBridge = _RecordingLlmRuntimeBridge();
+
+      registryRepository.entries['llm-1'] = _trustedSingleArtifactEntry(
+        id: 'llm-1',
+        type: 'llm',
+        name: 'Qwen Local',
+        path: '/models/qwen.gguf',
+        quantization: 'Q4_K_M',
+        enabled: false,
+        integrityStatus: ModelIntegrityStatus.corrupted,
+      );
+      downloadService.existingPaths.add('/models/qwen.gguf');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .revalidateInstalledModel('llm-1');
+
+      expect(registryRepository.entries['llm-1']?.filePresent, isTrue);
+      expect(registryRepository.entries['llm-1']?.enabled, isTrue);
+      expect(
+        registryRepository.entries['llm-1']?.integrityStatus,
+        ModelIntegrityStatus.valid,
+      );
+      expect(llmBridge.ensureCalls, 1);
+    },
+  );
+
+  test(
+    'revalidateInstalledModel runs llm readiness probe and exposes ready runtime state',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final llmBridge = _RecordingLlmRuntimeBridge(
+        ensureResult: <String, dynamic>{
+          'ready': true,
+          'status': 'ready',
+          'reason': 'validated',
+          'modelPath': '/models/qwen.gguf',
+          'checkedAt': DateTime(2026, 4, 26).millisecondsSinceEpoch,
+        },
+      );
+
+      registryRepository.entries['llm-1'] = _trustedSingleArtifactEntry(
+        id: 'llm-1',
+        type: 'llm',
+        name: 'Qwen Local',
+        path: '/models/qwen.gguf',
+        quantization: 'Q4_K_M',
+        enabled: false,
+        integrityStatus: ModelIntegrityStatus.corrupted,
+      );
+      downloadService.existingPaths.add('/models/qwen.gguf');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          llmRuntimeBridgeProvider.overrideWithValue(llmBridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .revalidateInstalledModel('llm-1');
+      final runtimeStates = await container.read(
+        llmRuntimeStatesProvider.future,
+      );
+
+      expect(llmBridge.ensureCalls, greaterThanOrEqualTo(1));
+      expect(llmBridge.lastModelId, 'llm-1');
+      expect(llmBridge.lastModelPath, '/models/qwen.gguf');
+      expect(runtimeStates['llm-1']?.ready, isTrue);
+      expect(runtimeStates['llm-1']?.status, LlmRuntimeStatus.ready);
+    },
+  );
+
+  test(
+    'repairInstalledModel triggers fresh download for a broken installed model using catalog entry',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final bridge = _RecordingEmbeddingRuntimeBridge();
+      final downloadService = _FakeDownloadService(
+        result: const ModelDownloadResult(
+          localPath: '/models/embed-1.onnx',
+          totalBytes: 4096,
+          verifiedChecksum: 'sha256:verified-embed-1',
+        ),
+      );
+      final catalogRepository = _MemoryCatalogRepository(
+        const <ModelCatalogEntry>[
+          ModelCatalogEntry(
+            id: 'embed-1',
+            type: 'embedding',
+            tier: 'mvp',
+            displayName: 'MiniLM Embedding',
+            description: '用于本地语义检索。',
+            sizeBytes: 4096,
+            minRamMb: 512,
+            recommendedTier: 'mvp',
+            sources: <ModelSourceEntry>[
+              ModelSourceEntry(
+                id: 'source-a',
+                label: '主镜像',
+                url: 'https://example.com/embed-1.onnx',
+                checksum: 'sha256:verified-embed-1',
+              ),
+            ],
+          ),
+        ],
+      );
+
+      // Broken installed model (corrupted file)
+      registryRepository.entries['embed-1'] = const ModelRegistryEntry(
+        id: 'embed-1',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'MiniLM Embedding',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
+        localPath: '/models/embed-1.onnx',
+        checksum: 'sha256:old-checksum',
+        enabled: false,
+        installedAt: null,
+        filePresent: true,
+        integrityStatus: ModelIntegrityStatus.corrupted,
+      );
+      downloadService.existingPaths.add('/models/embed-1.onnx');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
+          embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      await container
+          .read(modelDownloadControllerProvider)
+          .repairInstalledModel('embed-1');
+
+      // Should have triggered download via startDownload
+      expect(downloadService.invocations, hasLength(1));
+      expect(downloadService.invocations[0].modelId, 'embed-1');
+      expect(
+        downloadService.invocations[0].sourceUrl,
+        'https://example.com/embed-1.onnx',
+      );
+      expect(downloadService.deletedPaths, contains('/models/embed-1.onnx'));
+      expect(bridge.releasedModelIds, <String>['embed-1']);
+      // After repair, model should be re-registered as valid
+      expect(
+        registryRepository.entries['embed-1']?.checksum,
+        'sha256:verified-embed-1',
+      );
+      expect(
+        registryRepository.entries['embed-1']?.integrityStatus,
+        ModelIntegrityStatus.valid,
+      );
+    },
+  );
+
+  test(
+    'repairInstalledModel safely handles missing catalog entry with no-op',
+    () async {
+      final downloadRepository = _MemoryDownloadRepository();
+      final registryRepository = _MemoryRegistryRepository();
+      final downloadService = _FakeDownloadService();
+      final catalogRepository = _MemoryCatalogRepository(
+        const <ModelCatalogEntry>[],
+      );
+
+      registryRepository.entries['unknown-model'] = const ModelRegistryEntry(
+        id: 'unknown-model',
+        type: 'embedding',
+        provider: 'builtin_catalog',
+        name: 'Unknown',
+        version: '1.0.0',
+        sizeBytes: 4096,
+        quantization: 'Q8',
+        minRamMb: 512,
+        recommendedTier: 'mvp',
+        localPath: '/models/unknown.onnx',
+        checksum: 'sha256:old-checksum',
+        enabled: false,
+        installedAt: null,
+        filePresent: true,
+        integrityStatus: ModelIntegrityStatus.corrupted,
+      );
+      downloadService.existingPaths.add('/models/unknown.onnx');
+
+      final container = _modelProviderContainer(
+        overrides: [
+          modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelDownloadServiceProvider.overrideWithValue(downloadService),
+          modelCatalogRepositoryProvider.overrideWithValue(catalogRepository),
+        ],
+      );
+
+      addTearDown(container.dispose);
+
+      // Should not throw even though model has no catalog entry
+      await container
+          .read(modelDownloadControllerProvider)
+          .repairInstalledModel('unknown-model');
+
+      // No download should have been triggered
+      expect(downloadService.invocations, isEmpty);
+      // Registry entry remains unchanged (no crash)
+      expect(registryRepository.entries['unknown-model']?.enabled, isFalse);
+    },
+  );
+}
+
+ModelRegistryEntry _trustedSingleArtifactEntry({
+  required String id,
+  required String type,
+  required String name,
+  required String path,
+  required String quantization,
+  required bool enabled,
+  required ModelIntegrityStatus integrityStatus,
+}) {
+  final checksum = 'sha256:${'a' * 64}';
+  return ModelRegistryEntry(
+    id: id,
+    type: type,
+    provider: 'builtin_catalog',
+    name: name,
+    version: 'release-1',
+    sizeBytes: 4096,
+    quantization: quantization,
+    minRamMb: type == 'llm' ? 2048 : 512,
+    recommendedTier: type == 'llm' ? 'local' : 'mvp',
+    localPath: path,
+    checksum: checksum,
+    enabled: enabled,
+    installedAt: null,
+    filePresent: true,
+    integrityStatus: integrityStatus,
+    releaseId: 'release-1',
+    catalogVersion: 7,
+    catalogDigest:
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    generation: 1,
+    revisionRoot: 'revisions/1',
+    artifacts: <ModelArtifactPath>[
+      ModelArtifactPath(
+        artifactId: 'model',
+        releaseId: 'release-1',
+        role: 'model',
+        sourceId: 'source-1',
+        localPath: path,
+        relativePath: 'runtime/model.bin',
+        required: true,
+        expectedChecksum: checksum,
+        verifiedChecksum: checksum,
+        expectedSizeBytes: 4096,
+        verifiedSizeBytes: 4096,
+        state: 'installed',
+        verifiedAt: 1,
+      ),
+    ],
+  );
 }

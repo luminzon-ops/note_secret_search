@@ -12,6 +12,7 @@ import 'package:note_secret_search/features/ai_models/application/model_catalog_
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_chat/infrastructure/local_llm_engine.dart';
 import 'package:note_secret_search/features/ai_models/application/model_lifecycle_controller.dart';
+import 'package:note_secret_search/features/ai_models/application/model_registry_integrity_verifier.dart';
 import 'package:note_secret_search/features/ai_models/application/model_session_releaser.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
@@ -57,6 +58,9 @@ class ModelDownloadController {
        _repository = repository,
        _registryRepository = registryRepository,
        _downloadService = downloadService,
+       _integrityVerifier = ModelRegistryIntegrityVerifier(
+         downloadService: downloadService,
+       ),
        _lifecycleStore = lifecycleStore,
        _revisionStore = revisionStore ?? IoModelRevisionStore(),
        _installJournalStore =
@@ -105,6 +109,7 @@ class ModelDownloadController {
   final ModelDownloadRepository _repository;
   final ModelRegistryRepository _registryRepository;
   final ModelDownloadService _downloadService;
+  final ModelRegistryIntegrityVerifier _integrityVerifier;
   final ModelLifecycleStore _lifecycleStore;
   final ModelRevisionStore _revisionStore;
   final ModelInstallJournalStore? _installJournalStore;
@@ -520,21 +525,36 @@ class ModelDownloadController {
     _logger.info('model_revalidation_invalidated');
   }
 
-  /// Repairs a broken installed model by re-downloading it from the catalog.
-  /// Uses the built-in catalog entry for the model and the first available source.
-  /// If no matching catalog entry or no sources exist, this is a no-op.
+  /// Repairs a broken installed model from the trusted catalog.
+  /// Structured models reuse verified artifacts and replace only broken ones.
   Future<void> repairInstalledModel(String modelId) async {
     final catalogEntries = await _ref.read(modelCatalogEntriesProvider.future);
     final catalogEntry = catalogEntries
         .where((e) => e.id == modelId)
         .firstOrNull;
-
-    if (catalogEntry == null || catalogEntry.sources.isEmpty) {
+    if (catalogEntry == null) {
       return;
     }
 
-    final firstSource = catalogEntry.sources.first;
-    await startDownload(entry: catalogEntry, source: firstSource);
+    final selectedSource =
+        catalogEntry.sources.firstOrNull ??
+        catalogEntry.primaryArtifact?.sources.firstOrNull;
+    if (selectedSource == null) {
+      return;
+    }
+    if (catalogEntry.artifacts.isNotEmpty) {
+      final existing = await _registryRepository.getById(modelId);
+      if (existing == null) {
+        return;
+      }
+      await _startStructuredDownload(
+        entry: catalogEntry,
+        source: selectedSource,
+        operationType: 'repair',
+      );
+      return;
+    }
+    await startDownload(entry: catalogEntry, source: selectedSource);
   }
 
   /// Normalizes a [ModelRegistryEntry] by checking file presence and checksum,
