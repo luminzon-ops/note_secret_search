@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
@@ -18,6 +21,7 @@ import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_sto
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/io_model_artifact_store.dart';
+import 'package:note_secret_search/features/ai_models/infrastructure/io_model_revision_store.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
@@ -32,6 +36,8 @@ import 'package:uuid/uuid.dart';
 part 'model_download_sensitive_providers.dart';
 part 'model_download_controller_internals.dart';
 part 'model_download_dependencies.dart';
+part 'model_download_structured.dart';
+part 'model_download_structured_support.dart';
 
 class ModelDownloadController {
   ModelDownloadController({
@@ -42,12 +48,14 @@ class ModelDownloadController {
     required ModelLifecycleStore lifecycleStore,
     required ModelArtifactStore artifactStore,
     required AppLogger logger,
+    ModelRevisionStore? revisionStore,
     ModelSessionReleaser? sessionReleaser,
   }) : _ref = ref,
        _repository = repository,
        _registryRepository = registryRepository,
        _downloadService = downloadService,
        _lifecycleStore = lifecycleStore,
+       _revisionStore = revisionStore ?? IoModelRevisionStore(),
        _modelLifecycleController = ModelLifecycleController(
          lifecycleStore: lifecycleStore,
          artifactStore: artifactStore,
@@ -90,8 +98,13 @@ class ModelDownloadController {
   final ModelRegistryRepository _registryRepository;
   final ModelDownloadService _downloadService;
   final ModelLifecycleStore _lifecycleStore;
+  final ModelRevisionStore _revisionStore;
   final ModelLifecycleController _modelLifecycleController;
   final AppLogger _logger;
+  final Map<String, Future<void>> _modelOperationLocks =
+      <String, Future<void>>{};
+  final Map<String, int> _modelGenerations = <String, int>{};
+  final Map<String, String> _activeOperationIds = <String, String>{};
   static const _uuid = Uuid();
 
   Future<void> enqueueDownload({
@@ -165,6 +178,10 @@ class ModelDownloadController {
 
     if (entry.type == 'multimodal_llm') {
       await _startMultimodalDownload(entry: entry);
+      return;
+    }
+    if (entry.artifacts.isNotEmpty) {
+      await _startStructuredDownload(entry: entry, source: source);
       return;
     }
 

@@ -40,7 +40,23 @@ class InstalledModelRevision {
   final Map<String, String> pathsByArtifactId;
 }
 
-class IoModelRevisionStore {
+abstract interface class ModelRevisionStore {
+  Future<InstalledModelRevision> installVerifiedRevision({
+    required String modelId,
+    required String operationId,
+    required int generation,
+    required List<StagedModelArtifact> artifacts,
+  });
+
+  Future<void> recoverInterruptedInstalls({required String modelId});
+
+  Future<void> discardInstalledRevision({
+    required String modelId,
+    required String revisionRoot,
+  });
+}
+
+class IoModelRevisionStore implements ModelRevisionStore {
   IoModelRevisionStore({
     Future<Directory> Function()? applicationSupportDirectoryProvider,
   }) : _applicationSupportDirectoryProvider =
@@ -49,6 +65,7 @@ class IoModelRevisionStore {
 
   final Future<Directory> Function() _applicationSupportDirectoryProvider;
 
+  @override
   Future<InstalledModelRevision> installVerifiedRevision({
     required String modelId,
     required String operationId,
@@ -176,6 +193,7 @@ class IoModelRevisionStore {
     }
   }
 
+  @override
   Future<void> recoverInterruptedInstalls({required String modelId}) async {
     _validateIdentifier(modelId, 'model_id_invalid');
     final support = await _applicationSupportDirectoryProvider();
@@ -221,6 +239,40 @@ class IoModelRevisionStore {
       }
       await _deleteOwnedDirectory(entity.path, resolvedModelRoot);
     }
+  }
+
+  @override
+  Future<void> discardInstalledRevision({
+    required String modelId,
+    required String revisionRoot,
+  }) async {
+    _validateIdentifier(modelId, 'model_id_invalid');
+    final support = await _applicationSupportDirectoryProvider();
+    final supportRoot = _absolute(support.path);
+    final modelsRoot = _absolute(p.join(supportRoot, 'models'));
+    final modelRoot = _absolute(p.join(modelsRoot, modelId));
+    final rawRevisionRoot = p.isAbsolute(revisionRoot)
+        ? revisionRoot
+        : p.join(modelRoot, revisionRoot);
+    final target = _absolute(rawRevisionRoot);
+    if (!p.isWithin(modelRoot, target) || !p.isWithin(modelsRoot, modelRoot)) {
+      throw const ModelRevisionStoreException('revision_path_outside_root');
+    }
+    if (await FileSystemEntity.type(modelRoot, followLinks: false) ==
+        FileSystemEntityType.notFound) {
+      return;
+    }
+    final resolvedModelsRoot = await _resolvedDirectoryWithin(
+      modelsRoot,
+      supportRoot,
+      missingCode: 'revision_models_root_missing',
+    );
+    final resolvedModelRoot = await _resolvedDirectoryWithin(
+      modelRoot,
+      resolvedModelsRoot,
+      missingCode: 'revision_model_root_missing',
+    );
+    await _deleteOwnedDirectory(target, resolvedModelRoot);
   }
 }
 

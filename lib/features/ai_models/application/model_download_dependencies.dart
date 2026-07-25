@@ -28,6 +28,10 @@ final modelArtifactStoreProvider = Provider<ModelArtifactStore>((ref) {
   return IoModelArtifactStore();
 });
 
+final modelRevisionStoreProvider = Provider<ModelRevisionStore>((ref) {
+  return IoModelRevisionStore();
+});
+
 final modelDownloadServiceProvider = Provider<ModelDownloadService>((ref) {
   return ModelDownloadService(dio: Dio(), logger: ref.watch(loggerProvider));
 });
@@ -48,6 +52,7 @@ final modelDownloadControllerProvider = Provider<ModelDownloadController>((
     downloadService: ref.watch(modelDownloadServiceProvider),
     lifecycleStore: ref.watch(modelLifecycleStoreProvider),
     artifactStore: ref.watch(modelArtifactStoreProvider),
+    revisionStore: ref.watch(modelRevisionStoreProvider),
     logger: ref.watch(loggerProvider),
   );
 });
