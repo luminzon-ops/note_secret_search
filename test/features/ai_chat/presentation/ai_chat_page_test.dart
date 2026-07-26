@@ -20,6 +20,8 @@ import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.da
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../support/widget_test_helpers.dart';
+
 void main() {
   Future<ProviderContainer> buildContainer({
     LocalLlmReadiness? llmReadiness,
@@ -76,86 +78,98 @@ void main() {
     ProviderContainer container, {
     required Size size,
   }) async {
-    tester.view.physicalSize = size;
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-
     final router = container.read(appRouterProvider);
     router.go('/ai/chat');
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
+    await pumpRouteAtViewport(
+      tester,
+      viewport: size,
+      route: UncontrolledProviderScope(
         container: container,
         child: MaterialApp.router(routerConfig: router),
       ),
     );
-    await tester.pumpAndSettle();
+    await pumpUntilProviderSettled(
+      tester,
+      container,
+      localLlmReadinessProvider,
+    );
+    await pumpUntilProviderSettled(
+      tester,
+      container,
+      externalProviderStatusProvider,
+    );
+    await pumpUntilProviderSettled(tester, container, chatSessionsProvider);
+    await pumpUntilFound(tester, find.text('AI 问答'));
   }
 
-  testWidgets(
-    'AI chat page uses drawer-based recent sessions on phone widths',
-    (tester) async {
-      final container = await buildContainer(
-        chatRepository: _FakeChatSessionRepository(
-          sessions: [
-            ChatSession(
-              id: 'session-1',
-              mode: ChatMode.privateQa,
-              title: '邮箱问答',
-              allowPrivateContext: true,
-              archived: false,
-              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-            ),
-          ],
-        ),
-      );
+  for (final width in <double>[393, 839]) {
+    testWidgets(
+      'AI chat uses drawer-based recent sessions at ${width.toInt()} logical pixels',
+      (tester) async {
+        final container = await buildContainer(
+          chatRepository: _FakeChatSessionRepository(
+            sessions: [
+              ChatSession(
+                id: 'session-1',
+                mode: ChatMode.privateQa,
+                title: '邮箱问答',
+                allowPrivateContext: true,
+                archived: false,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+                updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
+              ),
+            ],
+          ),
+        );
 
-      addTearDown(container.dispose);
+        addTearDown(container.dispose);
 
-      await pumpChatRouteAtSize(tester, container, size: const Size(393, 852));
+        await pumpChatRouteAtSize(tester, container, size: Size(width, 800));
 
-      expect(find.text('最近会话'), findsNothing);
-      expect(find.byTooltip('打开最近会话'), findsOneWidget);
+        expect(find.text('最近会话'), findsNothing);
+        final openRecentSessions = find.byTooltip('打开最近会话');
+        expect(openRecentSessions, findsOneWidget);
 
-      await tester.tap(find.byTooltip('打开最近会话'));
-      await tester.pumpAndSettle();
+        await revealAndTap(tester, openRecentSessions);
+        await pumpUntilFound(tester, find.text('最近会话'));
 
-      expect(find.text('最近会话'), findsOneWidget);
-      expect(find.text('邮箱问答'), findsOneWidget);
-    },
-  );
+        expect(find.text('最近会话'), findsOneWidget);
+        expect(find.widgetWithText(ListTile, '邮箱问答'), findsOneWidget);
+      },
+    );
+  }
 
-  testWidgets(
-    'AI chat page keeps persistent recent sessions sidebar on wide widths',
-    (tester) async {
-      final container = await buildContainer(
-        chatRepository: _FakeChatSessionRepository(
-          sessions: [
-            ChatSession(
-              id: 'session-1',
-              mode: ChatMode.privateQa,
-              title: '邮箱问答',
-              allowPrivateContext: true,
-              archived: false,
-              createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
-              updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
-            ),
-          ],
-        ),
-      );
+  for (final width in <double>[840, 1280]) {
+    testWidgets(
+      'AI chat uses persistent recent sessions at ${width.toInt()} logical pixels',
+      (tester) async {
+        final container = await buildContainer(
+          chatRepository: _FakeChatSessionRepository(
+            sessions: [
+              ChatSession(
+                id: 'session-1',
+                mode: ChatMode.privateQa,
+                title: '邮箱问答',
+                allowPrivateContext: true,
+                archived: false,
+                createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+                updatedAt: DateTime.fromMillisecondsSinceEpoch(5000),
+              ),
+            ],
+          ),
+        );
 
-      addTearDown(container.dispose);
+        addTearDown(container.dispose);
 
-      await pumpChatRouteAtSize(tester, container, size: const Size(1280, 800));
+        await pumpChatRouteAtSize(tester, container, size: Size(width, 800));
 
-      expect(find.text('最近会话'), findsOneWidget);
-      expect(find.byTooltip('打开最近会话'), findsNothing);
-    },
-  );
+        expect(find.text('最近会话'), findsOneWidget);
+        expect(find.byTooltip('打开最近会话'), findsNothing);
+        expect(find.widgetWithText(ListTile, '邮箱问答'), findsOneWidget);
+      },
+    );
+  }
 
   testWidgets('App shell shows 问答 navigation destination on AI chat route', (
     tester,
