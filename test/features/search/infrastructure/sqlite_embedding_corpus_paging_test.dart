@@ -146,14 +146,10 @@ Future<void> _insertCorruptPrefixAndValidTail(
   int indexConfigEpoch = 1,
 }) {
   return database.transaction<void>((executor) async {
-    await executor.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-      'id': 'model-1',
-      'type': 'embedding',
-      'provider': 'local',
-      'name': 'Embedding',
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await executor.insert(
+      DatabaseSchema.modelRegistry,
+      trustedModelRegistryRow(id: 'model-1'),
+    );
     for (var index = 0; index <= 100; index++) {
       final suffix = index.toString().padLeft(3, '0');
       final sourceId = 'secret-$suffix';
@@ -207,14 +203,10 @@ Future<void> _insertValidPage(
   required int indexConfigEpoch,
 }) {
   return database.transaction<void>((executor) async {
-    await executor.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-      'id': 'model-1',
-      'type': 'embedding',
-      'provider': 'local',
-      'name': 'Embedding',
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await executor.insert(
+      DatabaseSchema.modelRegistry,
+      trustedModelRegistryRow(id: 'model-1'),
+    );
     for (var index = 0; index < 100; index++) {
       final suffix = index.toString().padLeft(3, '0');
       final sourceId = 'secret-$suffix';

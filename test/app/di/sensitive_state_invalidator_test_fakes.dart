@@ -206,6 +206,9 @@ class _RegistryRepository implements ModelRegistryRepository {
   }
 
   @override
+  Future<void> save(ModelRegistryEntry entry) async {}
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -242,6 +245,27 @@ class _AlwaysPresentModelDownloadService extends ModelDownloadService {
 
   @override
   Future<bool> fileExists(String? path) async => true;
+
+  @override
+  Future<int?> fileLength(String? path) async {
+    return path?.endsWith('embedding.onnx') == true ? 1024 : 2048;
+  }
+
+  @override
+  Future<String> verifyChecksum({
+    required String filePath,
+    required String expectedChecksum,
+  }) async {
+    return expectedChecksum;
+  }
+}
+
+class _NoopEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
+  @override
+  Future<void> releaseModel({required String modelId}) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _ReadyEmbeddingEngine implements EmbeddingEngine {

@@ -19,9 +19,9 @@ import 'package:note_secret_search/features/ai_models/infrastructure/model_downl
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
-part 'model_download_structured_failure_recovery_test.dart';
-part 'model_download_structured_repair_test.dart';
-part 'model_download_structured_resume_failover_test.dart';
+part 'model_download_structured_failure_recovery_cases.dart';
+part 'model_download_structured_repair_cases.dart';
+part 'model_download_structured_resume_failover_cases.dart';
 part 'model_download_structured_test_doubles.dart';
 
 void main() {

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
@@ -16,6 +17,11 @@ import 'package:note_secret_search/features/search/application/search_index_writ
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
+
+const _testCatalogDigest =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _testArtifactDigest =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 const _embeddingModel = ModelRegistryEntry(
   id: 'embed-1',
@@ -28,10 +34,32 @@ const _embeddingModel = ModelRegistryEntry(
   minRamMb: 512,
   recommendedTier: 'mvp',
   localPath: '/data/models/minilm.onnx',
-  checksum: 'abc',
+  checksum: _testArtifactDigest,
   enabled: true,
   installedAt: null,
   filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/minilm.onnx',
+      relativePath: 'runtime/model.onnx',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 10485760,
+      verifiedSizeBytes: 10485760,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
 );
 
 const _llmModel = ModelRegistryEntry(
@@ -45,10 +73,32 @@ const _llmModel = ModelRegistryEntry(
   minRamMb: 2048,
   recommendedTier: 'local',
   localPath: '/data/models/phi.gguf',
-  checksum: 'abc',
+  checksum: _testArtifactDigest,
   enabled: true,
   installedAt: null,
   filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/phi.gguf',
+      relativePath: 'runtime/model.gguf',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 104857600,
+      verifiedSizeBytes: 104857600,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
 );
 
 void main() {

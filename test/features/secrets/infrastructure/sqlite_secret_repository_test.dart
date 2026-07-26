@@ -420,14 +420,14 @@ Future<void> _insertEmbedding(
   String sourceType,
 ) {
   return database.run((db) async {
-    await db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-      'id': 'model-1',
-      'type': 'embedding',
-      'provider': 'local',
-      'name': 'Test model',
-      'integrity_status': 'valid',
-      'enabled': 0,
-    });
+    await db.insert(
+      DatabaseSchema.modelRegistry,
+      trustedModelRegistryRow(
+        id: 'model-1',
+        name: 'Test model',
+        enabled: false,
+      ),
+    );
     await db.insert(DatabaseSchema.embeddingIndexSets, <String, Object?>{
       'id': 'embedding-set-1',
       'source_type': sourceType,

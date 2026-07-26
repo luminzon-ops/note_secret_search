@@ -188,17 +188,18 @@ Future<void> _insertOwners(TestAppDatabase database) {
     ]) {
       await db.insert(DatabaseSchema.secretItems, row);
     }
-    await db.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-      'id': _model.id,
-      'type': _model.type,
-      'provider': _model.provider,
-      'name': _model.name,
-      'version': _model.version,
-      'quantization': _model.quantization,
-      'checksum': _model.checksum,
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await db.insert(
+      DatabaseSchema.modelRegistry,
+      trustedModelRegistryRow(
+        id: _model.id,
+        type: _model.type,
+        provider: _model.provider,
+        name: _model.name,
+        version: _model.version,
+        quantization: _model.quantization,
+        checksum: _model.checksum,
+      ),
+    );
   });
 }
 

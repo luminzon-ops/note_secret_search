@@ -135,17 +135,18 @@ void main() {
 
 Future<void> _seed(TestAppDatabase database) {
   return database.transaction<void>((executor) async {
-    await executor.insert(DatabaseSchema.modelRegistry, <String, Object?>{
-      'id': _model.id,
-      'type': _model.type,
-      'provider': _model.provider,
-      'name': _model.name,
-      'version': _model.version,
-      'quantization': _model.quantization,
-      'checksum': _model.checksum,
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await executor.insert(
+      DatabaseSchema.modelRegistry,
+      trustedModelRegistryRow(
+        id: _model.id,
+        type: _model.type,
+        provider: _model.provider,
+        name: _model.name,
+        version: _model.version,
+        quantization: _model.quantization,
+        checksum: _model.checksum,
+      ),
+    );
     final batch = executor.batch();
     for (var index = 0; index < 1001; index++) {
       final suffix = index.toString().padLeft(4, '0');

@@ -211,14 +211,10 @@ void main() {
     addTearDown(database.close);
     await _insertOwners(database);
     await database.run(
-      (db) => db.insert('model_registry', <String, Object?>{
-        'id': 'model-2',
-        'type': 'embedding',
-        'provider': 'local',
-        'name': 'Embedding 2',
-        'integrity_status': 'valid',
-        'enabled': 1,
-      }),
+      (db) => db.insert(
+        'model_registry',
+        trustedModelRegistryRow(id: 'model-2', name: 'Embedding 2'),
+      ),
     );
     final repository = SqliteEmbeddingRepository(database: database);
     await repository.replaceIndexSet(
@@ -485,14 +481,10 @@ Future<void> _insertOwners(
       'created_at': 1,
       'updated_at': 1,
     });
-    await db.insert('model_registry', <String, Object?>{
-      'id': 'model-1',
-      'type': 'embedding',
-      'provider': 'local',
-      'name': 'Embedding',
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await db.insert(
+      'model_registry',
+      trustedModelRegistryRow(id: 'model-1'),
+    );
   });
 }
 

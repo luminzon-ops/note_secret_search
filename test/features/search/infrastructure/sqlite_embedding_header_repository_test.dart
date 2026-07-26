@@ -103,14 +103,10 @@ Future<void> _insertOwners(TestAppDatabase database) {
       'created_at': 1,
       'updated_at': 1,
     });
-    await db.insert('model_registry', <String, Object?>{
-      'id': 'model-1',
-      'type': 'embedding',
-      'provider': 'local',
-      'name': 'Embedding',
-      'integrity_status': 'valid',
-      'enabled': 1,
-    });
+    await db.insert(
+      'model_registry',
+      trustedModelRegistryRow(id: 'model-1'),
+    );
   });
 }
 

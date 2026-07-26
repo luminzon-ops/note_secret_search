@@ -169,19 +169,141 @@ const _bgeEmbeddingCatalogEntry = ModelCatalogEntry(
   ],
 );
 
+const _testCatalogDigest =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _testArtifactDigest =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+const _installedEmbeddingRegistryEntry = ModelRegistryEntry(
+  id: 'embed-1',
+  type: 'embedding',
+  provider: 'builtin',
+  name: 'MiniLM Embedding',
+  version: '1.0.2',
+  sizeBytes: 10485760,
+  quantization: 'Q8',
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  localPath: '/data/models/minilm.onnx',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/minilm.onnx',
+      relativePath: 'runtime/model.onnx',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 10485760,
+      verifiedSizeBytes: 10485760,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
+
+const _installedPhiRegistryEntry = ModelRegistryEntry(
+  id: 'llm-1',
+  type: 'llm',
+  provider: 'builtin',
+  name: 'Phi Local',
+  version: '1.0.0',
+  sizeBytes: 104857600,
+  quantization: 'Q4_K_M',
+  minRamMb: 2048,
+  recommendedTier: 'local',
+  localPath: '/data/models/phi.gguf',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/phi.gguf',
+      relativePath: 'runtime/model.gguf',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 104857600,
+      verifiedSizeBytes: 104857600,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
+
+const _installedQwenRegistryEntry = ModelRegistryEntry(
+  id: 'llm-1',
+  type: 'llm',
+  provider: 'builtin_catalog',
+  name: 'Qwen Local',
+  version: '1.0.0',
+  sizeBytes: 104857600,
+  quantization: 'Q4_K_M',
+  minRamMb: 2048,
+  recommendedTier: 'local',
+  localPath: '/data/models/qwen.gguf',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/qwen.gguf',
+      relativePath: 'runtime/model.gguf',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 104857600,
+      verifiedSizeBytes: 104857600,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
+
 Future<void> scrollUntilFound(
   WidgetTester tester,
   Finder finder, {
   double delta = 320,
   int maxScrolls = 30,
 }) async {
-  expect(finder, findsOneWidget);
   await tester.scrollUntilVisible(
     finder,
     delta,
     maxScrolls: maxScrolls,
   );
   await tester.pumpAndSettle();
+  expect(finder, findsOneWidget);
 }
 
 void main() {
@@ -450,24 +572,7 @@ void main() {
             (ref) async => const <ModelDownloadTask>[],
           ),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'embed-1',
-                type: 'embedding',
-                provider: 'builtin',
-                name: 'MiniLM Embedding',
-                version: '1.0.2',
-                sizeBytes: 10485760,
-                quantization: 'Q8',
-                minRamMb: 512,
-                recommendedTier: 'mvp',
-                localPath: '/data/models/minilm.onnx',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedEmbeddingRegistryEntry],
           ),
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
@@ -575,24 +680,7 @@ void main() {
           ),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'llm-1',
-                type: 'llm',
-                provider: 'builtin_catalog',
-                name: 'Qwen Local',
-                version: '1.0.0',
-                sizeBytes: 104857600,
-                quantization: 'Q4_K_M',
-                minRamMb: 2048,
-                recommendedTier: 'local',
-                localPath: '/data/models/qwen.gguf',
-                checksum: 'sha256:qwen',
-                enabled: false,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedQwenRegistryEntry],
           ),
           llmRuntimeStatesProvider.overrideWith(
             (ref) async => {
@@ -808,24 +896,7 @@ void main() {
           ),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'embed-1',
-                type: 'embedding',
-                provider: 'builtin',
-                name: 'MiniLM Embedding',
-                version: '1.0.2',
-                sizeBytes: 10485760,
-                quantization: 'Q8',
-                minRamMb: 512,
-                recommendedTier: 'mvp',
-                localPath: '/data/models/minilm.onnx',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedEmbeddingRegistryEntry],
           ),
           embeddingRuntimeStatesProvider.overrideWith(
             (ref) async => {
@@ -879,24 +950,7 @@ void main() {
             (ref) async => const <ModelDownloadTask>[],
           ),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'embed-1',
-                type: 'embedding',
-                provider: 'builtin',
-                name: 'MiniLM Embedding',
-                version: '1.0.2',
-                sizeBytes: 10485760,
-                quantization: 'Q8',
-                minRamMb: 512,
-                recommendedTier: 'mvp',
-                localPath: '/data/models/minilm.onnx',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedEmbeddingRegistryEntry],
           ),
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
@@ -953,24 +1007,7 @@ void main() {
             (ref) async => const <ModelDownloadTask>[],
           ),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'embed-1',
-                type: 'embedding',
-                provider: 'builtin',
-                name: 'MiniLM Embedding',
-                version: '1.0.2',
-                sizeBytes: 10485760,
-                quantization: 'Q8',
-                minRamMb: 512,
-                recommendedTier: 'mvp',
-                localPath: '/data/models/minilm.onnx',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedEmbeddingRegistryEntry],
           ),
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: 'embed-1'),
@@ -3026,24 +3063,7 @@ void main() {
           ),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'llm-1',
-                type: 'llm',
-                provider: 'builtin',
-                name: 'Phi Local',
-                version: '1.0.0',
-                sizeBytes: 104857600,
-                quantization: 'Q4_K_M',
-                minRamMb: 2048,
-                recommendedTier: 'local',
-                localPath: '/data/models/phi.gguf',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedPhiRegistryEntry],
           ),
           llmRuntimeStatesProvider.overrideWith(
             (ref) async => {
@@ -3099,24 +3119,7 @@ void main() {
           ),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith(
-            (ref) async => const [
-              ModelRegistryEntry(
-                id: 'llm-1',
-                type: 'llm',
-                provider: 'builtin',
-                name: 'Phi Local',
-                version: '1.0.0',
-                sizeBytes: 104857600,
-                quantization: 'Q4_K_M',
-                minRamMb: 2048,
-                recommendedTier: 'local',
-                localPath: '/data/models/phi.gguf',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
-            ],
+            (ref) async => const [_installedPhiRegistryEntry],
           ),
           llmRuntimeStatesProvider.overrideWith(
             (ref) async => {

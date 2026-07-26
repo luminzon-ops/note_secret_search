@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
@@ -11,6 +12,48 @@ import 'package:note_secret_search/features/search/domain/search_index_status.da
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/presentation/search_settings_page.dart';
+
+const _installedSearchSettingsModelDigest =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _installedSearchSettingsModel = ModelRegistryEntry(
+  id: 'embed-1',
+  type: 'embedding',
+  provider: 'builtin',
+  name: 'MiniLM Embedding',
+  version: '1.0.2',
+  sizeBytes: 10485760,
+  quantization: 'Q8',
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  localPath: '/data/models/minilm.onnx',
+  checksum: _installedSearchSettingsModelDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest:
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/minilm.onnx',
+      relativePath: 'runtime/model.onnx',
+      expectedChecksum: _installedSearchSettingsModelDigest,
+      verifiedChecksum: _installedSearchSettingsModelDigest,
+      expectedSizeBytes: 10485760,
+      verifiedSizeBytes: 10485760,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
 
 class _RecordingSearchIndexController extends SearchIndexController {
   _RecordingSearchIndexController({required super.ref, this.error});
@@ -1803,22 +1846,7 @@ void main() {
             (ref) async => const SemanticSearchReadiness(
               ready: true,
               reason: '本地语义检索可用',
-              activeEmbeddingModel: ModelRegistryEntry(
-                id: 'embed-1',
-                type: 'embedding',
-                provider: 'builtin',
-                name: 'MiniLM Embedding',
-                version: '1.0.2',
-                sizeBytes: 10485760,
-                quantization: 'Q8',
-                minRamMb: 512,
-                recommendedTier: 'mvp',
-                localPath: '/data/models/minilm.onnx',
-                checksum: 'abc',
-                enabled: true,
-                installedAt: null,
-                filePresent: true,
-              ),
+              activeEmbeddingModel: _installedSearchSettingsModel,
             ),
           ),
           searchIndexStatusProvider.overrideWith(

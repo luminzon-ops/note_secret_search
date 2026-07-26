@@ -4,6 +4,37 @@ import 'package:note_secret_search/core/storage/database/database_schema_manager
 import 'package:sqflite_common/sqflite_logger.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+const testModelCatalogDigest =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+Map<String, Object?> trustedModelRegistryRow({
+  required String id,
+  String type = 'embedding',
+  String provider = 'local',
+  String name = 'Embedding',
+  String? version,
+  String? quantization,
+  String? checksum,
+  bool enabled = true,
+}) {
+  return <String, Object?>{
+    'id': id,
+    'type': type,
+    'provider': provider,
+    'name': name,
+    if (version != null) 'version': version,
+    if (quantization != null) 'quantization': quantization,
+    if (checksum != null) 'checksum': checksum,
+    'integrity_status': 'valid',
+    'enabled': enabled ? 1 : 0,
+    'active_release_id': 'test-release',
+    'catalog_version': 1,
+    'catalog_digest': testModelCatalogDigest,
+    'install_generation': 1,
+    'revision_root': 'revisions/1',
+  };
+}
+
 Future<TestAppDatabase> openTestAppDatabase({
   void Function(SqfliteLoggerEvent event)? onDatabaseEvent,
 }) async {
