@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _frameStep = Duration(milliseconds: 16);
-
 Future<void> pumpRouteAtViewport(
   WidgetTester tester, {
   required Widget route,
@@ -43,7 +41,6 @@ Future<void> pumpUntilFound(
   Finder target, {
   bool hitTestable = false,
   int maxPumps = 60,
-  Duration step = _frameStep,
 }) async {
   _validateBound(maxPumps, 'maxPumps');
 
@@ -53,7 +50,7 @@ Future<void> pumpUntilFound(
       return;
     }
     if (pumpCount < maxPumps) {
-      await tester.pump(step);
+      await _pumpOneFrame(tester);
     }
   }
 
@@ -66,7 +63,6 @@ Future<AsyncValue<T>> pumpUntilProviderSettled<T>(
   ProviderListenable<AsyncValue<T>> provider, {
   bool Function(AsyncValue<T> value)? where,
   int maxPumps = 60,
-  Duration step = _frameStep,
 }) async {
   _validateBound(maxPumps, 'maxPumps');
 
@@ -83,7 +79,7 @@ Future<AsyncValue<T>> pumpUntilProviderSettled<T>(
         return value;
       }
       if (pumpCount < maxPumps) {
-        await tester.pump(step);
+        await _pumpOneFrame(tester);
       }
     }
 
@@ -286,6 +282,8 @@ Offset _dragOffset(
     AxisDirection.left => Offset(signedDistance, 0),
   };
 }
+
+Future<void> _pumpOneFrame(WidgetTester tester) => tester.pump();
 
 void _validateBound(int value, String name) {
   if (value < 0) {

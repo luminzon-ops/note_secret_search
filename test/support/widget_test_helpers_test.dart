@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,7 +18,7 @@ void main() {
       tester,
       viewport: const Size(393, 852),
       devicePixelRatio: 2,
-      textScaler: TextScaler.linear(1.3),
+      textScaler: const TextScaler.linear(1.3),
       route: MaterialApp(
         home: Builder(
           builder: (context) {
@@ -37,20 +39,25 @@ void main() {
   testWidgets('pumpUntilFound waits for a finder predicate with a hard bound', (
     tester,
   ) async {
+    final ready = ValueNotifier<bool>(false);
+    addTearDown(ready.dispose);
+
     await pumpRouteAtViewport(
       tester,
       viewport: const Size(360, 640),
-      route: MaterialApp(
-        home: FutureBuilder<void>(
-          future: Future<void>.delayed(const Duration(milliseconds: 32)),
-          builder: (context, snapshot) {
-            return snapshot.connectionState == ConnectionState.done
-                ? const Text('ready', textDirection: TextDirection.ltr)
-                : const SizedBox.shrink();
-          },
-        ),
+      route: ValueListenableBuilder<bool>(
+        valueListenable: ready,
+        builder: (context, isReady, child) {
+          return Directionality(
+            textDirection: TextDirection.ltr,
+            child: isReady ? const Text('ready') : const SizedBox.shrink(),
+          );
+        },
       ),
     );
+    Future<void>.microtask(() {
+      ready.value = true;
+    });
 
     await pumpUntilFound(tester, find.text('ready'), maxPumps: 3);
 
@@ -61,6 +68,34 @@ void main() {
       failure = error;
     }
     expect(failure, isA<TestFailure>());
+  });
+
+  testWidgets('pumpUntilFound can require a hit-testable match', (
+    tester,
+  ) async {
+    final visible = ValueNotifier<bool>(false);
+    addTearDown(visible.dispose);
+
+    await pumpRouteAtViewport(
+      tester,
+      viewport: const Size(360, 640),
+      route: ValueListenableBuilder<bool>(
+        valueListenable: visible,
+        builder: (context, isVisible, child) {
+          return Directionality(
+            textDirection: TextDirection.ltr,
+            child: Offstage(offstage: !isVisible, child: const Text('target')),
+          );
+        },
+      ),
+    );
+    final target = find.text('target', skipOffstage: false);
+    expect(target, findsOneWidget);
+    Future<void>.microtask(() {
+      visible.value = true;
+    });
+
+    await pumpUntilFound(tester, target, hitTestable: true, maxPumps: 3);
   });
 
   testWidgets(
@@ -105,9 +140,9 @@ void main() {
   testWidgets('pumpUntilProviderSettled waits for a terminal AsyncValue', (
     tester,
   ) async {
+    final completer = Completer<int>();
     final provider = FutureProvider<int>((ref) async {
-      await Future<void>.delayed(const Duration(milliseconds: 32));
-      return 7;
+      return completer.future;
     });
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -118,6 +153,10 @@ void main() {
       route: const SizedBox.shrink(),
     );
 
+    Future<void>.microtask(() {
+      completer.complete(7);
+    });
+
     final settled = await pumpUntilProviderSettled(
       tester,
       container,
@@ -126,5 +165,35 @@ void main() {
     );
 
     expect(settled, const AsyncData<int>(7));
+  });
+
+  testWidgets('pumpUntilProviderSettled honors custom settled predicates', (
+    tester,
+  ) async {
+    final completer = Completer<int>();
+    final provider = FutureProvider<int>((ref) async {
+      return completer.future;
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await pumpRouteAtViewport(
+      tester,
+      viewport: const Size(360, 640),
+      route: const SizedBox.shrink(),
+    );
+    Future<void>.microtask(() {
+      completer.complete(7);
+    });
+
+    final settled = await pumpUntilProviderSettled(
+      tester,
+      container,
+      provider,
+      where: (value) => value.hasValue && value.requireValue.isOdd,
+      maxPumps: 3,
+    );
+
+    expect(settled.requireValue, 7);
   });
 }
