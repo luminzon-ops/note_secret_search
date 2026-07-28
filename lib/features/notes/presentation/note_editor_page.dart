@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/notes/application/note_form_mapper.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_draft.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
-import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
-import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 class NoteEditorPage extends ConsumerStatefulWidget {
   const NoteEditorPage({this.noteId, super.key});
@@ -125,11 +121,6 @@ class _NoteEditorPageState extends ConsumerState<NoteEditorPage> {
       return;
     }
 
-    final vault = await ref.read(defaultVaultProvider.future);
-    if (vault == null || !mounted) {
-      return;
-    }
-
     final draft = NoteDraft(
       title: _titleController.text,
       content: _contentController.text,
@@ -143,33 +134,10 @@ class _NoteEditorPageState extends ConsumerState<NoteEditorPage> {
       favorite: _favorite,
     );
 
-    final item = existing == null
-        ? NoteFormMapper.create(
-            vaultId: vault.id,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          )
-        : NoteFormMapper.update(
-            previous: existing,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          );
-
-    await ref.read(noteRepositoryProvider).save(item);
-    ref.invalidate(noteListProvider);
-    ref.invalidate(noteDetailProvider(item.id));
-    ref.invalidate(searchIndexStatusProvider);
-    ref.invalidate(semanticSearchResultsProvider);
-    ref.invalidate(unifiedSearchResultsProvider);
-    final activeModel = await ref.read(activeEmbeddingModelProvider.future);
-    final indexSettings = await ref.read(searchIndexSettingsProvider.future);
-    if (activeModel != null && indexSettings.autoIndexEnabled) {
-      await ref.read(searchIndexControllerProvider).indexPending();
-      ref.invalidate(searchIndexStatusProvider);
-      ref.invalidate(semanticSearchResultsProvider);
-      ref.invalidate(unifiedSearchResultsProvider);
-    }
-    if (mounted) {
+    final item = await ref
+        .read(saveNoteUseCaseProvider)
+        .execute(existing: existing, draft: draft);
+    if (item != null && mounted) {
       context.pop();
     }
   }

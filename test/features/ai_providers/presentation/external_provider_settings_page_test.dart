@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
@@ -11,6 +12,7 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_session_reposito
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_providers/presentation/external_provider_settings_page.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
@@ -26,6 +28,9 @@ void main() {
                 LockSessionController()..markUnlocked(UnlockMethod.biometric),
           ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+          externalProviderConsentStoreProvider.overrideWithValue(
+            _MemoryExternalProviderConsentStore(),
+          ),
           localLlmReadinessProvider.overrideWith(
             (ref) async => const LocalLlmReadiness(
               ready: false,
@@ -86,6 +91,9 @@ void main() {
         ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderConsentStoreProvider.overrideWithValue(
+              _MemoryExternalProviderConsentStore(),
+            ),
             externalProviderRepositoryProvider.overrideWithValue(repository),
             externalProviderClientRouterProvider.overrideWithValue(client),
           ],
@@ -175,6 +183,9 @@ void main() {
         ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderConsentStoreProvider.overrideWithValue(
+              _MemoryExternalProviderConsentStore(),
+            ),
             externalProviderRepositoryProvider.overrideWithValue(repository),
             externalProviderClientRouterProvider.overrideWithValue(
               _RecordingExternalProviderClient(),
@@ -219,6 +230,9 @@ void main() {
         ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderConsentStoreProvider.overrideWithValue(
+              _MemoryExternalProviderConsentStore(),
+            ),
             externalProviderRepositoryProvider.overrideWithValue(repository),
             externalProviderClientRouterProvider.overrideWithValue(
               _RecordingExternalProviderClient(),
@@ -274,6 +288,9 @@ void main() {
         ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderConsentStoreProvider.overrideWithValue(
+              _MemoryExternalProviderConsentStore(),
+            ),
             externalProviderRepositoryProvider.overrideWithValue(repository),
             externalProviderClientRouterProvider.overrideWithValue(
               _RecordingExternalProviderClient(),
@@ -348,6 +365,9 @@ void main() {
         ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+            externalProviderConsentStoreProvider.overrideWithValue(
+              _MemoryExternalProviderConsentStore(),
+            ),
             externalProviderRepositoryProvider.overrideWithValue(repository),
             externalProviderClientRouterProvider.overrideWithValue(
               _RecordingExternalProviderClient(),
@@ -374,6 +394,24 @@ void main() {
       );
     },
   );
+}
+
+class _MemoryExternalProviderConsentStore
+    implements ExternalProviderConsentStore {
+  final Map<String, bool> _values = <String, bool>{};
+
+  @override
+  Future<bool> read(String key) async => _values[key] ?? false;
+
+  @override
+  Future<void> remove(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> write(String key, bool value) async {
+    _values[key] = value;
+  }
 }
 
 class _MemoryExternalProviderRepository implements ExternalProviderRepository {

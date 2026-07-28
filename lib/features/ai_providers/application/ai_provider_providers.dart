@@ -1,45 +1,40 @@
-import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_providers/application/external_chat_gateway.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
-import 'package:note_secret_search/features/ai_providers/infrastructure/openai_compatible_provider_client.dart';
-import 'package:note_secret_search/features/ai_providers/infrastructure/ollama_provider_client.dart';
-import 'package:note_secret_search/features/ai_providers/infrastructure/sqlite_external_provider_repository.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
-final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>(
-  (ref) {
-    return SqliteExternalProviderRepository(
-      database: ref.watch(appDatabaseProvider),
-      cryptoService: ref.watch(cryptoServiceProvider),
-    );
-  },
-);
+final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>((
+  ref,
+) {
+  throw StateError(
+    'externalProviderRepositoryProvider must be overridden by app composition',
+  );
+});
 
 final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
-  final dio = Dio();
-  final configAsync = ref.watch(enabledExternalProviderProvider);
-  final config = configAsync.valueOrNull;
-  if (config != null && config.providerType == ExternalProviderType.ollama) {
-    return OllamaProviderClient(dio: dio);
-  }
-  return OpenAiCompatibleProviderClient(dio: dio);
+  throw StateError(
+    'externalProviderClientProvider must be overridden by app composition',
+  );
 });
 
 final externalProviderClientRouterProvider = Provider<ExternalProviderClient>((
   ref,
 ) {
-  return _ExternalProviderClientRouter(
-    openAiCompatible: OpenAiCompatibleProviderClient(dio: Dio()),
-    ollama: OllamaProviderClient(dio: Dio()),
-  );
+  return ref.watch(externalProviderClientProvider);
 });
+
+final externalProviderConsentStoreProvider =
+    Provider<ExternalProviderConsentStore>((ref) {
+      throw StateError(
+        'externalProviderConsentStoreProvider must be overridden by app composition',
+      );
+    });
 
 final enabledExternalProviderProvider = FutureProvider<ExternalProviderConfig?>(
   (ref) {
@@ -98,7 +93,9 @@ final externalProviderStatusProvider = FutureProvider<ExternalProviderStatus>((
 
 final externalPrivacyConfirmationControllerProvider =
     Provider<ExternalPrivacyConfirmationController>((ref) {
-      return ExternalPrivacyConfirmationController(ref: ref);
+      return ExternalPrivacyConfirmationController(
+        store: ref.watch(externalProviderConsentStoreProvider),
+      );
     });
 
 final externalProviderSettingsControllerProvider =
@@ -123,16 +120,15 @@ final externalChatGatewayProvider = Provider<ExternalChatGateway>((ref) {
       return configuration.allowExternalProviderAccess;
     },
   );
-  ref.listen<AsyncValue<SearchConfiguration>>(
-    searchConfigurationProvider,
-    (_, next) {
-      final configuration = next.valueOrNull;
-      if (configuration != null &&
-          !configuration.allowExternalProviderAccess) {
-        gateway.cancelAll();
-      }
-    },
-  );
+  ref.listen<AsyncValue<SearchConfiguration>>(searchConfigurationProvider, (
+    _,
+    next,
+  ) {
+    final configuration = next.valueOrNull;
+    if (configuration != null && !configuration.allowExternalProviderAccess) {
+      gateway.cancelAll();
+    }
+  });
   ref.onDispose(gateway.cancelAll);
   return gateway;
 });
@@ -150,30 +146,29 @@ class ExternalProviderStatus {
 }
 
 class ExternalPrivacyConfirmationController {
-  ExternalPrivacyConfirmationController({required Ref ref}) : _ref = ref;
+  ExternalPrivacyConfirmationController({
+    required ExternalProviderConsentStore store,
+  }) : _store = store;
 
-  final Ref _ref;
+  final ExternalProviderConsentStore _store;
 
   Future<bool> hasAcknowledged(
     ExternalProviderConfig config, {
     required bool includesPrivateContext,
   }) async {
-    final preferences = await _ref.read(sharedPreferencesProvider.future);
-    return preferences.getBool(
-          _providerAcknowledgementKey(
-            config,
-            includesPrivateContext: includesPrivateContext,
-          ),
-        ) ??
-        false;
+    return _store.read(
+      _providerAcknowledgementKey(
+        config,
+        includesPrivateContext: includesPrivateContext,
+      ),
+    );
   }
 
   Future<void> markAcknowledged(
     ExternalProviderConfig config, {
     required bool includesPrivateContext,
   }) async {
-    final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.setBool(
+    await _store.write(
       _providerAcknowledgementKey(
         config,
         includesPrivateContext: includesPrivateContext,
@@ -188,8 +183,7 @@ class ExternalPrivacyConfirmationController {
       config,
       scope: ExternalProviderConsentScope.privateContext,
     );
-    final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.remove(
+    await _store.remove(
       'ai.external_privacy_ack.v2.'
       '${externalProviderConsentFingerprint(config)}',
     );
@@ -199,8 +193,7 @@ class ExternalPrivacyConfirmationController {
     ExternalProviderConfig config, {
     required ExternalProviderConsentScope scope,
   }) async {
-    final preferences = await _ref.read(sharedPreferencesProvider.future);
-    await preferences.remove(_providerAcknowledgementKey(config, scope: scope));
+    await _store.remove(_providerAcknowledgementKey(config, scope: scope));
   }
 
   String _providerAcknowledgementKey(
@@ -317,83 +310,5 @@ class ExternalProviderSettingsController {
     await _ref
         .read(externalProviderClientRouterProvider)
         .testConnection(config);
-  }
-}
-
-class _ExternalProviderClientRouter
-    implements ExternalProviderClient, CancellableExternalProviderClient {
-  _ExternalProviderClientRouter({
-    required ExternalProviderClient openAiCompatible,
-    required ExternalProviderClient ollama,
-  }) : _openAiCompatible = openAiCompatible,
-       _ollama = ollama;
-
-  final ExternalProviderClient _openAiCompatible;
-  final ExternalProviderClient _ollama;
-  final Map<String, ExternalProviderClient> _requestClients =
-      <String, ExternalProviderClient>{};
-
-  @override
-  Future<String> generateChatCompletion({
-    required ExternalProviderConfig config,
-    required String prompt,
-    required bool usedPrivateContext,
-  }) {
-    return _for(config).generateChatCompletion(
-      config: config,
-      prompt: prompt,
-      usedPrivateContext: usedPrivateContext,
-    );
-  }
-
-  @override
-  Future<String> generateCancellableChatCompletion({
-    required String requestId,
-    required ExternalProviderConfig config,
-    required String prompt,
-    required bool usedPrivateContext,
-  }) async {
-    final client = _for(config);
-    _requestClients[requestId] = client;
-    try {
-      if (client is CancellableExternalProviderClient) {
-        return (client as CancellableExternalProviderClient)
-            .generateCancellableChatCompletion(
-              requestId: requestId,
-              config: config,
-              prompt: prompt,
-              usedPrivateContext: usedPrivateContext,
-            );
-      }
-      return client.generateChatCompletion(
-        config: config,
-        prompt: prompt,
-        usedPrivateContext: usedPrivateContext,
-      );
-    } finally {
-      if (identical(_requestClients[requestId], client)) {
-        _requestClients.remove(requestId);
-      }
-    }
-  }
-
-  @override
-  void cancelRequest(String requestId) {
-    final client = _requestClients[requestId];
-    if (client is CancellableExternalProviderClient) {
-      (client as CancellableExternalProviderClient).cancelRequest(requestId);
-    }
-  }
-
-  @override
-  Future<void> testConnection(ExternalProviderConfig config) {
-    return _for(config).testConnection(config);
-  }
-
-  ExternalProviderClient _for(ExternalProviderConfig config) {
-    return switch (config.providerType) {
-      ExternalProviderType.openAiCompatible => _openAiCompatible,
-      ExternalProviderType.ollama => _ollama,
-    };
   }
 }

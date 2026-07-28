@@ -1,4 +1,78 @@
-part of 'model_selection_providers.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
+import 'package:note_secret_search/features/ai_models/domain/active_model_selection_store.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
+import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+
+abstract interface class ActiveEmbeddingSelectionEffects {
+  Future<void> prepareForPersistence({
+    required String? previousModelId,
+    required String? nextModelId,
+  });
+}
+
+final activeModelSelectionStoreProvider =
+    FutureProvider<ActiveModelSelectionStore>((ref) {
+      throw StateError(
+        'activeModelSelectionStoreProvider must be overridden by '
+        'app composition',
+      );
+    });
+
+final activeEmbeddingSelectionEffectsProvider =
+    Provider<ActiveEmbeddingSelectionEffects>((ref) {
+      throw StateError(
+        'activeEmbeddingSelectionEffectsProvider must be overridden by '
+        'app composition',
+      );
+    });
+
+final modelSelectionRegistryEntriesProvider =
+    FutureProvider<List<ModelRegistryEntry>>((ref) {
+      throw StateError(
+        'modelSelectionRegistryEntriesProvider must be overridden by '
+        'app composition',
+      );
+    });
+
+final modelSelectionEmbeddingRuntimeStatesProvider =
+    FutureProvider<Map<String, EmbeddingEngineState>>((ref) {
+      throw StateError(
+        'modelSelectionEmbeddingRuntimeStatesProvider must be overridden by '
+        'app composition',
+      );
+    });
+
+final activeModelSelectionControllerProvider =
+    Provider<ActiveModelSelectionController>((ref) {
+      return ActiveModelSelectionController(ref: ref);
+    });
+
+class ActiveModelSelectionController {
+  ActiveModelSelectionController({required Ref ref}) : _ref = ref;
+
+  final Ref _ref;
+
+  Future<void> setActiveEmbeddingModel(String? modelId) async {
+    final normalizedModelId = modelId == null || modelId.isEmpty
+        ? null
+        : modelId;
+    final store = await _ref.read(activeModelSelectionStoreProvider.future);
+    final previousModelId = await store.loadActiveEmbeddingModelId();
+    await _ref
+        .read(activeEmbeddingSelectionEffectsProvider)
+        .prepareForPersistence(
+          previousModelId: previousModelId,
+          nextModelId: normalizedModelId,
+        );
+    await store.saveActiveEmbeddingModelId(normalizedModelId);
+
+    _ref.invalidate(activeModelSelectionProvider);
+    _ref.invalidate(activeEmbeddingRuntimeSelectionProvider);
+    _ref.invalidate(activeEmbeddingModelProvider);
+  }
+}
 
 final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((
   ref,
@@ -7,22 +81,26 @@ final activeModelSelectionProvider = FutureProvider<ActiveModelSelection>((
     ref,
     lockedValue: const ActiveModelSelection(activeEmbeddingModelId: null),
     load: () async {
-      final preferences = await ref.watch(sharedPreferencesProvider.future);
-      final storedModelId = preferences.getString(_activeEmbeddingModelIdKey);
+      final store = await ref.watch(activeModelSelectionStoreProvider.future);
+      final storedModelId = await store.loadActiveEmbeddingModelId();
       if (storedModelId == null || storedModelId.isEmpty) {
         return const ActiveModelSelection(activeEmbeddingModelId: null);
       }
       Future<void> clearInvalidSelection() async {
-        ref.read(searchIndexWriteFenceProvider).invalidate();
         await ref
-            .read(embeddingRuntimeBridgeProvider)
-            .releaseModel(modelId: storedModelId);
-        await preferences.remove(_activeEmbeddingModelIdKey);
+            .read(activeEmbeddingSelectionEffectsProvider)
+            .prepareForPersistence(
+              previousModelId: storedModelId,
+              nextModelId: null,
+            );
+        await store.saveActiveEmbeddingModelId(null);
       }
 
-      final entries = await ref.watch(modelRegistryEntriesProvider.future);
+      final entries = await ref.watch(
+        modelSelectionRegistryEntriesProvider.future,
+      );
       final runtimeStates = await ref.watch(
-        embeddingRuntimeStatesProvider.future,
+        modelSelectionEmbeddingRuntimeStatesProvider.future,
       );
       final selectedEntry = entries
           .where(
@@ -71,9 +149,11 @@ final activeEmbeddingRuntimeSelectionProvider =
           final selection = await ref.watch(
             activeModelSelectionProvider.future,
           );
-          final entries = await ref.watch(modelRegistryEntriesProvider.future);
+          final entries = await ref.watch(
+            modelSelectionRegistryEntriesProvider.future,
+          );
           final runtimeStates = await ref.watch(
-            embeddingRuntimeStatesProvider.future,
+            modelSelectionEmbeddingRuntimeStatesProvider.future,
           );
           final modelId = selection.activeEmbeddingModelId;
           if (modelId == null || modelId.isEmpty) {
@@ -95,57 +175,49 @@ final activeEmbeddingRuntimeSelectionProvider =
       );
     });
 
-final semanticSearchReadinessProvider = FutureProvider<SemanticSearchReadiness>(
-  (ref) {
-    return guardSensitiveFuture<SemanticSearchReadiness>(
-      ref,
-      lockedValue: const SemanticSearchReadiness(
-        ready: false,
-        reason: '应用已锁定。',
-      ),
-      load: () async {
-        final selectedRuntime = await ref.watch(
-          activeEmbeddingRuntimeSelectionProvider.future,
-        );
-        final scope = await ref.watch(searchScopeConfigProvider.future);
+class SelectedEmbeddingRuntime {
+  const SelectedEmbeddingRuntime({
+    required this.entry,
+    required this.runtimeState,
+  });
 
-        if (!scope.allowLocalEmbedding) {
-          return const SemanticSearchReadiness(
-            ready: false,
-            reason: '本地语义检索已在当前搜索范围中关闭。',
-          );
-        }
+  final ModelRegistryEntry entry;
+  final EmbeddingEngineState runtimeState;
+}
 
-        if (selectedRuntime == null) {
-          return const SemanticSearchReadiness(
-            ready: false,
-            reason: '尚未选择本地 embedding 模型。',
-          );
-        }
-
-        final runtimeState = selectedRuntime.runtimeState;
-        final activeEmbeddingModel = selectedRuntime.entry;
-        if (!runtimeState.ready) {
-          return SemanticSearchReadiness(
-            ready: false,
-            reason: _runtimeBlockedReason(
-              activeEmbeddingModel.name,
-              runtimeState,
-            ),
-            activeEmbeddingModel: activeEmbeddingModel,
-            runtimeStatus: runtimeState.status,
-            runtimeState: runtimeState,
-          );
-        }
-
-        return SemanticSearchReadiness(
-          ready: true,
-          reason: '本地语义检索模型已就绪：${activeEmbeddingModel.name}',
-          activeEmbeddingModel: activeEmbeddingModel,
-          runtimeStatus: runtimeState.status,
-          runtimeState: runtimeState,
-        );
-      },
+EmbeddingEngineState _fallbackRuntimeState(ModelRegistryEntry entry) {
+  if (entry.localPath == null || entry.localPath!.trim().isEmpty) {
+    return const EmbeddingEngineState(
+      ready: false,
+      reason: '尚未配置本地 embedding 模型文件。',
+      status: EmbeddingRuntimeStatus.notInstalled,
     );
-  },
-);
+  }
+
+  if (!entry.filePresent) {
+    return EmbeddingEngineState(
+      ready: false,
+      reason: '本地模型文件缺失，需要重新下载或修复。',
+      status: EmbeddingRuntimeStatus.missing,
+      modelPath: entry.localPath,
+    );
+  }
+
+  if (entry.integrityStatus == ModelIntegrityStatus.corrupted) {
+    return EmbeddingEngineState(
+      ready: false,
+      reason: '本地模型文件校验失败，需要重新下载或修复。',
+      status: EmbeddingRuntimeStatus.corrupted,
+      modelPath: entry.localPath,
+    );
+  }
+
+  return EmbeddingEngineState(
+    ready: entry.isInstalled,
+    reason: entry.isInstalled ? '本地语义检索模型已就绪。' : '本地 embedding 模型当前不可用。',
+    status: entry.isInstalled
+        ? EmbeddingRuntimeStatus.ready
+        : EmbeddingRuntimeStatus.degraded,
+    modelPath: entry.localPath,
+  );
+}

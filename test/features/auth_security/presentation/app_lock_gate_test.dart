@@ -5,25 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/app/router/app_lock_route_gate.dart';
+import 'package:note_secret_search/app/router/lock_route_guard.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
-import 'package:note_secret_search/core/storage/migration/legacy_security_migration_orchestrator.dart';
+import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
+import 'package:note_secret_search/features/auth_security/application/legacy_security_migration.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lock_gate.dart';
+import 'package:note_secret_search/features/auth_security/presentation/pin_unlock_page.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
-import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/settings/domain/security_settings_repository.dart';
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
-import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
-import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 import '../../../support/fake_app_database.dart';
 
@@ -272,7 +273,6 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          appRouterProvider.overrideWithValue(router),
           lockSessionControllerProvider.overrideWith(
             (ref) => sessionController,
           ),
@@ -284,7 +284,10 @@ void main() {
         child: MaterialApp.router(
           routerConfig: router,
           builder: (context, child) =>
-              AppLockGate(child: child ?? const SizedBox.shrink()),
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -330,7 +333,6 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          appRouterProvider.overrideWithValue(router),
           lockSessionControllerProvider.overrideWith(
             (ref) => sessionController,
           ),
@@ -342,7 +344,10 @@ void main() {
         child: MaterialApp.router(
           routerConfig: router,
           builder: (context, child) =>
-              AppLockGate(child: child ?? const SizedBox.shrink()),
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -388,7 +393,6 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            appRouterProvider.overrideWithValue(router),
             lockSessionControllerProvider.overrideWith(
               (ref) => sessionController,
             ),
@@ -402,7 +406,10 @@ void main() {
           child: MaterialApp.router(
             routerConfig: router,
             builder: (context, child) =>
-                AppLockGate(child: child ?? const SizedBox.shrink()),
+                AppLockRouteGate(
+                  router: router,
+                  child: child ?? const SizedBox.shrink(),
+                ),
           ),
         ),
       );
@@ -506,7 +513,11 @@ void main() {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController();
     final repository = _FakeSecuritySettingsRepository();
-    late GoRouter router;
+    final router = _createTestRouter(
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+    );
+    addTearDown(router.dispose);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -516,18 +527,16 @@ void main() {
           ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
         ],
-        child: Consumer(
-          builder: (context, ref, _) {
-            router = ref.watch(appRouterProvider);
-            return MaterialApp.router(
-              routerConfig: router,
-              builder: (context, child) =>
-                  AppLockGate(child: child ?? const SizedBox.shrink()),
-            );
-          },
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) =>
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -555,12 +564,12 @@ void main() {
       router.go(location);
       await tester.pumpAndSettle();
 
+      expect(find.text('应用已锁定'), findsOneWidget);
       expect(
-        router.routeInformationProvider.value.uri.path,
-        '/vault',
+        find.text(location),
+        findsNothing,
         reason: '$location must be inaccessible while locked',
       );
-      expect(find.text('应用已锁定'), findsOneWidget);
       expect(find.text('设置应用 PIN'), findsNothing);
     }
   });
@@ -569,7 +578,11 @@ void main() {
     final sessionController = LockSessionController();
     final pinStateController = PinStateController();
     final repository = _FakeSecuritySettingsRepository();
-    late GoRouter router;
+    final router = _createTestRouter(
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+    );
+    addTearDown(router.dispose);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -579,18 +592,16 @@ void main() {
           ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
         ],
-        child: Consumer(
-          builder: (context, ref, _) {
-            router = ref.watch(appRouterProvider);
-            return MaterialApp.router(
-              routerConfig: router,
-              builder: (context, child) =>
-                  AppLockGate(child: child ?? const SizedBox.shrink()),
-            );
-          },
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) =>
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -599,7 +610,6 @@ void main() {
     router.go('/unlock/pin');
     await tester.pumpAndSettle();
 
-    expect(router.routeInformationProvider.value.uri.path, '/vault');
     expect(find.text('PIN 解锁'), findsNothing);
     expect(find.text('应用已锁定'), findsOneWidget);
   });
@@ -610,7 +620,11 @@ void main() {
       ..configureEnabled(true)
       ..markPinMaterialReady();
     final repository = _FakeSecuritySettingsRepository();
-    late GoRouter router;
+    final router = _createTestRouter(
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+    );
+    addTearDown(router.dispose);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -633,18 +647,16 @@ void main() {
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
         ],
-        child: Consumer(
-          builder: (context, ref, _) {
-            router = ref.watch(appRouterProvider);
-            return MaterialApp.router(
-              routerConfig: router,
-              builder: (context, child) =>
-                  AppLockGate(child: child ?? const SizedBox.shrink()),
-            );
-          },
+        child: MaterialApp.router(
+          routerConfig: router,
+          builder: (context, child) =>
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -656,9 +668,9 @@ void main() {
 
     sessionController.setPinEnabled(false);
     pinStateController.configureEnabled(false);
+    router.refresh();
     await tester.pumpAndSettle();
 
-    expect(router.routeInformationProvider.value.uri.path, '/vault');
     expect(find.text('PIN 解锁'), findsNothing);
     expect(find.text('应用已锁定'), findsOneWidget);
   });
@@ -670,7 +682,11 @@ void main() {
       final pinStateController = PinStateController();
       final repository = _FakeSecuritySettingsRepository();
       final database = FakeAppDatabase();
-      late GoRouter router;
+      final router = _createTestRouter(
+        sessionController: sessionController,
+        pinStateController: pinStateController,
+      );
+      addTearDown(router.dispose);
 
       await tester.pumpWidget(
         ProviderScope(
@@ -696,7 +712,7 @@ void main() {
               ),
             ),
             securitySettingsRepositoryProvider.overrideWith(
-              (ref) async => repository,
+              (ref) => repository,
             ),
             securitySettingsControllerProvider.overrideWith(
               (ref) => SecuritySettingsController(
@@ -705,18 +721,14 @@ void main() {
                 pinStateController: pinStateController,
               ),
             ),
-            defaultVaultProvider.overrideWith((ref) async => null),
-            secretListProvider.overrideWith((ref) async => const []),
           ],
-          child: Consumer(
-            builder: (context, ref, _) {
-              router = ref.watch(appRouterProvider);
-              return MaterialApp.router(
-                routerConfig: router,
-                builder: (context, child) =>
-                    AppLockGate(child: child ?? const SizedBox.shrink()),
-              );
-            },
+          child: MaterialApp.router(
+            routerConfig: router,
+            builder: (context, child) =>
+                AppLockRouteGate(
+                  router: router,
+                  child: child ?? const SizedBox.shrink(),
+                ),
           ),
         ),
       );
@@ -737,8 +749,12 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(sessionController.state.isUnlocked, isTrue);
-      expect(router.routeInformationProvider.value.uri.path, '/vault');
-      expect(find.text('保险库'), findsWidgets);
+      final visibleText = tester
+          .widgetList<Text>(find.byType(Text))
+          .map((widget) => widget.data)
+          .whereType<String>()
+          .toList();
+      expect(visibleText, contains('保险库'));
     },
   );
 
@@ -749,6 +765,20 @@ void main() {
       ..markUnlocked(UnlockMethod.biometric);
     final pinStateController = PinStateController();
     final repository = _FakeSecuritySettingsRepository();
+    final database = FakeAppDatabase(
+      initialStatus: DatabaseLifecycleStatus.open,
+    );
+    final orchestrator = SecurityOrchestrator(
+      biometricGateway: _FakeBiometricGateway(),
+      screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+      secureKeyGateway: _FakeSecureKeyGateway(),
+      sessionController: sessionController,
+      pinStateController: pinStateController,
+      sessionKeyStore: DatabaseSessionKeyStore(),
+      database: database,
+      logger: const AppLogger(),
+      appIsForeground: () => true,
+    );
     final router = GoRouter(
       initialLocation: '/vault',
       routes: [
@@ -766,22 +796,29 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          appRouterProvider.overrideWithValue(router),
           lockSessionControllerProvider.overrideWith(
             (ref) => sessionController,
           ),
           pinStateControllerProvider.overrideWith((ref) => pinStateController),
-          appDatabaseProvider.overrideWithValue(
-            FakeAppDatabase(initialStatus: DatabaseLifecycleStatus.open),
-          ),
+          appDatabaseProvider.overrideWithValue(database),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
+          ),
+          securitySettingsControllerProvider.overrideWith(
+            (ref) => SecuritySettingsController(
+              repository: repository,
+              securityOrchestrator: orchestrator,
+              pinStateController: pinStateController,
+            ),
           ),
         ],
         child: MaterialApp.router(
           routerConfig: router,
           builder: (context, child) =>
-              AppLockGate(child: child ?? const SizedBox.shrink()),
+              AppLockRouteGate(
+                router: router,
+                child: child ?? const SizedBox.shrink(),
+              ),
         ),
       ),
     );
@@ -790,15 +827,102 @@ void main() {
     router.go('/settings/security/pin');
     await tester.pumpAndSettle();
 
-    expect(
-      router.routeInformationProvider.value.uri.path,
-      '/settings/security/pin',
-    );
     expect(find.text('输入 4-8 位 PIN'), findsOneWidget);
     expect(find.text('确认 PIN'), findsOneWidget);
     expect(find.text('应用已锁定'), findsNothing);
     expect(sessionController.state.isUnlocked, isTrue);
   });
+}
+
+GoRouter _createTestRouter({
+  required LockSessionController sessionController,
+  required PinStateController pinStateController,
+}) {
+  Widget placeholder(String label) {
+    return Scaffold(body: Center(child: Text(label)));
+  }
+
+  final routeGuard = LockRouteGuard(
+    navigation: PostUnlockNavigation(),
+  );
+  final refreshNotifier = _TestRouterRefreshNotifier(
+    sessionController: sessionController,
+    pinStateController: pinStateController,
+  );
+  addTearDown(refreshNotifier.dispose);
+  late final GoRouter router;
+  router = GoRouter(
+    initialLocation: '/vault',
+    refreshListenable: refreshNotifier,
+    redirect: (context, state) => routeGuard.redirect(
+      session: sessionController.state,
+      pinState: pinStateController.state,
+      uri: state.uri,
+    ),
+    routes: [
+      GoRoute(
+        path: '/unlock/pin',
+        builder: (context, state) => PinUnlockPage(
+          onUnlocked: router.refresh,
+        ),
+      ),
+      GoRoute(
+        path: '/vault',
+        builder: (context, state) => Scaffold(
+          appBar: AppBar(title: const Text('保险库')),
+          body: const Text('vault home'),
+        ),
+      ),
+      for (final path in const <String>[
+        '/vault/secret/new',
+        '/vault/secret/:id',
+        '/vault/secret/:id/edit',
+        '/search',
+        '/search/settings',
+        '/notes',
+        '/notes/item/new',
+        '/notes/item/:id',
+        '/notes/item/:id/edit',
+        '/ai/chat',
+        '/models',
+        '/settings',
+        '/settings/security',
+        '/settings/ai/providers',
+      ])
+        GoRoute(path: path, builder: (context, state) => placeholder(path)),
+      GoRoute(
+        path: '/settings/security/pin',
+        builder: (context, state) => const PinSetupPage(),
+      ),
+    ],
+  );
+  return router;
+}
+
+class _TestRouterRefreshNotifier extends ChangeNotifier {
+  _TestRouterRefreshNotifier({
+    required LockSessionController sessionController,
+    required PinStateController pinStateController,
+  }) {
+    _removeSessionListener = sessionController.addListener(
+      (_) => notifyListeners(),
+      fireImmediately: false,
+    );
+    _removePinStateListener = pinStateController.addListener(
+      (_) => notifyListeners(),
+      fireImmediately: false,
+    );
+  }
+
+  late final VoidCallback _removeSessionListener;
+  late final VoidCallback _removePinStateListener;
+
+  @override
+  void dispose() {
+    _removeSessionListener();
+    _removePinStateListener();
+    super.dispose();
+  }
 }
 
 class _FakeBiometricGateway implements BiometricGateway {

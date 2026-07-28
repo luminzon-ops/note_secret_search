@@ -1,15 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
-import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_form_mapper.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
-import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 class SecretEditorPage extends ConsumerStatefulWidget {
   const SecretEditorPage({this.secretId, super.key});
@@ -141,11 +137,6 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
       return;
     }
 
-    final vault = await ref.read(defaultVaultProvider.future);
-    if (vault == null || !mounted) {
-      return;
-    }
-
     final draft = SecretDraft(
       title: _titleController.text,
       username: _usernameController.text,
@@ -161,33 +152,10 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
       favorite: _favorite,
     );
 
-    final item = existing == null
-        ? SecretFormMapper.create(
-            vaultId: vault.id,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          )
-        : SecretFormMapper.update(
-            previous: existing,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          );
-
-    await ref.read(secretRepositoryProvider).save(item);
-    ref.invalidate(secretListProvider);
-    ref.invalidate(secretDetailProvider(item.id));
-    ref.invalidate(searchIndexStatusProvider);
-    ref.invalidate(semanticSearchResultsProvider);
-    ref.invalidate(unifiedSearchResultsProvider);
-    final activeModel = await ref.read(activeEmbeddingModelProvider.future);
-    final indexSettings = await ref.read(searchIndexSettingsProvider.future);
-    if (activeModel != null && indexSettings.autoIndexEnabled) {
-      await ref.read(searchIndexControllerProvider).indexPending();
-      ref.invalidate(searchIndexStatusProvider);
-      ref.invalidate(semanticSearchResultsProvider);
-      ref.invalidate(unifiedSearchResultsProvider);
-    }
-    if (mounted) {
+    final item = await ref
+        .read(saveSecretUseCaseProvider)
+        .execute(existing: existing, draft: draft);
+    if (item != null && mounted) {
       context.pop();
     }
   }

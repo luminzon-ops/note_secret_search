@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,11 +8,11 @@ import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
-import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/settings/domain/security_settings_repository.dart';
 
 import '../../../support/fake_app_database.dart';
 
@@ -74,6 +75,76 @@ void main() {
     expect(controller.state.asData?.value.pinEnabled, isFalse);
     expect(pinStateController.state.hasPinMaterial, isFalse);
   });
+
+  test('mutations reject while settings are still loading', () async {
+    final gateway = _FakeSecureKeyGateway(pinConfigured: false);
+    final repository = _FakeSecuritySettingsRepository()
+      ..pendingLoad = Completer<SecuritySettings>();
+    final controller = _controller(
+      gateway: gateway,
+      repository: repository,
+      pinStateController: PinStateController(),
+    );
+
+    await expectLater(
+      controller.updateAutoLockSeconds(60),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(controller.state, isA<AsyncLoading<SecuritySettings>>());
+    expect(repository.savedSettings, isEmpty);
+    repository.pendingLoad!.complete(repository.settings);
+  });
+
+  test('mutations reject after settings fail to load', () async {
+    final gateway = _FakeSecureKeyGateway(pinConfigured: false);
+    final repository = _FakeSecuritySettingsRepository()
+      ..loadError = StateError('settings unavailable');
+    final controller = _controller(
+      gateway: gateway,
+      repository: repository,
+      pinStateController: PinStateController(),
+    );
+
+    await _waitForState(controller, (state) => state.hasError);
+
+    await expectLater(
+      controller.updateAutoLockSeconds(60),
+      throwsA(isA<StateError>()),
+    );
+    expect(repository.savedSettings, isEmpty);
+  });
+
+  test('late load completion is ignored after controller disposal', () async {
+    final gateway = _FakeSecureKeyGateway(pinConfigured: false);
+    final repository = _FakeSecuritySettingsRepository();
+    final controller = _controller(
+      gateway: gateway,
+      repository: repository,
+      pinStateController: PinStateController(),
+    );
+    await _waitForState(controller, (state) => state.hasValue);
+
+    repository.pendingLoad = Completer<SecuritySettings>();
+    final pendingLoad = controller.load();
+    controller.dispose();
+    repository.pendingLoad!.complete(repository.settings);
+
+    await expectLater(pendingLoad, completes);
+  });
+}
+
+Future<void> _waitForState(
+  SecuritySettingsController controller,
+  bool Function(AsyncValue<SecuritySettings> state) predicate,
+) async {
+  for (var attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate(controller.state)) {
+      return;
+    }
+    await Future<void>.delayed(Duration.zero);
+  }
+  fail('Security settings state did not settle.');
 }
 
 SecuritySettingsController _controller({
@@ -105,9 +176,21 @@ class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
 
   SecuritySettings settings;
   final List<SecuritySettings> savedSettings = <SecuritySettings>[];
+  Completer<SecuritySettings>? pendingLoad;
+  Object? loadError;
 
   @override
-  Future<SecuritySettings> load() async => settings;
+  Future<SecuritySettings> load() async {
+    final pending = pendingLoad;
+    if (pending != null) {
+      return pending.future;
+    }
+    final error = loadError;
+    if (error != null) {
+      throw error;
+    }
+    return settings;
+  }
 
   @override
   Future<int> loadAutoLockSeconds() async => settings.autoLockSeconds;

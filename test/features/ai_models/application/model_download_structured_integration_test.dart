@@ -19,6 +19,8 @@ import 'package:note_secret_search/features/ai_models/infrastructure/model_downl
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
+import 'model_runtime_fixture.dart';
+
 part 'model_download_structured_failure_recovery_cases.dart';
 part 'model_download_structured_repair_cases.dart';
 part 'model_download_structured_resume_failover_cases.dart';
@@ -95,11 +97,11 @@ ProviderContainer _container({
 }) {
   return ProviderContainer(
     overrides: <Override>[
+      ...modelRuntimeFixtureOverrides(revisionStore: revisions),
       modelDownloadRepositoryProvider.overrideWithValue(downloads),
       modelRegistryRepositoryProvider.overrideWithValue(registry),
       modelLifecycleStoreProvider.overrideWithValue(lifecycle),
       modelDownloadServiceProvider.overrideWithValue(service),
-      modelRevisionStoreProvider.overrideWithValue(revisions),
       embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
     ],
   );

@@ -1,15 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
+import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
 class AppLockGate extends ConsumerStatefulWidget {
-  const AppLockGate({required this.child, super.key});
+  const AppLockGate({
+    required this.child,
+    this.pinUnlockRouteActive = false,
+    this.onPinUnlockRequested,
+    this.onPinResetRequired,
+    super.key,
+  });
 
   final Widget child;
+  final bool pinUnlockRouteActive;
+  final Future<bool?> Function()? onPinUnlockRequested;
+  final VoidCallback? onPinResetRequired;
 
   @override
   ConsumerState<AppLockGate> createState() => _AppLockGateState();
@@ -17,7 +26,6 @@ class AppLockGate extends ConsumerStatefulWidget {
 
 class _AppLockGateState extends ConsumerState<AppLockGate> {
   var _hydrationStarted = false;
-  var _vaultRedirectScheduled = false;
   final Set<int> _scheduledRevealEpochs = <int>{};
   int? _revealedLockEpoch;
   NativeSecurityState? _securityState;
@@ -36,81 +44,53 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
   Widget build(BuildContext context) {
     final session = ref.watch(lockSessionControllerProvider);
     final pinState = ref.watch(pinStateControllerProvider);
-    final router = ref.watch(appRouterProvider);
     final databaseState =
-        ref.watch(appDatabaseLifecycleProvider).value ??
-        ref.read(appDatabaseProvider).state;
+        ref.watch(appDatabaseLifecycleProvider).valueOrNull ??
+        const DatabaseLifecycleState.locked();
+    final pinUnlockAllowed =
+        widget.pinUnlockRouteActive &&
+        session.pinEnabled &&
+        pinState.enabled &&
+        pinState.hasPinMaterial;
+    if (session.isUnlocked &&
+        databaseState.status == DatabaseLifecycleStatus.open) {
+      return widget.child;
+    }
+    _scheduleSafeSurfaceReveal(session.lockEpoch);
+    if (pinUnlockAllowed) {
+      return widget.child;
+    }
 
-    return ValueListenableBuilder<RouteInformation>(
-      valueListenable: router.routeInformationProvider,
-      builder: (context, routeInformation, _) {
-        final location = routeInformation.uri.path;
-        final pinUnlockAllowed =
-            location == '/unlock/pin' &&
-            session.pinEnabled &&
-            pinState.enabled &&
-            pinState.hasPinMaterial;
-        if (session.isUnlocked &&
-            databaseState.status == DatabaseLifecycleStatus.open) {
-          return widget.child;
+    return AppLockScreen(
+      securityState: _securityState,
+      databaseState: databaseState,
+      onProvisioned: () => _refreshSecurityState(clearCachedState: true),
+      onMigrationCompleted: (securityState) async {
+        if (mounted) {
+          setState(() => _securityState = securityState);
         }
-        _scheduleSafeSurfaceReveal(session.lockEpoch);
-        if (pinUnlockAllowed) {
-          return widget.child;
-        }
-        if (location != '/vault') {
-          _scheduleVaultRedirect(router);
-        }
-
-        return AppLockScreen(
-          securityState: _securityState,
-          databaseState: databaseState,
-          onProvisioned: () => _refreshSecurityState(clearCachedState: true),
-          onMigrationCompleted: (securityState) async {
-            if (mounted) {
-              setState(() => _securityState = securityState);
-            }
-          },
-          onUnlocked: () => ref
-              .read(appRouterProvider)
-              .go(
-                _securityState?.pinResetRequired == true
-                    ? '/settings/security/pin'
-                    : '/vault',
-              ),
-        );
       },
+      onUnlocked: () {},
+      onPinUnlockRequested: widget.onPinUnlockRequested,
+      onPinResetRequired: widget.onPinResetRequired,
     );
   }
 
   Future<void> _refreshSecurityState({bool clearCachedState = false}) async {
-    final orchestrator = ref.read(securityOrchestratorProvider);
     if (clearCachedState && mounted) {
       setState(() => _securityState = null);
     }
+    SecurityOrchestrator? orchestrator;
     try {
-      final securityState = await orchestrator.refreshSecurityState();
+      final resolvedOrchestrator = ref.read(securityOrchestratorProvider);
+      orchestrator = resolvedOrchestrator;
+      final securityState = await resolvedOrchestrator.refreshSecurityState();
       if (mounted) {
         setState(() => _securityState = securityState);
       }
     } catch (_) {
-      orchestrator.enablePinFallback(false);
+      orchestrator?.enablePinFallback(false);
     }
-  }
-
-  void _scheduleVaultRedirect(GoRouter router) {
-    if (_vaultRedirectScheduled) {
-      return;
-    }
-    _vaultRedirectScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _vaultRedirectScheduled = false;
-      if (!mounted ||
-          router.routeInformationProvider.value.uri.path == '/vault') {
-        return;
-      }
-      router.go('/vault');
-    });
   }
 
   void _scheduleSafeSurfaceReveal(int lockEpoch) {
@@ -169,6 +149,8 @@ class AppLockScreen extends ConsumerStatefulWidget {
     this.databaseState,
     this.onProvisioned,
     this.onMigrationCompleted,
+    this.onPinUnlockRequested,
+    this.onPinResetRequired,
     super.key,
   });
 
@@ -178,6 +160,8 @@ class AppLockScreen extends ConsumerStatefulWidget {
   final Future<void> Function()? onProvisioned;
   final Future<void> Function(NativeSecurityState securityState)?
   onMigrationCompleted;
+  final Future<bool?> Function()? onPinUnlockRequested;
+  final VoidCallback? onPinResetRequired;
 
   @override
   ConsumerState<AppLockScreen> createState() => _AppLockScreenState();
@@ -329,6 +313,9 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
       _authenticationError = null;
     });
     try {
+      if (widget.securityState?.pinResetRequired == true) {
+        widget.onPinResetRequired?.call();
+      }
       final unlocked = await ref
           .read(securityOrchestratorProvider)
           .unlockWithBiometrics();
@@ -437,9 +424,7 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
   }
 
   Future<void> _openPinUnlock() async {
-    final unlocked = await ref
-        .read(appRouterProvider)
-        .push<bool>('/unlock/pin');
+    final unlocked = await widget.onPinUnlockRequested?.call();
     if (unlocked == true && mounted) {
       widget.onUnlocked();
     }

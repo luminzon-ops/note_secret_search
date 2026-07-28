@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
-import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/device_capability_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/local_llm_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/model_use_cases.dart';
+import 'package:note_secret_search/features/ai_models/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_capability_assessment.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
@@ -173,7 +174,7 @@ class _InstalledModelsCard extends ConsumerWidget {
       );
     }
 
-    final controller = ref.watch(modelDownloadControllerProvider);
+    final maintenance = ref.watch(modelMaintenanceUseCaseProvider);
 
     return Card(
       child: Padding(
@@ -262,15 +263,13 @@ class _InstalledModelsCard extends ConsumerWidget {
                         children: [
                           if (cleanupOnly)
                             OutlinedButton.icon(
-                              onPressed: () =>
-                                  controller.deleteInstalledModel(entry.id),
+                              onPressed: () => maintenance.delete(entry.id),
                               icon: const Icon(Icons.delete_outline, size: 18),
                               label: const Text('删除本地模型'),
                             )
                           else ...[
                             OutlinedButton.icon(
-                              onPressed: () =>
-                                  controller.revalidateInstalledModel(entry.id),
+                              onPressed: () => maintenance.revalidate(entry.id),
                               icon: const Icon(
                                 Icons.check_circle_outline,
                                 size: 18,
@@ -279,8 +278,7 @@ class _InstalledModelsCard extends ConsumerWidget {
                             ),
                             if (isBroken)
                               OutlinedButton.icon(
-                                onPressed: () =>
-                                    controller.repairInstalledModel(entry.id),
+                                onPressed: () => maintenance.repair(entry.id),
                                 icon: const Icon(
                                   Icons.build_outlined,
                                   size: 18,

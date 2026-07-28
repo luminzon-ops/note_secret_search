@@ -2,15 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/di/sensitive_state_invalidator_provider.dart';
+import 'package:note_secret_search/app/router/app_lock_route_gate.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
 import 'package:note_secret_search/app/theme/app_theme.dart';
 import 'package:note_secret_search/core/error/app_error_view.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/presentation/app_lifecycle_guard.dart';
-import 'package:note_secret_search/features/auth_security/presentation/app_lock_gate.dart';
 
 class NoteSecretSearchApp extends ConsumerStatefulWidget {
   const NoteSecretSearchApp({super.key});
@@ -106,7 +107,10 @@ class _NoteSecretSearchAppState extends ConsumerState<NoteSecretSearchApp> {
       builder: (context, child) {
         return bootstrapState.when(
           data: (_) => AppLifecycleGuard(
-            child: AppLockGate(child: child ?? const SizedBox.shrink()),
+            child: AppLockRouteGate(
+              router: router,
+              child: child ?? const SizedBox.shrink(),
+            ),
           ),
           loading: () =>
               const Scaffold(body: Center(child: CircularProgressIndicator())),

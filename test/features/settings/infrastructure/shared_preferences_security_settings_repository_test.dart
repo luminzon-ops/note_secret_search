@@ -8,7 +8,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final preferences = await SharedPreferences.getInstance();
     final repository = SharedPreferencesSecuritySettingsRepository(
-      preferences: preferences,
+      loadPreferences: () async => preferences,
     );
 
     await repository.save(
@@ -26,7 +26,7 @@ void main() {
     });
     final preferences = await SharedPreferences.getInstance();
     final repository = SharedPreferencesSecuritySettingsRepository(
-      preferences: preferences,
+      loadPreferences: () async => preferences,
     );
 
     final settings = await repository.load();

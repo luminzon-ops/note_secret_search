@@ -1,11 +1,11 @@
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_download_gateway.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
 
 class ModelRegistryIntegrityVerifier {
   const ModelRegistryIntegrityVerifier({required this.downloadService});
 
-  final ModelDownloadService downloadService;
+  final ModelDownloadGateway downloadService;
 
   Future<ModelRegistryEntry> verify(
     ModelRegistryEntry entry, {

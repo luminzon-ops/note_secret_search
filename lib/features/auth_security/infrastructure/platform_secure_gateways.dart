@@ -1,33 +1,5 @@
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/native_security_bridge.dart';
-
-abstract interface class ScreenshotProtectionGateway {
-  Future<void> enableSensitiveWindowProtection();
-
-  Future<void> updateRecentTaskProtection({required bool obscured});
-}
-
-abstract interface class SecureKeyGateway {
-  Future<NativeSecurityState> getSecurityState();
-
-  Future<NativeUnlockResult> provisionWithSystemAuth();
-
-  Future<NativeUnlockResult> unlockWithSystemAuth();
-
-  Future<void> configurePin({required String pin});
-
-  Future<NativeUnlockResult> unlockWithPin({required String pin});
-
-  Future<void> rebindSystemAuthWithPin({required String pin});
-
-  Future<void> removePin();
-}
-
-abstract interface class BiometricGateway {
-  Future<BiometricAvailability> getAvailability();
-
-  Future<bool> authenticate();
-}
 
 class DeviceScreenshotProtectionGateway implements ScreenshotProtectionGateway {
   DeviceScreenshotProtectionGateway({required NativeSecurityBridge bridge})

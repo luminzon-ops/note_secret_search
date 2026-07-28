@@ -42,34 +42,8 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
     return ordered;
   }
 
-  bool _isFailoverEligible(Object error) {
-    if (error is DioException) {
-      return error.type == DioExceptionType.connectionError ||
-          error.type == DioExceptionType.connectionTimeout ||
-          error.type == DioExceptionType.receiveTimeout ||
-          error.response?.statusCode == 403 ||
-          error.response?.statusCode == 404 ||
-          error.response?.statusCode == 408 ||
-          error.response?.statusCode == 410 ||
-          error.response?.statusCode == 429 ||
-          ((error.response?.statusCode ?? 0) >= 500);
-    }
-
-    final message = error.toString().toLowerCase();
-    return message.contains('checksum mismatch') ||
-        message.contains('timeout') ||
-        message.contains('connection') ||
-        message.contains('socket') ||
-        message.contains('dns') ||
-        message.contains('403') ||
-        message.contains('404') ||
-        message.contains('408') ||
-        message.contains('410') ||
-        message.contains('429') ||
-        message.contains('503') ||
-        message.contains('502') ||
-        message.contains('500');
-  }
+  bool _isFailoverEligible(Object error) =>
+      _downloadService.isFailoverEligible(error);
 
   bool _isDownloadRuntimeSupported(ModelCatalogEntry entry) {
     return entry.type == 'embedding' || entry.type == 'llm';
@@ -229,19 +203,22 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       ),
     );
 
-    final runtimeResult = await _ref
-        .read(multimodalLlmRuntimeBridgeProvider)
-        .ensureModelReady(
-          modelId: entry.id,
-          modelPath: modelPath,
-          mmprojPath: mmprojPath,
-        );
-    final ready =
-        runtimeResult['ready'] == true || runtimeResult['status'] == 'ready';
+    final modelArtifact = artifacts
+        .where((artifact) => artifact.role == 'model')
+        .firstOrNull;
+    final runtimeState = await _runtimeCoordinator.validateCandidate(
+      entry: entry,
+      modelPath: modelPath,
+      multimodalProjectorPath: mmprojPath,
+      verifiedChecksum: modelArtifact?.checksum ?? '',
+    );
     final persisted = await _registryRepository.getById(entry.id);
     if (persisted != null) {
       await _registryRepository.save(
-        persisted.copyWith(enabled: ready, filePresent: true),
+        persisted.copyWith(
+          enabled: runtimeState.status == ModelRuntimeStatus.ready,
+          filePresent: runtimeState.status != ModelRuntimeStatus.missing,
+        ),
       );
     }
 
@@ -277,7 +254,6 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
     _ref.invalidate(modelDownloadTasksProvider);
     _ref.invalidate(modelRegistryEntriesProvider);
     _ref.invalidate(embeddingRuntimeStatesProvider);
-    _ref.invalidate(llmRuntimeStatesProvider);
   }
 
   Future<ModelRegistryEntry> _validatedRegistryEntry({
@@ -303,44 +279,15 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       integrityStatus: ModelIntegrityStatus.valid,
     );
 
-    if (catalogEntry.type == 'embedding') {
-      final runtimeResult = await _ref
-          .read(embeddingRuntimeBridgeProvider)
-          .ensureModelReady(
-            modelId: catalogEntry.id,
-            modelPath: result.localPath,
-            tokenizer: catalogEntry.tokenizer,
-            runtime: catalogEntry.runtime,
-            verifiedChecksum: result.verifiedChecksum,
-          );
-      final runtimeState = mapEmbeddingEngineState(
-        runtimeResult,
-        fallbackPath: result.localPath,
+    if (catalogEntry.type == 'embedding' || catalogEntry.type == 'llm') {
+      final runtimeState = await _runtimeCoordinator.validateCandidate(
+        entry: catalogEntry,
+        modelPath: result.localPath,
+        verifiedChecksum: result.verifiedChecksum,
       );
       registryEntry = registryEntry.copyWith(
-        enabled:
-            runtimeState.status == EmbeddingRuntimeStatus.ready ||
-            runtimeState.status == EmbeddingRuntimeStatus.installedUnverified,
-        filePresent: runtimeState.status != EmbeddingRuntimeStatus.missing,
-      );
-    }
-
-    if (catalogEntry.type == 'llm') {
-      final runtimeResult = await _ref
-          .read(llmRuntimeBridgeProvider)
-          .ensureModelReady(
-            modelId: catalogEntry.id,
-            modelPath: result.localPath,
-          );
-      final runtimeState = mapLlmRuntimeState(
-        runtimeResult,
-        fallbackPath: result.localPath,
-      );
-      registryEntry = registryEntry.copyWith(
-        enabled:
-            runtimeState.status == LlmRuntimeStatus.ready ||
-            runtimeState.status == LlmRuntimeStatus.installedUnverified,
-        filePresent: runtimeState.status != LlmRuntimeStatus.missing,
+        enabled: runtimeState.acceptsInstallation,
+        filePresent: runtimeState.status != ModelRuntimeStatus.missing,
       );
     }
 

@@ -52,6 +52,8 @@ final class DartImportGraph {
 
   final Map<String, Set<String>> _importsByFile;
 
+  List<String> get files => _importsByFile.keys.toList(growable: false)..sort();
+
   Set<String> importsFrom(String sourcePath) {
     return Set<String>.unmodifiable(
       _importsByFile[sourcePath] ?? const <String>{},

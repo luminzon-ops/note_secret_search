@@ -5,78 +5,15 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_download_gateway.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+export 'package:note_secret_search/features/ai_models/domain/model_download_gateway.dart';
+
 part 'model_download_service_transfer.dart';
 
-class ModelDownloadProgress {
-  const ModelDownloadProgress({
-    required this.receivedBytes,
-    required this.totalBytes,
-    required this.averageSpeedBytesPerSecond,
-    this.etag,
-    this.lastModified,
-    this.resumable,
-    this.restarted = false,
-  });
-
-  final int receivedBytes;
-  final int? totalBytes;
-  final double? averageSpeedBytesPerSecond;
-  final String? etag;
-  final String? lastModified;
-  final bool? resumable;
-  final bool restarted;
-}
-
-class ModelDownloadStagingTarget {
-  const ModelDownloadStagingTarget({
-    required this.localPath,
-    required this.stagingPath,
-    required this.metadataPath,
-  });
-
-  final String localPath;
-  final String stagingPath;
-  final String metadataPath;
-}
-
-class ModelDownloadResult {
-  const ModelDownloadResult({
-    required this.localPath,
-    required this.totalBytes,
-    required this.verifiedChecksum,
-    this.resumed = false,
-    this.fellBackToRestart = false,
-    this.resumable = true,
-    this.etag,
-    this.lastModified,
-  });
-
-  final String localPath;
-  final int totalBytes;
-  final String verifiedChecksum;
-  final bool resumed;
-  final bool fellBackToRestart;
-  final bool resumable;
-  final String? etag;
-  final String? lastModified;
-}
-
-class ModelDownloadTarget {
-  const ModelDownloadTarget({
-    required this.localPath,
-    required this.exists,
-    required this.existingBytes,
-  });
-
-  final String localPath;
-  final bool exists;
-  final int existingBytes;
-}
-
-class ModelDownloadService {
+class ModelDownloadService implements ModelDownloadGateway {
   ModelDownloadService({
     required Dio dio,
     required AppLogger logger,
@@ -92,6 +29,7 @@ class ModelDownloadService {
   final Future<Directory> Function() _applicationSupportDirectoryProvider;
   final Map<String, CancelToken> _cancelTokens = <String, CancelToken>{};
 
+  @override
   Future<ModelDownloadResult> download({
     required String taskId,
     required String modelId,
@@ -119,6 +57,7 @@ class ModelDownloadService {
     );
   }
 
+  @override
   Future<ModelDownloadResult> stageArtifact({
     required String taskId,
     required String modelId,
@@ -159,6 +98,7 @@ class ModelDownloadService {
     );
   }
 
+  @override
   Future<ModelDownloadStagingTarget> resolveStagingTarget({
     required String modelId,
     required String sourceUrl,
@@ -170,6 +110,7 @@ class ModelDownloadService {
     );
   }
 
+  @override
   Future<ModelDownloadStagingTarget> resolveArtifactStagingTarget({
     required String modelId,
     required String operationId,
@@ -194,6 +135,7 @@ class ModelDownloadService {
     );
   }
 
+  @override
   Future<ModelDownloadTarget> inspectDownloadTarget({
     required String modelId,
     required String sourceUrl,
@@ -214,6 +156,7 @@ class ModelDownloadService {
     );
   }
 
+  @override
   Future<String> verifyChecksum({
     required String filePath,
     required String expectedChecksum,
@@ -230,10 +173,12 @@ class ModelDownloadService {
     return actual;
   }
 
+  @override
   void cancel(String taskId) {
     _cancelTokens.remove(taskId)?.cancel('User paused download');
   }
 
+  @override
   Future<bool> fileExists(String? path) async {
     if (path == null || path.trim().isEmpty) {
       return false;
@@ -241,6 +186,7 @@ class ModelDownloadService {
     return File(path).exists();
   }
 
+  @override
   Future<int?> fileLength(String? path) async {
     if (path == null || path.trim().isEmpty) {
       return null;
@@ -249,6 +195,7 @@ class ModelDownloadService {
     return await file.exists() ? file.length() : null;
   }
 
+  @override
   Future<void> deleteLocalFile(String? path) async {
     if (path == null || path.trim().isEmpty) {
       return;
@@ -258,6 +205,46 @@ class ModelDownloadService {
       await file.delete();
       _logger.info('model_file_deleted');
     }
+  }
+
+  @override
+  bool isFailoverEligible(Object error) {
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionError ||
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          error.response?.statusCode == 403 ||
+          error.response?.statusCode == 404 ||
+          error.response?.statusCode == 408 ||
+          error.response?.statusCode == 410 ||
+          error.response?.statusCode == 429 ||
+          ((error.response?.statusCode ?? 0) >= 500);
+    }
+
+    final message = error.toString().toLowerCase();
+    return message.contains('checksum mismatch') ||
+        message.contains('timeout') ||
+        message.contains('connection') ||
+        message.contains('socket') ||
+        message.contains('dns') ||
+        message.contains('403') ||
+        message.contains('404') ||
+        message.contains('408') ||
+        message.contains('410') ||
+        message.contains('429') ||
+        message.contains('503') ||
+        message.contains('502') ||
+        message.contains('500');
+  }
+
+  @override
+  bool isCancellation(Object error) {
+    return error is DioException && error.type == DioExceptionType.cancel;
+  }
+
+  @override
+  bool isResumableValidator({String? etag, String? lastModified}) {
+    return _Validator(etag: etag, lastModified: lastModified).resumable;
   }
 }
 

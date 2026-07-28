@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:uuid/uuid.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_context_projector.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_prompt_composer.dart';

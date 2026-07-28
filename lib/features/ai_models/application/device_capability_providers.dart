@@ -1,10 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/device_profiler.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_capability_assessment.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/device_profiler_bridge.dart';
 
-final deviceProfilerBridgeProvider = Provider<DeviceProfilerBridge>((ref) {
-  return DeviceProfilerBridge();
+final deviceProfilerBridgeProvider = Provider<DeviceProfiler>((ref) {
+  throw StateError(
+    'deviceProfilerBridgeProvider must be overridden by app composition',
+  );
 });
 
 final deviceProfileProvider = FutureProvider<DeviceProfile?>((ref) {

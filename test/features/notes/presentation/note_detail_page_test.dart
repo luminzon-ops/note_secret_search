@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';

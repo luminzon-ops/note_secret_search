@@ -1,6 +1,6 @@
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
+import 'package:note_secret_search/features/ai_models/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
-import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 
 String formatModelCapabilitySummary(ModelRegistryEntry model) {

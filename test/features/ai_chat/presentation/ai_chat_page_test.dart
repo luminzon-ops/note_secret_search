@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
@@ -18,7 +20,6 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../support/widget_test_helpers.dart';
 
@@ -28,6 +29,7 @@ void main() {
     SemanticSearchReadiness? semanticReadiness,
     ChatSessionRepository? chatRepository,
     ExternalProviderStatus? externalStatus,
+    ExternalProviderConsentStore? externalConsentStore,
     List<Override> extraOverrides = const <Override>[],
   }) async {
     return ProviderContainer(
@@ -64,6 +66,9 @@ void main() {
                 reason: '尚未启用外部模型提供方。',
                 config: null,
               ),
+        ),
+        externalProviderConsentStoreProvider.overrideWithValue(
+          externalConsentStore ?? _MemoryExternalProviderConsentStore(),
         ),
         chatSessionRepositoryProvider.overrideWithValue(
           chatRepository ?? const _FakeChatSessionRepository(),
@@ -584,7 +589,6 @@ void main() {
   testWidgets(
     'free chat asks for confirmation before sending private context to external provider',
     (tester) async {
-      SharedPreferences.setMockInitialValues({});
       final container = await buildContainer(
         llmReadiness: const LocalLlmReadiness(
           ready: false,
@@ -669,7 +673,6 @@ void main() {
   testWidgets(
     'private QA asks for confirmation before sending externally retrieved private context',
     (tester) async {
-      SharedPreferences.setMockInitialValues({});
       final container = await buildContainer(
         llmReadiness: const LocalLlmReadiness(
           ready: false,
@@ -750,10 +753,12 @@ void main() {
   testWidgets(
     'legacy provider-id acknowledgement does not bypass fingerprint consent',
     (tester) async {
-      SharedPreferences.setMockInitialValues({
-        'ai.external_privacy_ack.provider-1': true,
-      });
       final container = await buildContainer(
+        externalConsentStore: _MemoryExternalProviderConsentStore(
+          initialValues: const <String, bool>{
+            'ai.external_privacy_ack.provider-1': true,
+          },
+        ),
         llmReadiness: const LocalLlmReadiness(
           ready: false,
           reason: '尚未选择本地 LLM 模型。',
@@ -830,6 +835,28 @@ void main() {
       expect(find.text('确认使用外部模型'), findsOneWidget);
     },
   );
+}
+
+class _MemoryExternalProviderConsentStore
+    implements ExternalProviderConsentStore {
+  _MemoryExternalProviderConsentStore({
+    Map<String, bool> initialValues = const <String, bool>{},
+  }) : _values = Map<String, bool>.from(initialValues);
+
+  final Map<String, bool> _values;
+
+  @override
+  Future<bool> read(String key) async => _values[key] ?? false;
+
+  @override
+  Future<void> remove(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> write(String key, bool value) async {
+    _values[key] = value;
+  }
 }
 
 const _embeddingModel = ModelRegistryEntry(

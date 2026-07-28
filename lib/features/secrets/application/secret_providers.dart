@@ -1,12 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/features/secrets/application/secret_mutation_use_cases.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
-import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final secretRepositoryProvider = Provider<SecretRepository>((ref) {
-  return SqliteSecretRepository(database: ref.watch(appDatabaseProvider));
+  throw StateError(
+    'secretRepositoryProvider must be overridden by app composition',
+  );
 });
 
 final secretListProvider = FutureProvider<List<SecretItem>>((ref) {
@@ -32,5 +34,29 @@ final secretDetailProvider = FutureProvider.family<SecretItem?, String>((
     ref,
     lockedValue: null,
     load: () => ref.watch(secretRepositoryProvider).getById(id),
+  );
+});
+
+final saveSecretUseCaseProvider = Provider<SaveSecretUseCase>((ref) {
+  return SaveSecretUseCase(
+    repository: ref.watch(secretRepositoryProvider),
+    vaultRepository: ref.watch(vaultRepositoryProvider),
+    cryptoService: ref.watch(cryptoServiceProvider),
+    searchSynchronizer: ref.watch(contentMutationSearchSynchronizerProvider),
+    refreshProjections: (secretId) {
+      ref.invalidate(secretListProvider);
+      ref.invalidate(secretDetailProvider(secretId));
+    },
+  );
+});
+
+final deleteSecretUseCaseProvider = Provider<DeleteSecretUseCase>((ref) {
+  return DeleteSecretUseCase(
+    repository: ref.watch(secretRepositoryProvider),
+    searchSynchronizer: ref.watch(contentMutationSearchSynchronizerProvider),
+    refreshProjections: (secretId) {
+      ref.invalidate(secretListProvider);
+      ref.invalidate(secretDetailProvider(secretId));
+    },
   );
 });

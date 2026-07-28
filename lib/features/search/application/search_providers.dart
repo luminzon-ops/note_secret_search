@@ -1,49 +1,63 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/model_selection_sensitive_providers.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
+import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
-import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
+import 'package:note_secret_search/features/search/application/search_service.dart';
+import 'package:note_secret_search/features/search/application/semantic_search_readiness_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
+import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
-import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
-import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 part 'search_index_controller.dart';
 
-final sqliteEmbeddingRepositoryProvider = Provider<SqliteEmbeddingRepository>((
+final sqliteEmbeddingRepositoryProvider = Provider<SearchEmbeddingRepository>((
   ref,
 ) {
-  return SqliteEmbeddingRepository(database: ref.watch(appDatabaseProvider));
-});
-
-final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
-  ref,
-) async {
-  final configuration = await ref.watch(searchConfigurationProvider.future);
-  return SearchScopeConfig(
-    includeTitle: configuration.includeTitle,
-    includeSecretNote: configuration.includeSecretNote,
-    includePasswordField: configuration.includePasswordField,
-    includeUsername: configuration.includeUsername,
-    includeUrl: configuration.includeUrl,
-    includeTags: configuration.includeTags,
-    includeNoteBody: configuration.includeNoteBody,
-    allowLocalEmbedding: configuration.allowLocalEmbedding,
-    allowExternalProviderAccess: configuration.allowExternalProviderAccess,
+  throw StateError(
+    'sqliteEmbeddingRepositoryProvider must be overridden by app composition',
   );
 });
+
+final searchLockGuardProvider = Provider<SearchLockGuard>((ref) {
+  final guard = SearchLockGuard(
+    accessAllowed: ref.read(sensitiveStateAccessAllowedProvider),
+  );
+  ref.listen<bool>(sensitiveStateAccessAllowedProvider, (_, next) {
+    guard.updateAccess(next);
+  });
+  return guard;
+});
+
+class SearchLockGuard {
+  SearchLockGuard({required bool accessAllowed})
+    : _accessAllowed = accessAllowed;
+
+  bool _accessAllowed;
+  int _epoch = 0;
+
+  bool get accessAllowed => _accessAllowed;
+  int get epoch => _epoch;
+
+  void updateAccess(bool accessAllowed) {
+    if (_accessAllowed && !accessAllowed) {
+      _epoch += 1;
+    }
+    _accessAllowed = accessAllowed;
+  }
+}
 
 final searchServiceProvider = Provider<SearchService>((ref) {
   return SearchService(cryptoService: ref.watch(cryptoServiceProvider));

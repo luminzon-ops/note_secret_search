@@ -1,6 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
+import 'package:note_secret_search/features/search/domain/embedding_runtime.dart';
+
+export 'package:note_secret_search/features/search/domain/embedding_runtime.dart';
 
 class EmbeddingRuntimeException implements Exception {
   const EmbeddingRuntimeException({
@@ -69,48 +72,6 @@ class EmbeddingRuntimeCancelledException extends EmbeddingRuntimeException
 
   @override
   bool get isCancellation => true;
-}
-
-class EmbeddingModelMetadata {
-  const EmbeddingModelMetadata({
-    required this.tokenizer,
-    required this.runtime,
-  });
-
-  final EmbeddingTokenizerSpec tokenizer;
-  final EmbeddingRuntimeSpec runtime;
-}
-
-abstract interface class EmbeddingRuntimeBridge {
-  Future<Map<String, dynamic>> inspectModel({
-    required String modelId,
-    required String modelPath,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
-  });
-
-  Future<Map<String, dynamic>> ensureModelReady({
-    required String modelId,
-    required String modelPath,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
-  });
-
-  Future<Map<String, dynamic>> embedText({
-    required String modelId,
-    required String modelPath,
-    required String text,
-    EmbeddingTokenizerSpec? tokenizer,
-    EmbeddingRuntimeSpec? runtime,
-    String? verifiedChecksum,
-    String? requestId,
-  });
-
-  Future<void> cancelRequest({required String requestId});
-
-  Future<void> releaseModel({required String modelId});
 }
 
 class MethodChannelEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {

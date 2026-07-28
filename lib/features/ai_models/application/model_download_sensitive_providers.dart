@@ -138,7 +138,7 @@ final embeddingRuntimeStatesProvider =
         lockedValue: const <String, EmbeddingEngineState>{},
         load: () async {
           final entries = await ref.watch(modelRegistryEntriesProvider.future);
-          final embeddingEngine = ref.watch(embeddingEngineProvider);
+          final runtimeCoordinator = ref.watch(modelRuntimeCoordinatorProvider);
           final resolved = <String, EmbeddingEngineState>{};
 
           for (final entry in entries) {
@@ -175,13 +175,34 @@ final embeddingRuntimeStatesProvider =
               continue;
             }
 
-            resolved[entry.id] = await embeddingEngine.getState(entry);
+            final runtimeState = await runtimeCoordinator.inspectInstalledModel(
+              entry,
+            );
+            resolved[entry.id] = EmbeddingEngineState(
+              ready: runtimeState.ready,
+              reason: runtimeState.reason,
+              status: _embeddingRuntimeStatus(runtimeState.status),
+              modelPath: runtimeState.modelPath,
+              checkedAt: runtimeState.checkedAt,
+            );
           }
 
           return resolved;
         },
       );
     });
+
+EmbeddingRuntimeStatus _embeddingRuntimeStatus(ModelRuntimeStatus status) {
+  return switch (status) {
+    ModelRuntimeStatus.notInstalled => EmbeddingRuntimeStatus.notInstalled,
+    ModelRuntimeStatus.missing => EmbeddingRuntimeStatus.missing,
+    ModelRuntimeStatus.corrupted => EmbeddingRuntimeStatus.corrupted,
+    ModelRuntimeStatus.installedUnverified =>
+      EmbeddingRuntimeStatus.installedUnverified,
+    ModelRuntimeStatus.ready => EmbeddingRuntimeStatus.ready,
+    ModelRuntimeStatus.degraded => EmbeddingRuntimeStatus.degraded,
+  };
+}
 
 final modelDownloadTasksProvider = FutureProvider<List<ModelDownloadTask>>((
   ref,

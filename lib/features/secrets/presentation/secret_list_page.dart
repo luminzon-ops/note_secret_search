@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/auth_security/presentation/security_status_card.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';

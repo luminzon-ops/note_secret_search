@@ -17,13 +17,7 @@ enum EmbeddingReplacementCheckpoint {
 typedef EmbeddingReplacementCheckpointCallback =
     FutureOr<void> Function(EmbeddingReplacementCheckpoint checkpoint);
 
-class SqliteEmbeddingRepository
-    implements
-        EmbeddingIndexRepository,
-        GuardedEmbeddingIndexRepository,
-        EmbeddingIndexHeaderRepository,
-        EmbeddingIndexCorpusRepository,
-        PagedEmbeddingIndexCorpusRepository {
+class SqliteEmbeddingRepository implements SearchEmbeddingRepository {
   SqliteEmbeddingRepository({
     required AppDatabase database,
     EmbeddingReplacementCheckpointCallback? onReplacementCheckpoint,

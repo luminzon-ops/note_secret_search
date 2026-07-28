@@ -1,4 +1,4 @@
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/features/search/application/semantic_search_readiness_providers.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 

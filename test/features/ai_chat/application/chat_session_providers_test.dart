@@ -1,7 +1,7 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';

@@ -1,12 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/features/notes/application/note_mutation_use_cases.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
-import 'package:note_secret_search/features/notes/infrastructure/sqlite_note_repository.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final noteRepositoryProvider = Provider<NoteRepository>((ref) {
-  return SqliteNoteRepository(database: ref.watch(appDatabaseProvider));
+  throw StateError(
+    'noteRepositoryProvider must be overridden by app composition',
+  );
 });
 
 final noteListProvider = FutureProvider<List<NoteItem>>((ref) {
@@ -29,5 +31,29 @@ final noteDetailProvider = FutureProvider.family<NoteItem?, String>((ref, id) {
     ref,
     lockedValue: null,
     load: () => ref.watch(noteRepositoryProvider).getById(id),
+  );
+});
+
+final saveNoteUseCaseProvider = Provider<SaveNoteUseCase>((ref) {
+  return SaveNoteUseCase(
+    repository: ref.watch(noteRepositoryProvider),
+    vaultRepository: ref.watch(vaultRepositoryProvider),
+    cryptoService: ref.watch(cryptoServiceProvider),
+    searchSynchronizer: ref.watch(contentMutationSearchSynchronizerProvider),
+    refreshProjections: (noteId) {
+      ref.invalidate(noteListProvider);
+      ref.invalidate(noteDetailProvider(noteId));
+    },
+  );
+});
+
+final deleteNoteUseCaseProvider = Provider<DeleteNoteUseCase>((ref) {
+  return DeleteNoteUseCase(
+    repository: ref.watch(noteRepositoryProvider),
+    searchSynchronizer: ref.watch(contentMutationSearchSynchronizerProvider),
+    refreshProjections: (noteId) {
+      ref.invalidate(noteListProvider);
+      ref.invalidate(noteDetailProvider(noteId));
+    },
   );
 });

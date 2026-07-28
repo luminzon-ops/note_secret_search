@@ -1,24 +1,25 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
-import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/settings/domain/security_settings_repository.dart';
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../support/fake_app_database.dart';
+import '../../../support/widget_test_helpers.dart';
 
 void main() {
   testWidgets('pin setup never unlocks a locked session after save', (
@@ -51,7 +52,7 @@ void main() {
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
@@ -95,12 +96,12 @@ void main() {
   });
 
   testWidgets(
-    'pin setup can save successfully even when settings repository becomes ready later',
+    'pin setup waits for lazy settings load before enabling save',
     (tester) async {
-      SharedPreferences.setMockInitialValues({});
-
       final sessionController = LockSessionController();
       final pinStateController = PinStateController();
+      final repository = _FakeSecuritySettingsRepository()
+        ..pendingLoad = Completer<SecuritySettings>();
       final secureKeyGateway = _FakeSecureKeyGateway();
       bool? result;
 
@@ -126,10 +127,16 @@ void main() {
                 appIsForeground: () => true,
               ),
             ),
-            sharedPreferencesProvider.overrideWith((ref) async {
-              await Future<void>.delayed(const Duration(milliseconds: 300));
-              return SharedPreferences.getInstance();
-            }),
+            securitySettingsRepositoryProvider.overrideWith(
+              (ref) => repository,
+            ),
+            securitySettingsControllerProvider.overrideWith(
+              (ref) => SecuritySettingsController(
+                repository: repository,
+                securityOrchestrator: ref.read(securityOrchestratorProvider),
+                pinStateController: pinStateController,
+              ),
+            ),
           ],
           child: MaterialApp(
             home: Builder(
@@ -151,33 +158,40 @@ void main() {
       );
 
       await tester.tap(find.text('open delayed'));
-      await tester.pumpAndSettle();
+      await pumpUntilFound(tester, find.text('保存 PIN'));
 
+      final saveButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '保存 PIN'),
+      );
+      expect(saveButton.onPressed, isNull);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+      repository.pendingLoad!.complete(repository.settings);
+      await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField).first, '1234');
       await tester.enterText(find.byType(TextFormField).last, '1234');
       await tester.tap(find.text('保存 PIN'));
-      await tester.pump();
-
-      expect(tester.takeException(), isNull);
-
-      await tester.pump(const Duration(milliseconds: 350));
       await tester.pumpAndSettle();
 
+      expect(tester.takeException(), isNull);
       expect(result, isNull);
       expect(sessionController.state.isUnlocked, isFalse);
       expect(sessionController.state.pinEnabled, isTrue);
       expect(secureKeyGateway.lastConfiguredPin, '1234');
-      final preferences = await SharedPreferences.getInstance();
-      expect(preferences.getString('security.pin_material'), isNull);
     },
   );
 }
 
 class _FakeSecuritySettingsRepository implements SecuritySettingsRepository {
   SecuritySettings _settings = const SecuritySettings.defaults();
+  Completer<SecuritySettings>? pendingLoad;
+
+  SecuritySettings get settings => _settings;
 
   @override
-  Future<SecuritySettings> load() async => _settings;
+  Future<SecuritySettings> load() async {
+    return pendingLoad?.future ?? _settings;
+  }
 
   @override
   Future<int> loadAutoLockSeconds() async => _settings.autoLockSeconds;

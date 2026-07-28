@@ -181,13 +181,15 @@ extension _StructuredModelDownloadResume on ModelDownloadController {
         task.effectiveReceivedBytes != artifact.sizeBytes) {
       return null;
     }
-    final file = File(task.stagingPath!);
+    final stagingPath = task.stagingPath!;
     try {
-      if (!await file.exists() || await file.length() != artifact.sizeBytes) {
+      if (!await _downloadService.fileExists(stagingPath) ||
+          await _downloadService.fileLength(stagingPath) !=
+              artifact.sizeBytes) {
         return null;
       }
       await _downloadService.verifyChecksum(
-        filePath: file.path,
+        filePath: stagingPath,
         expectedChecksum: artifact.checksum,
       );
       return _StagedStructuredArtifact(
@@ -195,7 +197,7 @@ extension _StructuredModelDownloadResume on ModelDownloadController {
         staged: StagedModelArtifact(
           artifactId: artifact.id,
           relativePath: artifact.relativePath,
-          stagingPath: file.path,
+          stagingPath: stagingPath,
           expectedSizeBytes: artifact.sizeBytes,
           expectedChecksum: artifact.checksum,
         ),
@@ -298,14 +300,16 @@ extension _StructuredModelDownloadResume on ModelDownloadController {
     return task.resumable &&
         received > 0 &&
         received < expected &&
-        (_strongTaskEtag(task.etag) ||
-            _validTaskLastModified(task.lastModified));
+        _downloadService.isResumableValidator(
+          etag: task.etag,
+          lastModified: task.lastModified,
+        );
   }
 
   bool _isStructuredPause(Object error, ModelDownloadTask task) {
     return task.status == ModelDownloadStatus.paused ||
         task.phase == ModelDownloadPhase.paused ||
-        (error is DioException && error.type == DioExceptionType.cancel);
+        _downloadService.isCancellation(error);
   }
 }
 
@@ -314,24 +318,4 @@ DateTime _nextTaskTimestamp(DateTime previous) {
   return now.isAfter(previous)
       ? now
       : previous.add(const Duration(milliseconds: 1));
-}
-
-bool _strongTaskEtag(String? value) {
-  final etag = value?.trim();
-  return etag != null &&
-      etag.startsWith('"') &&
-      etag.endsWith('"') &&
-      !etag.toUpperCase().startsWith('W/');
-}
-
-bool _validTaskLastModified(String? value) {
-  if (value == null || value.trim().isEmpty) {
-    return false;
-  }
-  try {
-    HttpDate.parse(value.trim());
-    return true;
-  } on HttpException {
-    return false;
-  }
 }

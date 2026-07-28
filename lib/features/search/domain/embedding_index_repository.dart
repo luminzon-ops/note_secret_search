@@ -94,6 +94,14 @@ abstract interface class PagedEmbeddingIndexCorpusRepository {
   });
 }
 
+abstract interface class SearchEmbeddingRepository
+    implements
+        EmbeddingIndexRepository,
+        GuardedEmbeddingIndexRepository,
+        EmbeddingIndexHeaderRepository,
+        EmbeddingIndexCorpusRepository,
+        PagedEmbeddingIndexCorpusRepository {}
+
 class EmbeddingIndexStaleWriteException implements Exception {
   const EmbeddingIndexStaleWriteException();
 }

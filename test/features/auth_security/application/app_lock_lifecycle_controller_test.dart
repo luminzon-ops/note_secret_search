@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/app_lock_lifecycle_controller.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 
 void main() {
   test('inactive and resumed lifecycle work is serialized', () async {

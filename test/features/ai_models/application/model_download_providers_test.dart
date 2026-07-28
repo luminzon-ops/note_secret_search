@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
@@ -26,6 +26,8 @@ import 'package:note_secret_search/features/ai_chat/infrastructure/multimodal_ll
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
+
+import 'model_runtime_fixture.dart';
 
 const _embeddingChecksum =
     'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -100,8 +102,21 @@ class _MemoryRegistryRepository implements ModelRegistryRepository {
 ProviderContainer _modelProviderContainer({required List<Override> overrides}) {
   return ProviderContainer(
     overrides: <Override>[
+      ...modelRuntimeFixtureOverrides(),
       modelCatalogAcceptanceStoreProvider.overrideWith(
         (ref) => _MemoryCatalogAcceptanceStore(),
+      ),
+      modelCatalogRepositoryProvider.overrideWith(
+        (ref) => _MemoryCatalogRepository(const <ModelCatalogEntry>[]),
+      ),
+      modelDownloadRepositoryProvider.overrideWith(
+        (ref) => _MemoryDownloadRepository(),
+      ),
+      modelRegistryRepositoryProvider.overrideWith(
+        (ref) => _MemoryRegistryRepository(),
+      ),
+      modelSourceProbeServiceProvider.overrideWith(
+        (ref) => _FakeModelSourceProbeService(),
       ),
       modelLifecycleStoreProvider.overrideWith((ref) {
         return _RepositoryBackedTestLifecycleStore(

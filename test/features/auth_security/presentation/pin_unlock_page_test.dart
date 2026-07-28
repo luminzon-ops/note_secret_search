@@ -5,22 +5,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/app/router/app_router.dart';
+import 'package:note_secret_search/app/router/lock_route_guard.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/auth_security/presentation/pin_unlock_page.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
 
 import '../../../support/fake_app_database.dart';
-import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/settings/domain/security_settings_repository.dart';
 
 void main() {
   testWidgets(
@@ -30,8 +30,18 @@ void main() {
       final pinStateController = PinStateController()..markPinMaterialReady();
       final repository = _FakeSecuritySettingsRepository();
       final secureKeyGateway = _FakeSecureKeyGateway(pin: '2468');
+      sessionController.setPinEnabled(true);
+      pinStateController.configureEnabled(true);
+      final routeGuard = LockRouteGuard(
+        navigation: PostUnlockNavigation(),
+      );
       final router = GoRouter(
         initialLocation: '/unlock/pin',
+        redirect: (context, state) => routeGuard.redirect(
+          session: sessionController.state,
+          pinState: pinStateController.state,
+          uri: state.uri,
+        ),
         routes: [
           GoRoute(
             path: '/unlock/pin',
@@ -48,7 +58,6 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            appRouterProvider.overrideWithValue(router),
             lockSessionControllerProvider.overrideWith(
               (ref) => sessionController,
             ),
@@ -69,7 +78,7 @@ void main() {
               ),
             ),
             securitySettingsRepositoryProvider.overrideWith(
-              (ref) async => repository,
+              (ref) => repository,
             ),
             securitySettingsControllerProvider.overrideWith(
               (ref) => SecuritySettingsController(
@@ -82,6 +91,13 @@ void main() {
           child: MaterialApp.router(routerConfig: router),
         ),
       );
+      final sessionSubscription = sessionController.stream.listen((_) {
+        router.refresh();
+      });
+      addTearDown(() async {
+        await sessionSubscription.cancel();
+        router.dispose();
+      });
 
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), '2468');
@@ -127,7 +143,6 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          appRouterProvider.overrideWithValue(router),
           lockSessionControllerProvider.overrideWith(
             (ref) => sessionController,
           ),
@@ -146,7 +161,7 @@ void main() {
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
@@ -202,7 +217,7 @@ void main() {
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
@@ -258,7 +273,7 @@ void main() {
             ),
           ),
           securitySettingsRepositoryProvider.overrideWith(
-            (ref) async => repository,
+            (ref) => repository,
           ),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(

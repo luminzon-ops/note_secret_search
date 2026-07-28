@@ -2,14 +2,16 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/field_crypto.dart';
+import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_registry_repository.dart';
+import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/infrastructure/sqlite_note_repository.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
@@ -19,6 +21,9 @@ import 'package:note_secret_search/features/search/application/search_providers.
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
+import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
+import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 import 'package:note_secret_search/features/vault/domain/vault.dart';
 
@@ -53,6 +58,8 @@ void main() {
         nonceSource: _IncrementingNonceSource(),
       );
       final noteRepository = SqliteNoteRepository(database: database);
+      final secretRepository = SqliteSecretRepository(database: database);
+      final embeddingRepository = SqliteEmbeddingRepository(database: database);
       final body = '${'A' * 160}SECOND-MATCH';
       await SqliteModelRegistryRepository(
         database: database,
@@ -71,8 +78,13 @@ void main() {
           databaseSessionKeyStoreProvider.overrideWithValue(keyStore),
           cryptoServiceProvider.overrideWithValue(crypto),
           embeddingEngineProvider.overrideWithValue(engine),
+          sqliteEmbeddingRepositoryProvider.overrideWithValue(
+            embeddingRepository,
+          ),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           defaultVaultProvider.overrideWith((ref) async => _vault),
+          noteRepositoryProvider.overrideWithValue(noteRepository),
+          secretRepositoryProvider.overrideWithValue(secretRepository),
           semanticSearchReadinessProvider.overrideWith(
             (ref) async => const SemanticSearchReadiness(
               ready: true,

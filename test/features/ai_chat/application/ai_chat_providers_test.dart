@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_context_projector.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
@@ -9,6 +9,7 @@ import 'package:note_secret_search/features/ai_providers/application/ai_provider
 import 'package:note_secret_search/features/ai_providers/application/external_chat_gateway.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
@@ -19,8 +20,6 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 const _llmModel = ModelRegistryEntry(
   id: 'llm-1',
@@ -156,7 +155,6 @@ void main() {
   test(
     'free chat blocks external private context when provider policy forbids sensitive fields',
     () async {
-      SharedPreferences.setMockInitialValues({});
       final fakeExternalClient = _FakeExternalProviderClient();
       final fakeRetriever = _FakeAiChatContextRetriever(
         items: const [
@@ -182,8 +180,8 @@ void main() {
       );
       final container = ProviderContainer(
         overrides: [
-          sharedPreferencesProvider.overrideWith(
-            (ref) async => SharedPreferences.getInstance(),
+          externalProviderConsentStoreProvider.overrideWithValue(
+            _MemoryExternalProviderConsentStore(),
           ),
           localLlmReadinessProvider.overrideWith(
             (ref) async => const LocalLlmReadiness(
@@ -825,6 +823,24 @@ void main() {
       expect(currentMessages, isEmpty);
     },
   );
+}
+
+class _MemoryExternalProviderConsentStore
+    implements ExternalProviderConsentStore {
+  final Map<String, bool> _values = <String, bool>{};
+
+  @override
+  Future<bool> read(String key) async => _values[key] ?? false;
+
+  @override
+  Future<void> remove(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> write(String key, bool value) async {
+    _values[key] = value;
+  }
 }
 
 class _FakeAiChatContextRetriever implements AiChatContextRetriever {

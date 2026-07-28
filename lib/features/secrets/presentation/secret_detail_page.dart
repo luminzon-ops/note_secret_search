@@ -2,11 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
-import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/presentation/detail_search_hit_target.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
@@ -63,22 +60,7 @@ class SecretDetailPage extends ConsumerWidget {
   }
 
   Future<void> _delete(BuildContext context, WidgetRef ref) async {
-    await ref.read(secretRepositoryProvider).softDelete(secretId);
-    ref.invalidate(secretListProvider);
-    ref.invalidate(secretDetailProvider(secretId));
-    ref.invalidate(searchIndexStatusProvider);
-    ref.invalidate(semanticSearchResultsProvider);
-    ref.invalidate(unifiedSearchResultsProvider);
-
-    final activeModel = await ref.read(activeEmbeddingModelProvider.future);
-    final indexSettings = await ref.read(searchIndexSettingsProvider.future);
-    if (activeModel != null && indexSettings.autoIndexEnabled) {
-      await ref.read(searchIndexControllerProvider).indexPending();
-      ref.invalidate(searchIndexStatusProvider);
-      ref.invalidate(semanticSearchResultsProvider);
-      ref.invalidate(unifiedSearchResultsProvider);
-    }
-
+    await ref.read(deleteSecretUseCaseProvider).execute(secretId);
     if (context.mounted) {
       context.pop();
     }

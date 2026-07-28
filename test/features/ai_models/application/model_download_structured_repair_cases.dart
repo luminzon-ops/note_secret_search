@@ -16,11 +16,11 @@ void _registerStructuredRepairTests() {
       final bridge = _ReadyEmbeddingBridge();
       final container = ProviderContainer(
         overrides: <Override>[
+          ...modelRuntimeFixtureOverrides(revisionStore: revisions),
           modelDownloadRepositoryProvider.overrideWithValue(downloads),
           modelRegistryRepositoryProvider.overrideWithValue(registry),
           modelLifecycleStoreProvider.overrideWithValue(lifecycle),
           modelDownloadServiceProvider.overrideWithValue(service),
-          modelRevisionStoreProvider.overrideWithValue(revisions),
           embeddingRuntimeBridgeProvider.overrideWithValue(bridge),
           modelCatalogEntriesProvider.overrideWith(
             (ref) async => const <ModelCatalogEntry>[_entry],

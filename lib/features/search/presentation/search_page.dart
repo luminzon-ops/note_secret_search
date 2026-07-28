@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/semantic_search_readiness_providers.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';

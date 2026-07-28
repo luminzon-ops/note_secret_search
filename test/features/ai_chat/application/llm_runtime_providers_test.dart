@@ -1,14 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
-import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
-import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
-import 'package:note_secret_search/features/ai_chat/infrastructure/llm_runtime_bridge.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/model_runtime_providers.dart';
+import 'package:note_secret_search/features/ai_models/domain/llm_runtime_status.dart';
+import 'package:note_secret_search/features/ai_models/domain/local_llm_selection_store.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_runtime.dart';
 
 const _llmModel = ModelRegistryEntry(
   id: 'llm-1',
@@ -29,12 +29,16 @@ const _llmModel = ModelRegistryEntry(
 
 void main() {
   test('active local llm controller persists selected model id', () async {
-    SharedPreferences.setMockInitialValues({});
+    final store = _MemoryLocalLlmSelectionStore();
+    final runtime = _FakeModelRuntimeCoordinator();
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        localLlmSelectionStoreProvider.overrideWithValue(store),
+        modelRuntimeCoordinatorProvider.overrideWithValue(runtime),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const [_llmModel],
+        ),
         llmRuntimeStatesProvider.overrideWith(
           (ref) async => {
             'llm-1': const LlmRuntimeState(
@@ -46,25 +50,56 @@ void main() {
         ),
       ],
     );
-
     addTearDown(container.dispose);
 
-    await container.read(activeLocalLlmSelectionControllerProvider).setActiveLocalLlmModel('llm-1');
+    await container
+        .read(activeLocalLlmSelectionControllerProvider)
+        .setActiveLocalLlmModel('llm-1');
 
-    final preferences = await container.read(sharedPreferencesProvider.future);
     final selected = await container.read(activeLocalLlmModelProvider.future);
-
-    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
+    expect(store.modelId, 'llm-1');
     expect(selected?.id, 'llm-1');
   });
 
-  test('active local llm controller clears selected model id', () async {
-    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+  test(
+    'active local llm controller releases before clearing selection',
+    () async {
+      final events = <String>[];
+      final store = _MemoryLocalLlmSelectionStore(
+        modelId: 'llm-1',
+        onSave: (value) => events.add('save:$value'),
+      );
+      final runtime = _FakeModelRuntimeCoordinator(
+        onRelease: (modelId, modelType) {
+          events.add('release:$modelId:$modelType');
+        },
+      );
+      final container = ProviderContainer(
+        overrides: [
+          localLlmSelectionStoreProvider.overrideWithValue(store),
+          modelRuntimeCoordinatorProvider.overrideWithValue(runtime),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(activeLocalLlmSelectionControllerProvider)
+          .setActiveLocalLlmModel(null);
+
+      expect(events, <String>['release:llm-1:llm', 'save:null']);
+      expect(store.modelId, isNull);
+    },
+  );
+
+  test('activeLocalLlmModelProvider returns selected ready llm', () async {
+    final store = _MemoryLocalLlmSelectionStore(modelId: 'llm-1');
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        localLlmSelectionStoreProvider.overrideWithValue(store),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const [_llmModel],
+        ),
         llmRuntimeStatesProvider.overrideWith(
           (ref) async => {
             'llm-1': const LlmRuntimeState(
@@ -76,37 +111,6 @@ void main() {
         ),
       ],
     );
-
-    addTearDown(container.dispose);
-
-    await container.read(activeLocalLlmSelectionControllerProvider).setActiveLocalLlmModel(null);
-
-    final preferences = await container.read(sharedPreferencesProvider.future);
-    final selected = await container.read(activeLocalLlmModelProvider.future);
-
-    expect(preferences.getString('ai.active_llm_model_id'), isNull);
-    expect(selected, isNull);
-  });
-
-  test('activeLocalLlmModelProvider returns only ready llm models', () async {
-    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
-    final container = ProviderContainer(
-      overrides: [
-        sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
-        llmRuntimeStatesProvider.overrideWith(
-          (ref) async => {
-            'llm-1': const LlmRuntimeState(
-              ready: true,
-              reason: 'ready',
-              status: LlmRuntimeStatus.ready,
-            ),
-          },
-        ),
-      ],
-    );
-
     addTearDown(container.dispose);
 
     final model = await container.read(activeLocalLlmModelProvider.future);
@@ -114,16 +118,20 @@ void main() {
   });
 
   test('localLlmReadinessProvider reports missing active model', () async {
-    SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const <ModelRegistryEntry>[]),
-        llmRuntimeStatesProvider.overrideWith((ref) async => const <String, LlmRuntimeState>{}),
+        localLlmSelectionStoreProvider.overrideWithValue(
+          _MemoryLocalLlmSelectionStore(),
+        ),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const <ModelRegistryEntry>[],
+        ),
+        llmRuntimeStatesProvider.overrideWith(
+          (ref) async => const <String, LlmRuntimeState>{},
+        ),
       ],
     );
-
     addTearDown(container.dispose);
 
     final readiness = await container.read(localLlmReadinessProvider.future);
@@ -133,15 +141,22 @@ void main() {
   });
 
   test('llmRuntimeStatesProvider surfaces degraded runtime state', () async {
-    final degradedModel = _llmModel.copyWith(localPath: '/data/models/phi.gguf');
+    final runtime = _FakeModelRuntimeCoordinator(
+      state: const ModelRuntimeState(
+        ready: false,
+        reason: 'session failed',
+        status: ModelRuntimeStatus.degraded,
+      ),
+    );
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        modelRegistryEntriesProvider.overrideWith((ref) async => [degradedModel]),
-        llmEngineProvider.overrideWithValue(_FakeLlmEngine()),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const [_llmModel],
+        ),
+        modelRuntimeCoordinatorProvider.overrideWithValue(runtime),
       ],
     );
-
     addTearDown(container.dispose);
 
     final states = await container.read(llmRuntimeStatesProvider.future);
@@ -150,13 +165,15 @@ void main() {
     expect(states['llm-1']?.reason, 'session failed');
   });
 
-  test('activeLocalLlmModelProvider keeps degraded selected llm model in preferences', () async {
-    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
+  test('activeLocalLlmModelProvider keeps degraded selected llm', () async {
+    final store = _MemoryLocalLlmSelectionStore(modelId: 'llm-1');
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
+        localLlmSelectionStoreProvider.overrideWithValue(store),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const [_llmModel],
+        ),
         llmRuntimeStatesProvider.overrideWith(
           (ref) async => {
             'llm-1': const LlmRuntimeState(
@@ -168,115 +185,106 @@ void main() {
         ),
       ],
     );
-
     addTearDown(container.dispose);
 
     final model = await container.read(activeLocalLlmModelProvider.future);
-    final preferences = await container.read(sharedPreferencesProvider.future);
     final readiness = await container.read(localLlmReadinessProvider.future);
 
     expect(model?.id, 'llm-1');
-    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
+    expect(store.modelId, 'llm-1');
     expect(readiness.ready, isFalse);
     expect(readiness.activeModel?.id, 'llm-1');
     expect(readiness.reason, 'probe failed');
   });
 
-  test('activeLocalLlmModelProvider keeps selected llm when runtime can be ensured ready', () async {
-    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
-    final bridge = _ReadyAfterEnsureBridge();
+  test('selected llm remains when runtime inspection is ready', () async {
+    final store = _MemoryLocalLlmSelectionStore(modelId: 'llm-1');
+    final runtime = _FakeModelRuntimeCoordinator(
+      state: const ModelRuntimeState(
+        ready: true,
+        reason: 'runtime loaded',
+        status: ModelRuntimeStatus.ready,
+      ),
+    );
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
-        modelRegistryEntriesProvider.overrideWith((ref) async => const [_llmModel]),
-        llmRuntimeBridgeProvider.overrideWithValue(bridge),
+        localLlmSelectionStoreProvider.overrideWithValue(store),
+        modelRegistryEntriesProvider.overrideWith(
+          (ref) async => const [_llmModel],
+        ),
+        modelRuntimeCoordinatorProvider.overrideWithValue(runtime),
       ],
     );
-
     addTearDown(container.dispose);
 
     final model = await container.read(activeLocalLlmModelProvider.future);
-    final preferences = await container.read(sharedPreferencesProvider.future);
 
     expect(model?.id, 'llm-1');
-    expect(preferences.getString('ai.active_llm_model_id'), 'llm-1');
-    expect(bridge.ensureCalls, 1);
+    expect(store.modelId, 'llm-1');
+    expect(runtime.inspectCalls, 1);
   });
 }
 
-class _FakeLlmEngine implements LlmEngine {
-  @override
-  Future<LlmInferenceResponse> generate(LlmInferenceRequest request) {
-    throw UnimplementedError();
-  }
+class _MemoryLocalLlmSelectionStore implements LocalLlmSelectionStore {
+  _MemoryLocalLlmSelectionStore({this.modelId, this.onSave});
+
+  String? modelId;
+  final void Function(String? value)? onSave;
 
   @override
-  Future<LlmRuntimeState> getState(ModelRegistryEntry model) async {
-    return LlmRuntimeState(
-      ready: false,
-      reason: 'session failed',
-      status: LlmRuntimeStatus.degraded,
-      modelPath: model.localPath,
+  Future<String?> loadActiveModelId() async => modelId;
+
+  @override
+  Future<void> saveActiveModelId(String? modelId) async {
+    onSave?.call(modelId);
+    this.modelId = modelId;
+  }
+}
+
+class _FakeModelRuntimeCoordinator implements ModelRuntimeCoordinator {
+  _FakeModelRuntimeCoordinator({
+    this.state = const ModelRuntimeState(
+      ready: true,
+      reason: 'ready',
+      status: ModelRuntimeStatus.ready,
+    ),
+    this.onRelease,
+  });
+
+  final ModelRuntimeState state;
+  final void Function(String modelId, String? modelType)? onRelease;
+  int inspectCalls = 0;
+
+  @override
+  Future<ModelRuntimeState> inspectInstalledModel(
+    ModelRegistryEntry entry,
+  ) async {
+    inspectCalls += 1;
+    return ModelRuntimeState(
+      ready: state.ready,
+      reason: state.reason,
+      status: state.status,
+      modelPath: entry.localPath,
+      checkedAt: state.checkedAt,
     );
   }
 
   @override
-  Future<void> releaseModel(String modelId) async {}
-}
-
-class _ReadyAfterEnsureBridge implements LlmRuntimeBridge {
-  int ensureCalls = 0;
-  int inspectCalls = 0;
-
-  @override
-  Future<Map<String, dynamic>> ensureModelReady({
-    required String modelId,
-    required String modelPath,
+  Future<void> releaseForMutation(
+    String modelId, {
+    required String? modelType,
   }) async {
-    ensureCalls += 1;
-    return <String, dynamic>{
-      'ready': true,
-      'reason': 'runtime loaded',
-      'status': 'ready',
-      'modelPath': modelPath,
-    };
+    onRelease?.call(modelId, modelType);
   }
 
   @override
-  Future<Map<String, dynamic>> generateText({
-    required String modelId,
+  Future<ModelRuntimeState> validateCandidate({
+    required ModelCatalogEntry entry,
     required String modelPath,
-    required String prompt,
-    required bool usedPrivateContext,
-    required int maxOutputTokens,
-    required int maxPromptChars,
-    required int contextLength,
-    required bool conservativeMode,
-    required double temperature,
-    required int topK,
-    required double topP,
-    required int seed,
-    required List<String> stopSequences,
-    required bool emitPartialCompletion,
-  }) {
-    throw UnimplementedError();
-  }
-
-  @override
-  Future<Map<String, dynamic>> inspectModel({
-    required String modelId,
-    required String modelPath,
+    required String verifiedChecksum,
+    String? multimodalProjectorPath,
   }) async {
-    inspectCalls += 1;
-    return <String, dynamic>{
-      'ready': false,
-      'reason': 'installed but unverified',
-      'status': 'installed_unverified',
-      'modelPath': modelPath,
-    };
+    return state;
   }
-
-  @override
-  Future<void> releaseModel({required String modelId}) async {}
 }

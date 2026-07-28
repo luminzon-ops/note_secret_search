@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
+import 'package:note_secret_search/features/auth_security/domain/pin_policy.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
 
 class PinUnlockPage extends ConsumerStatefulWidget {
-  const PinUnlockPage({super.key});
+  const PinUnlockPage({this.onUnlocked, super.key});
+
+  final VoidCallback? onUnlocked;
 
   @override
   ConsumerState<PinUnlockPage> createState() => _PinUnlockPageState();
@@ -48,7 +49,7 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                     const Text('输入应用 PIN 作为备用解锁方式。'),
                     const SizedBox(height: 8),
                     Text(
-                      '当前失败次数：${pinState.failedAttempts}/${SecuritySettingsController.maxPinFailures}',
+                      '当前失败次数：${pinState.failedAttempts}/${AppPinPolicy.maxFailures}',
                     ),
                     if (inCoolDown)
                       Padding(
@@ -75,7 +76,8 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
               ),
               validator: (value) {
                 final raw = value ?? '';
-                if (raw.length < 4 || raw.length > 8) {
+                if (raw.length < AppPinPolicy.minimumLength ||
+                    raw.length > AppPinPolicy.maximumLength) {
                   return 'PIN 长度需为 4-8 位';
                 }
                 if (!RegExp(r'^\d+$').hasMatch(raw)) {
@@ -125,14 +127,14 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
       }
 
       if (mounted) {
-        final router = GoRouter.maybeOf(context);
+        final onUnlocked = widget.onUnlocked;
+        if (onUnlocked != null) {
+          onUnlocked();
+          return;
+        }
         final navigator = Navigator.of(context);
         if (navigator.canPop()) {
           navigator.pop(true);
-        } else if (router != null && router.canPop()) {
-          router.pop(true);
-        } else if (router != null) {
-          router.go('/vault');
         }
       }
     } on NativeSecurityException catch (error) {
@@ -140,15 +142,15 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
         ref
             .read(securityOrchestratorProvider)
             .registerPinFailure(
-              maxFailures: SecuritySettingsController.maxPinFailures,
-              coolDown: SecuritySettingsController.pinCoolDown,
+              maxFailures: AppPinPolicy.maxFailures,
+              coolDown: AppPinPolicy.coolDown,
             );
       } else if (error.code == 'PIN_COOLDOWN') {
         ref
             .read(securityOrchestratorProvider)
             .registerPinFailure(
               maxFailures: 1,
-              coolDown: SecuritySettingsController.pinCoolDown,
+              coolDown: AppPinPolicy.coolDown,
             );
       }
       if (mounted) {

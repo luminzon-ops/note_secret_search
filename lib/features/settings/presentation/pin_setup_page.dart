@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/features/auth_security/domain/pin_policy.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinSetupPage extends ConsumerStatefulWidget {
-  const PinSetupPage({super.key});
+  const PinSetupPage({this.onPinSaved, super.key});
+
+  final bool Function()? onPinSaved;
 
   @override
   ConsumerState<PinSetupPage> createState() => _PinSetupPageState();
@@ -24,6 +27,9 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final settingsState = ref.watch(securitySettingsControllerProvider);
+    final settingsReady = settingsState.hasValue;
+
     return Scaffold(
       appBar: AppBar(title: const Text('设置应用 PIN')),
       body: Form(
@@ -45,7 +51,8 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               obscureText: true,
               validator: (value) {
                 final raw = value ?? '';
-                if (raw.length < 4 || raw.length > 8) {
+                if (raw.length < AppPinPolicy.minimumLength ||
+                    raw.length > AppPinPolicy.maximumLength) {
                   return 'PIN 长度需为 4-8 位';
                 }
                 if (!RegExp(r'^\d+$').hasMatch(raw)) {
@@ -68,8 +75,33 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               },
             ),
             const SizedBox(height: 24),
+            if (settingsState.isLoading)
+              const LinearProgressIndicator()
+            else if (settingsState.hasError)
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '安全设置加载失败，请重试。',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '重试',
+                    onPressed: () {
+                      ref
+                          .read(securitySettingsControllerProvider.notifier)
+                          .load();
+                    },
+                    icon: const Icon(Icons.refresh),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: _submitting ? null : _submit,
+              onPressed: (_submitting || !settingsReady) ? null : _submit,
               icon: const Icon(Icons.lock_open_outlined),
               label: Text(_submitting ? '保存中...' : '保存 PIN'),
             ),
@@ -86,7 +118,6 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
     setState(() => _submitting = true);
     try {
-      await ref.read(securitySettingsRepositoryProvider.future);
       await ref
           .read(securitySettingsControllerProvider.notifier)
           .setPin(_pinController.text);
@@ -94,7 +125,10 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
-        Navigator.of(context).pop();
+        final navigationHandled = widget.onPinSaved?.call() ?? false;
+        if (!navigationHandled) {
+          Navigator.of(context).pop();
+        }
       }
     } finally {
       _pinController.clear();

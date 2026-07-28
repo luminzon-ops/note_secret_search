@@ -1,7 +1,9 @@
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
-import 'package:note_secret_search/features/ai_chat/infrastructure/llm_runtime_bridge.dart';
+import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_bridge.dart';
+import 'package:note_secret_search/features/ai_chat/infrastructure/llm_runtime_bridge.dart'
+    show LlmRuntimeCancelledException;
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:uuid/uuid.dart';
 

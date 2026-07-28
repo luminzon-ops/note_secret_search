@@ -76,7 +76,7 @@ class SearchIndexController {
   final Ref _ref;
 
   Future<void> indexPending() async {
-    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
+    final lockEpoch = _ref.read(searchLockGuardProvider).epoch;
     if (!_canContinue(lockEpoch)) {
       return;
     }
@@ -155,7 +155,7 @@ class SearchIndexController {
   }
 
   Future<void> indexPendingAndRefresh() async {
-    final lockEpoch = _ref.read(lockSessionControllerProvider).lockEpoch;
+    final lockEpoch = _ref.read(searchLockGuardProvider).epoch;
     if (!_canContinue(lockEpoch)) {
       return;
     }
@@ -248,8 +248,8 @@ class SearchIndexController {
   }
 
   bool _canContinue(int lockEpoch) {
-    return _ref.read(lockSessionControllerProvider).lockEpoch == lockEpoch &&
-        _ref.read(sensitiveStateAccessAllowedProvider);
+    final guard = _ref.read(searchLockGuardProvider);
+    return guard.epoch == lockEpoch && guard.accessAllowed;
   }
 
   SearchRefreshFeedbackState _buildRefreshFeedback({

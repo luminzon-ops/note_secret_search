@@ -297,40 +297,20 @@ extension _StructuredModelDownloadSupport on ModelDownloadController {
       throw StateError('primary_artifact_missing');
     }
     final modelPath = staged[primary.id]!.staged.stagingPath;
-    switch (entry.type) {
-      case 'embedding':
-        final result = await _ref
-            .read(embeddingRuntimeBridgeProvider)
-            .ensureModelReady(
-              modelId: entry.id,
-              modelPath: modelPath,
-              tokenizer: entry.tokenizer,
-              runtime: entry.runtime,
-              verifiedChecksum: primary.checksum,
-            );
-        final state = mapEmbeddingEngineState(result, fallbackPath: modelPath);
-        if (state.status != EmbeddingRuntimeStatus.ready &&
-            state.status != EmbeddingRuntimeStatus.installedUnverified) {
-          throw StateError('embedding_runtime_validation_failed');
-        }
-        return _StructuredRuntimeResult(
-          enabled: state.status == EmbeddingRuntimeStatus.ready,
-        );
-      case 'llm':
-        final result = await _ref
-            .read(llmRuntimeBridgeProvider)
-            .ensureModelReady(modelId: entry.id, modelPath: modelPath);
-        final state = mapLlmRuntimeState(result, fallbackPath: modelPath);
-        if (state.status != LlmRuntimeStatus.ready &&
-            state.status != LlmRuntimeStatus.installedUnverified) {
-          throw StateError('llm_runtime_validation_failed');
-        }
-        return _StructuredRuntimeResult(
-          enabled: state.status == LlmRuntimeStatus.ready,
-        );
-      default:
-        throw UnsupportedError('unsupported_structured_runtime');
+    if (entry.type != 'embedding' && entry.type != 'llm') {
+      throw UnsupportedError('unsupported_structured_runtime');
     }
+    final state = await _runtimeCoordinator.validateCandidate(
+      entry: entry,
+      modelPath: modelPath,
+      verifiedChecksum: primary.checksum,
+    );
+    if (!state.acceptsInstallation) {
+      throw StateError('${entry.type}_runtime_validation_failed');
+    }
+    return _StructuredRuntimeResult(
+      enabled: state.status == ModelRuntimeStatus.ready,
+    );
   }
 
   ModelRegistryEntry _buildStructuredRegistryEntry({

@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_context_projector.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
@@ -14,6 +14,7 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
@@ -21,8 +22,6 @@ import 'package:note_secret_search/features/search/application/search_index_sett
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 const _config = ExternalProviderConfig(
   id: 'privacy-provider',
@@ -40,12 +39,12 @@ void main() {
   test(
     'external orchestrator sends approved manual body but excludes password and api key',
     () async {
-      SharedPreferences.setMockInitialValues({});
-      final preferences = await SharedPreferences.getInstance();
       final client = _RecordingExternalClient();
       final container = ProviderContainer(
         overrides: [
-          sharedPreferencesProvider.overrideWith((ref) async => preferences),
+          externalProviderConsentStoreProvider.overrideWithValue(
+            _MemoryExternalProviderConsentStore(),
+          ),
           searchConfigurationProvider.overrideWith(
             (ref) async => SearchConfiguration.defaults().copyWith(
               allowExternalProviderAccess: true,
@@ -117,14 +116,14 @@ void main() {
   );
 
   test('controller persists and restores actual external provenance', () async {
-    SharedPreferences.setMockInitialValues({});
-    final preferences = await SharedPreferences.getInstance();
     final client = _RecordingExternalClient();
     final sessions = _MemoryChatSessionRepository();
     final container = ProviderContainer(
       overrides: [
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-        sharedPreferencesProvider.overrideWith((ref) async => preferences),
+        externalProviderConsentStoreProvider.overrideWithValue(
+          _MemoryExternalProviderConsentStore(),
+        ),
         searchConfigurationProvider.overrideWith(
           (ref) async => SearchConfiguration.defaults().copyWith(
             allowExternalProviderAccess: true,
@@ -173,6 +172,24 @@ void main() {
       assistant.backendUsage?.providerFingerprint,
     );
   });
+}
+
+class _MemoryExternalProviderConsentStore
+    implements ExternalProviderConsentStore {
+  final Map<String, bool> _values = <String, bool>{};
+
+  @override
+  Future<bool> read(String key) async => _values[key] ?? false;
+
+  @override
+  Future<void> remove(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> write(String key, bool value) async {
+    _values[key] = value;
+  }
 }
 
 class _MemoryProviderRepository implements ExternalProviderRepository {

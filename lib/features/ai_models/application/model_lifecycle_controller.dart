@@ -4,23 +4,28 @@ import 'package:note_secret_search/features/ai_models/application/model_session_
 
 typedef ReleaseEmbeddingModel = Future<void> Function(String modelId);
 typedef InvalidateEmbeddingWrites = void Function();
+typedef PrepareModelMutation =
+    Future<void> Function(String modelId, String? modelType);
 
 class ModelLifecycleController {
   ModelLifecycleController({
     required ModelLifecycleStore lifecycleStore,
     required ModelArtifactStore artifactStore,
     ModelSessionReleaser? sessionReleaser,
+    PrepareModelMutation? prepareModelMutation,
     InvalidateEmbeddingWrites? invalidateEmbeddingWrites,
     ReleaseEmbeddingModel? releaseEmbeddingModel,
   }) : _lifecycleStore = lifecycleStore,
        _artifactStore = artifactStore,
        _sessionReleaser = sessionReleaser,
+       _prepareModelMutation = prepareModelMutation,
        _invalidateEmbeddingWrites = invalidateEmbeddingWrites,
        _releaseEmbeddingModel = releaseEmbeddingModel;
 
   final ModelLifecycleStore _lifecycleStore;
   final ModelArtifactStore _artifactStore;
   final ModelSessionReleaser? _sessionReleaser;
+  final PrepareModelMutation? _prepareModelMutation;
   final InvalidateEmbeddingWrites? _invalidateEmbeddingWrites;
   final ReleaseEmbeddingModel? _releaseEmbeddingModel;
 
@@ -45,6 +50,11 @@ class ModelLifecycleController {
     final releaser = _sessionReleaser;
     if (releaser != null) {
       await releaser.releaseForMutation(modelId, modelType: modelType);
+      return;
+    }
+    final prepareModelMutation = _prepareModelMutation;
+    if (prepareModelMutation != null) {
+      await prepareModelMutation(modelId, modelType);
       return;
     }
     if (modelType == 'embedding') {

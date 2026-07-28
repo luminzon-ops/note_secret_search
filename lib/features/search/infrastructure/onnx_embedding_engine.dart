@@ -4,8 +4,6 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
 
-typedef EmbeddingMetadataResolver =
-    Future<EmbeddingModelMetadata?> Function(String modelId);
 typedef EmbeddingRequestIdFactory = String Function();
 
 class OnnxEmbeddingEngine implements EmbeddingEngine {

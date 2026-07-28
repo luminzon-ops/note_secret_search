@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/core/security/lock_session.dart';
+import 'package:note_secret_search/app/router/lock_route_guard.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/ai_chat_page.dart';
 import 'package:note_secret_search/features/ai_providers/presentation/external_provider_settings_page.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_management_page.dart';
-import 'package:note_secret_search/features/auth_security/domain/pin_state.dart';
 import 'package:note_secret_search/features/auth_security/presentation/pin_unlock_page.dart';
 import 'package:note_secret_search/features/notes/presentation/note_detail_page.dart';
 import 'package:note_secret_search/features/notes/presentation/note_editor_page.dart';
@@ -19,31 +18,43 @@ import 'package:note_secret_search/features/secrets/presentation/secret_list_pag
 import 'package:note_secret_search/features/settings/presentation/pin_setup_page.dart';
 import 'package:note_secret_search/features/settings/presentation/security_settings_page.dart';
 import 'package:note_secret_search/features/settings/presentation/settings_page.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 import 'package:note_secret_search/shared/widgets/app_shell.dart';
 
 final _appRouterRefreshProvider = Provider<_AppRouterRefreshNotifier>((ref) {
   final notifier = _AppRouterRefreshNotifier();
+  final postUnlockNavigation = ref.watch(postUnlockNavigationProvider);
+  postUnlockNavigation.addListener(notifier.refresh);
   ref.listen(lockSessionControllerProvider, (_, __) => notifier.refresh());
   ref.listen(pinStateControllerProvider, (_, __) => notifier.refresh());
-  ref.onDispose(notifier.dispose);
+  ref.onDispose(() {
+    postUnlockNavigation.removeListener(notifier.refresh);
+    notifier.dispose();
+  });
   return notifier;
 });
 
 final appRouterProvider = Provider<GoRouter>((ref) {
-  final router = GoRouter(
-    initialLocation: '/vault',
+  final lockRouteGuard = LockRouteGuard(
+    navigation: ref.watch(postUnlockNavigationProvider),
+  );
+  late final GoRouter router;
+  router = GoRouter(
+    initialLocation: AppDestination.vault,
     refreshListenable: ref.watch(_appRouterRefreshProvider),
     redirect: (context, state) {
-      return _resolveLockRedirect(
+      return lockRouteGuard.redirect(
         session: ref.read(lockSessionControllerProvider),
         pinState: ref.read(pinStateControllerProvider),
-        location: state.uri.path,
+        uri: state.uri,
       );
     },
     routes: [
       GoRoute(
-        path: '/unlock/pin',
-        builder: (context, state) => const PinUnlockPage(),
+        path: AppDestination.pinUnlock,
+        builder: (context, state) => PinUnlockPage(
+          onUnlocked: router.refresh,
+        ),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
@@ -52,7 +63,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/vault',
+                path: AppDestination.vault,
                 name: 'vault',
                 builder: (context, state) => const SecretListPage(),
                 routes: [
@@ -84,7 +95,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/search',
+                path: AppDestination.search,
                 name: 'search',
                 builder: (context, state) => const SearchPage(),
                 routes: [
@@ -99,7 +110,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/notes',
+                path: AppDestination.notes,
                 name: 'notes',
                 builder: (context, state) => const NoteListPage(),
                 routes: [
@@ -130,7 +141,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/ai/chat',
+                path: AppDestination.aiChat,
                 name: 'aiChat',
                 builder: (context, state) => AiChatPage(),
               ),
@@ -139,7 +150,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/models',
+                path: AppDestination.models,
                 name: 'models',
                 builder: (context, state) => const ModelManagementPage(),
               ),
@@ -148,7 +159,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(
             routes: [
               GoRoute(
-                path: '/settings',
+                path: AppDestination.settings,
                 name: 'settings',
                 builder: (context, state) => const SettingsPage(),
                 routes: [
@@ -158,7 +169,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                     routes: [
                       GoRoute(
                         path: 'pin',
-                        builder: (context, state) => const PinSetupPage(),
+                        builder: (context, state) => PinSetupPage(
+                          onPinSaved: ref
+                              .read(postUnlockNavigationProvider)
+                              .completePinReset,
+                        ),
                       ),
                     ],
                   ),
@@ -178,26 +193,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   ref.onDispose(router.dispose);
   return router;
 });
-
-String? _resolveLockRedirect({
-  required LockSessionState session,
-  required PinState pinState,
-  required String location,
-}) {
-  if (session.isUnlocked) {
-    return location == '/unlock/pin' ? '/vault' : null;
-  }
-
-  final pinUnlockAllowed =
-      location == '/unlock/pin' &&
-      session.pinEnabled &&
-      pinState.enabled &&
-      pinState.hasPinMaterial;
-  if (pinUnlockAllowed || location == '/vault') {
-    return null;
-  }
-  return '/vault';
-}
 
 class _AppRouterRefreshNotifier extends ChangeNotifier {
   void refresh() {

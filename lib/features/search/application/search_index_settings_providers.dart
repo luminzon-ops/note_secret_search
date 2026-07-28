@@ -1,27 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/core/storage/database/sqlite_protected_configuration_repository.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
-import 'package:note_secret_search/features/search/infrastructure/sqlite_search_configuration_repository.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/features/search/domain/search_scope.dart';
 
 final searchConfigurationRepositoryProvider =
-    FutureProvider<SearchConfigurationRepository>((ref) async {
-      final preferences = await ref.watch(sharedPreferencesProvider.future);
-      final protected = SqliteProtectedConfigurationRepository(
-        database: ref.watch(appDatabaseProvider),
-        cryptoService: ref.watch(cryptoServiceProvider),
-      );
-      return SqliteSearchConfigurationRepository(
-        preferences: preferences,
-        loadAppSetting: protected.loadAppSetting,
-        saveAppSetting: protected.saveAppSetting,
+    FutureProvider<SearchConfigurationRepository>((ref) {
+      throw StateError(
+        'searchConfigurationRepositoryProvider must be overridden by '
+        'app composition',
       );
     });
 
@@ -49,6 +38,23 @@ final searchIndexSettingsProvider = FutureProvider<SearchIndexSettings>((
   return SearchIndexSettings(
     autoIndexEnabled: configuration.autoIndexEnabled,
     maxChunkLength: configuration.maxChunkLength,
+  );
+});
+
+final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
+  ref,
+) async {
+  final configuration = await ref.watch(searchConfigurationProvider.future);
+  return SearchScopeConfig(
+    includeTitle: configuration.includeTitle,
+    includeSecretNote: configuration.includeSecretNote,
+    includePasswordField: configuration.includePasswordField,
+    includeUsername: configuration.includeUsername,
+    includeUrl: configuration.includeUrl,
+    includeTags: configuration.includeTags,
+    includeNoteBody: configuration.includeNoteBody,
+    allowLocalEmbedding: configuration.allowLocalEmbedding,
+    allowExternalProviderAccess: configuration.allowExternalProviderAccess,
   );
 });
 
@@ -86,10 +92,4 @@ void _invalidateSearchConfiguration(Ref ref) {
   ref.invalidate(searchConfigurationProvider);
   ref.invalidate(effectiveSearchPolicyProvider);
   ref.invalidate(searchIndexSettingsProvider);
-  ref.invalidate(searchScopeConfigProvider);
-  ref.invalidate(keywordSearchResultsProvider);
-  ref.invalidate(semanticSearchResultsProvider);
-  ref.invalidate(unifiedSearchResultsProvider);
-  ref.invalidate(semanticSearchReadinessProvider);
-  ref.invalidate(searchIndexStatusProvider);
 }

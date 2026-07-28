@@ -100,7 +100,7 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
 
   @override
   Widget build(BuildContext context) {
-    final controller = ref.watch(modelDownloadControllerProvider);
+    final maintenance = ref.watch(modelMaintenanceUseCaseProvider);
     final selectedSource = _selectedSource;
     final effectiveSource = _effectiveSource;
     final selectionAsync = ref.watch(activeModelSelectionProvider);
@@ -297,7 +297,7 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
                         isDownloading ||
                         !isDownloadSupported
                     ? null
-                    : () => controller.startDownload(
+                    : () => maintenance.start(
                         entry: entry,
                         source: selectedSource,
                       ),
@@ -313,17 +313,15 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
                       canResume ||
                       !isDownloadSupported
                   ? null
-                  : () => controller.startDownload(
-                      entry: entry,
-                      source: selectedSource,
-                    ),
+                  : () =>
+                        maintenance.start(entry: entry, source: selectedSource),
               icon: const Icon(Icons.refresh_outlined),
               label: const Text('重试下载'),
             ),
             OutlinedButton.icon(
               onPressed: activeTask == null || !isDownloading
                   ? null
-                  : () => controller.pause(
+                  : () => maintenance.pause(
                       entry.id,
                       sourceId: activeTask.sourceId,
                     ),
@@ -333,7 +331,7 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
             OutlinedButton.icon(
               onPressed: !canDeleteLocalModel
                   ? null
-                  : () => controller.deleteInstalledModel(entry.id),
+                  : () => maintenance.delete(entry.id),
               icon: const Icon(Icons.delete_outline),
               label: const Text('删除本地模型'),
             ),
@@ -344,10 +342,8 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
                       !canActivateEmbedding
                   ? null
                   : () => ref
-                        .read(activeModelSelectionControllerProvider)
-                        .setActiveEmbeddingModel(
-                          isActiveEmbeddingModel ? null : entry.id,
-                        ),
+                        .read(modelActivationUseCaseProvider)
+                        .setEmbedding(isActiveEmbeddingModel ? null : entry.id),
               icon: const Icon(Icons.check_circle_outline),
               label: Text(isActiveEmbeddingModel ? '取消启用' : '设为语义模型'),
             ),
@@ -364,8 +360,8 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
                     onPressed: !llmReady
                         ? null
                         : () => ref
-                              .read(activeLocalLlmSelectionControllerProvider)
-                              .setActiveLocalLlmModel(
+                              .read(modelActivationUseCaseProvider)
+                              .setLocalLlm(
                                 isActiveLocalLlm ? null : entry.id,
                               ),
                     icon: const Icon(Icons.smart_toy_outlined),
@@ -377,7 +373,7 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
             TextButton.icon(
               onPressed: activeTask == null
                   ? null
-                  : () => controller.markFailedForSource(
+                  : () => maintenance.markFailed(
                       entry.id,
                       sourceId: activeTask.sourceId,
                       message: '用户手动标记失败，可重新下载。',

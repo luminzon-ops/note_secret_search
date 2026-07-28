@@ -1,38 +1,27 @@
-import 'dart:io';
-
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/logging/logging_providers.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/storage/database/model_state_records.dart';
-import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
-import 'package:note_secret_search/features/ai_chat/application/multimodal_llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
-import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
-import 'package:note_secret_search/features/ai_chat/infrastructure/local_llm_engine.dart';
 import 'package:note_secret_search/features/ai_models/application/model_lifecycle_controller.dart';
 import 'package:note_secret_search/features/ai_models/application/model_registry_integrity_verifier.dart';
+import 'package:note_secret_search/features/ai_models/application/model_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_session_releaser.dart';
+import 'package:note_secret_search/features/ai_models/domain/bundled_model_artifact_stager.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_download_gateway.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_repository.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_download_task.dart';
-import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/io_model_artifact_store.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/io_model_revision_store.dart';
-import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
-import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_revision_store.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_runtime.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_source_probe.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
-import 'package:note_secret_search/features/search/infrastructure/onnx_embedding_engine.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/model_source_probe_service.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_download_repository.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_lifecycle_store.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/sqlite_model_registry_repository.dart';
 import 'package:uuid/uuid.dart';
 
 part 'model_download_sensitive_providers.dart';
@@ -47,11 +36,13 @@ class ModelDownloadController {
     required Ref ref,
     required ModelDownloadRepository repository,
     required ModelRegistryRepository registryRepository,
-    required ModelDownloadService downloadService,
+    required ModelDownloadGateway downloadService,
     required ModelLifecycleStore lifecycleStore,
     required ModelArtifactStore artifactStore,
     required AppLogger logger,
     ModelRevisionStore? revisionStore,
+    BundledModelArtifactStager? bundledArtifactStager,
+    ModelRuntimeCoordinator? runtimeCoordinator,
     ModelInstallJournalStore? installJournalStore,
     ModelSessionReleaser? sessionReleaser,
   }) : _ref = ref,
@@ -62,7 +53,9 @@ class ModelDownloadController {
          downloadService: downloadService,
        ),
        _lifecycleStore = lifecycleStore,
-       _revisionStore = revisionStore ?? IoModelRevisionStore(),
+       _providedRevisionStore = revisionStore,
+       _providedBundledArtifactStager = bundledArtifactStager,
+       _providedRuntimeCoordinator = runtimeCoordinator,
        _installJournalStore =
            installJournalStore ??
            (lifecycleStore is ModelInstallJournalStore
@@ -71,36 +64,11 @@ class ModelDownloadController {
        _modelLifecycleController = ModelLifecycleController(
          lifecycleStore: lifecycleStore,
          artifactStore: artifactStore,
-         sessionReleaser:
-             sessionReleaser ??
-             ModelSessionReleaser(
-               stopWrites: ref.read(searchIndexWriteFenceProvider).invalidate,
-               releaseEmbedding: (modelId) {
-                 return ref
-                     .read(embeddingRuntimeBridgeProvider)
-                     .releaseModel(modelId: modelId);
-               },
-               releaseLlm: (modelId) {
-                 return ref
-                     .read(llmRuntimeBridgeProvider)
-                     .releaseModel(modelId: modelId);
-               },
-               shouldReleaseEmbedding: (modelType) =>
-                   modelType == null || modelType == 'embedding',
-               shouldReleaseLlm: (modelType) =>
-                   modelType == null ||
-                   modelType == 'llm' ||
-                   modelType == 'multimodal_llm',
-               shouldReleaseMultimodal: (modelType) =>
-                   modelType == null || modelType == 'multimodal_llm',
-             ),
-         invalidateEmbeddingWrites: ref
-             .read(searchIndexWriteFenceProvider)
-             .invalidate,
-         releaseEmbeddingModel: (modelId) {
-           return ref
-               .read(embeddingRuntimeBridgeProvider)
-               .releaseModel(modelId: modelId);
+         sessionReleaser: sessionReleaser,
+         prepareModelMutation: (modelId, modelType) {
+           final ModelRuntimeCoordinator coordinator =
+               runtimeCoordinator ?? ref.read(modelRuntimeCoordinatorProvider);
+           return coordinator.releaseForMutation(modelId, modelType: modelType);
          },
        ),
        _logger = logger;
@@ -108,10 +76,12 @@ class ModelDownloadController {
   final Ref _ref;
   final ModelDownloadRepository _repository;
   final ModelRegistryRepository _registryRepository;
-  final ModelDownloadService _downloadService;
+  final ModelDownloadGateway _downloadService;
   final ModelRegistryIntegrityVerifier _integrityVerifier;
   final ModelLifecycleStore _lifecycleStore;
-  final ModelRevisionStore _revisionStore;
+  final ModelRevisionStore? _providedRevisionStore;
+  final BundledModelArtifactStager? _providedBundledArtifactStager;
+  final ModelRuntimeCoordinator? _providedRuntimeCoordinator;
   final ModelInstallJournalStore? _installJournalStore;
   final ModelLifecycleController _modelLifecycleController;
   final AppLogger _logger;
@@ -120,6 +90,16 @@ class ModelDownloadController {
   final Map<String, int> _modelGenerations = <String, int>{};
   final Map<String, String> _activeOperationIds = <String, String>{};
   static const _uuid = Uuid();
+
+  ModelRevisionStore get _revisionStore =>
+      _providedRevisionStore ?? _ref.read(modelRevisionStoreProvider);
+
+  BundledModelArtifactStager get _bundledArtifactStager =>
+      _providedBundledArtifactStager ??
+      _ref.read(bundledModelArtifactStagerProvider);
+
+  ModelRuntimeCoordinator get _runtimeCoordinator =>
+      _providedRuntimeCoordinator ?? _ref.read(modelRuntimeCoordinatorProvider);
 
   Future<void> enqueueDownload({
     required String modelId,
@@ -405,7 +385,6 @@ class ModelDownloadController {
     _ref.invalidate(modelRegistryEntriesProvider);
     _ref.invalidate(modelDownloadTasksProvider);
     _ref.invalidate(embeddingRuntimeStatesProvider);
-    _ref.invalidate(llmRuntimeStatesProvider);
   }
 
   Future<bool> isInstalled(String modelId) async {
@@ -490,22 +469,13 @@ class ModelDownloadController {
           normalized.localPath != null &&
           normalized.localPath!.trim().isNotEmpty) {
         _logger.info('model_revalidation_runtime_check_started');
-        final runtimeResult = await _ref
-            .read(llmRuntimeBridgeProvider)
-            .ensureModelReady(
-              modelId: normalized.id,
-              modelPath: normalized.localPath!,
-            );
-        final runtimeState = mapLlmRuntimeState(
-          runtimeResult,
-          fallbackPath: normalized.localPath,
+        final runtimeState = await _runtimeCoordinator.inspectInstalledModel(
+          normalized,
         );
         _logger.info('model_revalidation_runtime_check_finished');
         normalized = normalized.copyWith(
-          enabled:
-              runtimeState.status == LlmRuntimeStatus.ready ||
-              runtimeState.status == LlmRuntimeStatus.installedUnverified,
-          filePresent: runtimeState.status != LlmRuntimeStatus.missing,
+          enabled: runtimeState.acceptsInstallation,
+          filePresent: runtimeState.status != ModelRuntimeStatus.missing,
         );
       } else {
         normalized = normalized.copyWith(enabled: true);
@@ -521,7 +491,6 @@ class ModelDownloadController {
 
     _ref.invalidate(modelRegistryEntriesProvider);
     _ref.invalidate(embeddingRuntimeStatesProvider);
-    _ref.invalidate(llmRuntimeStatesProvider);
     _logger.info('model_revalidation_invalidated');
   }
 

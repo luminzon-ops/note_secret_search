@@ -6,9 +6,11 @@ import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
+import 'package:note_secret_search/features/ai_models/application/local_llm_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/model_use_cases.dart';
 import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
@@ -19,7 +21,6 @@ import 'package:note_secret_search/features/ai_models/domain/model_lifecycle_sto
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_repository.dart';
 import 'package:note_secret_search/features/ai_models/infrastructure/model_download_service.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_management_page.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -127,17 +128,6 @@ class _RecordingModelDownloadController extends _FakeModelDownloadController {
   @override
   Future<void> deleteInstalledModel(String modelId) async {
     deletedModelId = modelId;
-  }
-}
-
-class _RecordingActiveLocalLlmSelectionController implements ActiveLocalLlmSelectionController {
-  _RecordingActiveLocalLlmSelectionController();
-
-  String? selectedModelId;
-
-  @override
-  Future<void> setActiveLocalLlmModel(String? modelId) async {
-    selectedModelId = modelId;
   }
 }
 
@@ -603,13 +593,10 @@ void main() {
   testWidgets('ModelManagementPage shows 当前本地LLM for a ready active llm model', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({'ai.active_llm_model_id': 'llm-1'});
-
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-          sharedPreferencesProvider.overrideWith((ref) async => SharedPreferences.getInstance()),
           modelCatalogEntriesProvider.overrideWith((ref) async => const <ModelCatalogEntry>[]),
           modelDownloadTasksProvider.overrideWith((ref) async => const <ModelDownloadTask>[]),
           modelRegistryEntriesProvider.overrideWith(
@@ -644,6 +631,9 @@ void main() {
           embeddingRuntimeStatesProvider.overrideWith((ref) async => const <String, EmbeddingEngineState>{}),
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
+          ),
+          activeLocalLlmModelProvider.overrideWith(
+            (ref) async => _installedPhiRegistryEntry,
           ),
           modelDownloadControllerProvider.overrideWith((ref) => _FakeModelDownloadController(ref: ref)),
         ],
@@ -3037,7 +3027,13 @@ void main() {
 
   testWidgets('ModelManagementPage allows activating a ready installed local llm', (tester) async {
     SharedPreferences.setMockInitialValues({});
-    final controller = _RecordingActiveLocalLlmSelectionController();
+    String? selectedModelId;
+    final activation = ModelActivationUseCase(
+      setEmbedding: (_) async {},
+      setLocalLlm: (modelId) async {
+        selectedModelId = modelId;
+      },
+    );
 
     await tester.binding.setSurfaceSize(const Size(1000, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -3078,7 +3074,7 @@ void main() {
           activeModelSelectionProvider.overrideWith(
             (ref) async => const ActiveModelSelection(activeEmbeddingModelId: null),
           ),
-          activeLocalLlmSelectionControllerProvider.overrideWithValue(controller),
+          modelActivationUseCaseProvider.overrideWithValue(activation),
           modelDownloadControllerProvider.overrideWith((ref) => _FakeModelDownloadController(ref: ref)),
         ],
         child: const MaterialApp(home: ModelManagementPage()),
@@ -3092,7 +3088,7 @@ void main() {
     await tester.tap(buttonFinder);
     await tester.pump();
 
-    expect(controller.selectedModelId, 'llm-1');
+    expect(selectedModelId, 'llm-1');
   });
 
   testWidgets('ModelManagementPage disables local llm activation when runtime is degraded', (tester) async {

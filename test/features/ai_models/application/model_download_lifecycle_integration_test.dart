@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
@@ -19,6 +19,8 @@ import 'package:note_secret_search/features/ai_models/infrastructure/model_downl
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
 import 'package:note_secret_search/features/search/infrastructure/embedding_runtime_bridge.dart';
+
+import 'model_runtime_fixture.dart';
 
 const _embeddingCatalogEntry = ModelCatalogEntry(
   id: 'model-1',
@@ -81,6 +83,7 @@ void main() {
     });
     final container = ProviderContainer(
       overrides: <Override>[
+        ...modelRuntimeFixtureOverrides(),
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         modelCatalogEntriesProvider.overrideWith(
           (ref) async => const <ModelCatalogEntry>[
@@ -193,6 +196,7 @@ void main() {
       });
       final container = ProviderContainer(
         overrides: <Override>[
+          ...modelRuntimeFixtureOverrides(),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           modelCatalogEntriesProvider.overrideWith(
             (ref) async => const <ModelCatalogEntry>[_embeddingCatalogEntry],

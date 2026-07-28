@@ -3,11 +3,13 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/security/field_crypto.dart';
+import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
 import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/storage/database/sqlite_protected_configuration_repository.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
@@ -24,10 +26,14 @@ import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
+import 'package:note_secret_search/features/search/infrastructure/sqlite_embedding_repository.dart';
+import 'package:note_secret_search/features/search/infrastructure/sqlite_search_configuration_repository.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/infrastructure/sqlite_secret_repository.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
+import 'package:note_secret_search/features/vault/infrastructure/sqlite_vault_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../support/sqlite_test_database.dart';
@@ -70,8 +76,10 @@ void main() {
         nonceSource: _IncrementingNonceSource(),
       );
       final engine = _DeterministicEmbeddingEngine();
+      final vaultRepository = SqliteVaultRepository(database: database);
       final secretRepository = SqliteSecretRepository(database: database);
       final noteRepository = SqliteNoteRepository(database: database);
+      final embeddingRepository = SqliteEmbeddingRepository(database: database);
 
       addTearDown(() async {
         keyStore.clear();
@@ -87,12 +95,30 @@ void main() {
       }
 
       final preferences = await SharedPreferences.getInstance();
+      final protectedRepository = SqliteProtectedConfigurationRepository(
+        database: database,
+        cryptoService: crypto,
+      );
+      final configurationRepository = SqliteSearchConfigurationRepository(
+        preferences: preferences,
+        loadAppSetting: protectedRepository.loadAppSetting,
+        saveAppSetting: protectedRepository.saveAppSetting,
+      );
       final container = ProviderContainer(
         overrides: <Override>[
           appDatabaseProvider.overrideWithValue(database),
           databaseSessionKeyStoreProvider.overrideWithValue(keyStore),
           cryptoServiceProvider.overrideWithValue(crypto),
           embeddingEngineProvider.overrideWithValue(engine),
+          sqliteEmbeddingRepositoryProvider.overrideWithValue(
+            embeddingRepository,
+          ),
+          searchConfigurationRepositoryProvider.overrideWith(
+            (ref) async => configurationRepository,
+          ),
+          vaultRepositoryProvider.overrideWithValue(vaultRepository),
+          noteRepositoryProvider.overrideWithValue(noteRepository),
+          secretRepositoryProvider.overrideWithValue(secretRepository),
           sharedPreferencesProvider.overrideWith((ref) async => preferences),
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
           semanticSearchReadinessProvider.overrideWith(

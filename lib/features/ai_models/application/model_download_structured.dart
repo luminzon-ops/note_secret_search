@@ -242,7 +242,6 @@ extension _StructuredModelDownload on ModelDownloadController {
       _ref.invalidate(modelDownloadTasksProvider);
       _ref.invalidate(modelRegistryEntriesProvider);
       _ref.invalidate(embeddingRuntimeStatesProvider);
-      _ref.invalidate(llmRuntimeStatesProvider);
     } on _StructuredDownloadPaused {
       _logger.info('structured_model_download_paused');
       _ref.invalidate(modelDownloadTasksProvider);
@@ -508,28 +507,22 @@ extension _StructuredModelDownload on ModelDownloadController {
     );
     task = prepared.task;
     try {
-      final data = await rootBundle.load(artifact.relativePath);
-      final bytes = data.buffer.asUint8List(
-        data.offsetInBytes,
-        data.lengthInBytes,
+      final stagedAsset = await _bundledArtifactStager.stage(
+        assetPath: artifact.relativePath,
+        targetPath: target.stagingPath,
+        expectedSizeBytes: artifact.sizeBytes,
       );
-      if (bytes.length != artifact.sizeBytes) {
-        throw StateError('bundled_artifact_size_mismatch');
-      }
-      final file = File(target.stagingPath);
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(bytes, flush: true);
       final checksum = await _downloadService.verifyChecksum(
-        filePath: file.path,
+        filePath: stagedAsset.path,
         expectedChecksum: artifact.checksum,
       );
       final completed = task.copyWith(
         status: ModelDownloadStatus.downloading,
         phase: ModelDownloadPhase.staged,
-        downloadedBytes: bytes.length,
-        receivedBytes: bytes.length,
-        totalBytes: bytes.length,
-        stagingPath: file.path,
+        downloadedBytes: stagedAsset.sizeBytes,
+        receivedBytes: stagedAsset.sizeBytes,
+        totalBytes: stagedAsset.sizeBytes,
+        stagingPath: stagedAsset.path,
         expectedChecksum: checksum,
         updatedAt: DateTime.now(),
       );
@@ -539,7 +532,7 @@ extension _StructuredModelDownload on ModelDownloadController {
         staged: StagedModelArtifact(
           artifactId: artifact.id,
           relativePath: artifact.relativePath,
-          stagingPath: file.path,
+          stagingPath: stagedAsset.path,
           expectedSizeBytes: artifact.sizeBytes,
           expectedChecksum: artifact.checksum,
         ),

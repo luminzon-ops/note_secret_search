@@ -1,12 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
-import 'package:note_secret_search/features/ai_chat/infrastructure/sqlite_chat_session_repository.dart';
 
 final chatSessionRepositoryProvider = Provider<ChatSessionRepository>((ref) {
-  return SqliteChatSessionRepository(database: ref.watch(appDatabaseProvider));
+  throw StateError(
+    'chatSessionRepositoryProvider must be overridden by app composition',
+  );
 });
 
 final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) {

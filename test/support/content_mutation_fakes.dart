@@ -1,33 +1,21 @@
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/notes/domain/note_repository.dart';
-import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/content_mutation_search_coordinator.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 import 'package:note_secret_search/features/vault/domain/vault.dart';
+import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
 
 class ContentMutationSearchIndexRecorder {
   int indexPendingCalls = 0;
-}
-
-class RecordingSearchIndexController extends SearchIndexController {
-  RecordingSearchIndexController({required super.ref, required this.recorder});
-
-  final ContentMutationSearchIndexRecorder recorder;
-
-  @override
-  Future<void> indexPending() async {
-    recorder.indexPendingCalls += 1;
-  }
 }
 
 class CharacterizationCryptoService implements CryptoService {
@@ -60,21 +48,40 @@ List<Override> contentMutationOverrides({
     cryptoServiceProvider.overrideWith(
       (ref) => const CharacterizationCryptoService(),
     ),
-    defaultVaultProvider.overrideWith((ref) async => defaultVault),
-    activeEmbeddingModelProvider.overrideWith(
-      (ref) async => activeEmbeddingModel,
+    vaultRepositoryProvider.overrideWithValue(
+      CharacterizationVaultRepository(defaultVault),
     ),
-    searchIndexSettingsProvider.overrideWith(
-      (ref) async => SearchIndexSettings(
-        autoIndexEnabled: autoIndexEnabled,
-        maxChunkLength: 280,
+    contentMutationSearchSynchronizerProvider.overrideWith(
+      (ref) => ContentMutationSearchCoordinator(
+        loadActiveEmbeddingModel: () async => activeEmbeddingModel,
+        loadIndexSettings: () async => SearchIndexSettings(
+          autoIndexEnabled: autoIndexEnabled,
+          maxChunkLength: 280,
+        ),
+        indexPending: () async {
+          indexRecorder.indexPendingCalls += 1;
+        },
+        invalidateSearchProjections: () {},
       ),
     ),
-    searchIndexControllerProvider.overrideWith(
-      (ref) =>
-          RecordingSearchIndexController(ref: ref, recorder: indexRecorder),
-    ),
   ];
+}
+
+class CharacterizationVaultRepository implements VaultRepository {
+  const CharacterizationVaultRepository(this.defaultVault);
+
+  final Vault? defaultVault;
+
+  @override
+  Future<Vault?> getDefaultVault() async => defaultVault;
+
+  @override
+  Future<List<Vault>> listAll() async {
+    return defaultVault == null ? const <Vault>[] : <Vault>[defaultVault!];
+  }
+
+  @override
+  Future<void> save(Vault vault) async {}
 }
 
 Vault characterizationVault() {

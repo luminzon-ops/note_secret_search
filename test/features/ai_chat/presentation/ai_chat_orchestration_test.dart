@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/chat_session_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
@@ -12,6 +11,7 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_session_reposito
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/ai_chat_page.dart';
@@ -19,7 +19,6 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 const _embeddingModel = ModelRegistryEntry(
   id: 'embed-1',
@@ -290,7 +289,6 @@ void main() {
   testWidgets(
     'free chat requires fresh consent when external context becomes private',
     (tester) async {
-      SharedPreferences.setMockInitialValues({});
       final externalClient = _RecordingExternalProviderClient();
       const externalConfig = ExternalProviderConfig(
         id: 'provider-1',
@@ -306,8 +304,8 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
-          sharedPreferencesProvider.overrideWith(
-            (ref) async => SharedPreferences.getInstance(),
+          externalProviderConsentStoreProvider.overrideWithValue(
+            _MemoryExternalProviderConsentStore(),
           ),
           localLlmReadinessProvider.overrideWith(
             (ref) async => const LocalLlmReadiness(
@@ -418,6 +416,24 @@ void main() {
       expect(externalClient.lastUsedPrivateContext, isTrue);
     },
   );
+}
+
+class _MemoryExternalProviderConsentStore
+    implements ExternalProviderConsentStore {
+  final Map<String, bool> _values = <String, bool>{};
+
+  @override
+  Future<bool> read(String key) async => _values[key] ?? false;
+
+  @override
+  Future<void> remove(String key) async {
+    _values.remove(key);
+  }
+
+  @override
+  Future<void> write(String key, bool value) async {
+    _values[key] = value;
+  }
 }
 
 class _FakeChatSessionRepository implements ChatSessionRepository {

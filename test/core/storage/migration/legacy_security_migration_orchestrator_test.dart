@@ -3,9 +3,10 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:note_secret_search/core/storage/migration/legacy_database_migrator.dart';
-import 'package:note_secret_search/core/storage/migration/legacy_security_migration_orchestrator.dart';
+import 'package:note_secret_search/features/auth_security/application/legacy_security_migration.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/native_security_bridge.dart';
+import 'package:note_secret_search/features/auth_security/infrastructure/shared_preferences_legacy_pin_migration_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -245,7 +246,9 @@ void main() {
 
   test('legacy pin store accepts an already-cleared state', () async {
     SharedPreferences.setMockInitialValues(const <String, Object>{});
-    const store = SharedPreferencesLegacyPinMigrationStore();
+    final store = SharedPreferencesLegacyPinMigrationStore(
+      loadPreferences: SharedPreferences.getInstance,
+    );
 
     expect(
       await store.read(),
@@ -263,7 +266,9 @@ void main() {
         'security.pin_material': '2468',
         'security.pin_migration_cleanup_pending': true,
       });
-      const store = SharedPreferencesLegacyPinMigrationStore();
+      final store = SharedPreferencesLegacyPinMigrationStore(
+        loadPreferences: SharedPreferences.getInstance,
+      );
 
       final material = await store.read();
 
@@ -285,7 +290,9 @@ void main() {
       SharedPreferences.setMockInitialValues(<String, Object>{
         'security.pin_migration_cleanup_pending': true,
       });
-      const store = SharedPreferencesLegacyPinMigrationStore();
+      final store = SharedPreferencesLegacyPinMigrationStore(
+        loadPreferences: SharedPreferences.getInstance,
+      );
 
       final material = await store.read();
 
@@ -304,7 +311,9 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'security.pin_enabled': true,
     });
-    const store = SharedPreferencesLegacyPinMigrationStore();
+    final store = SharedPreferencesLegacyPinMigrationStore(
+      loadPreferences: SharedPreferences.getInstance,
+    );
 
     await expectLater(store.read(), throwsStateError);
   });
