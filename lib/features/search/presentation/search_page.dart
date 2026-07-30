@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
@@ -62,7 +63,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         actions: [
           IconButton(
             tooltip: '搜索设置与索引',
-            onPressed: () => context.push('/search/settings'),
+            onPressed: () => context.push(AppDestination.searchSettings),
             icon: const Icon(Icons.tune_outlined),
           ),
         ],
@@ -88,7 +89,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
               title: const Text('搜索设置与索引'),
               subtitle: const Text('调整检索范围、语义索引策略与隐私控制'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/search/settings'),
+              onTap: () => context.push(AppDestination.searchSettings),
             ),
           ),
           const SizedBox(height: 16),
@@ -188,21 +189,25 @@ class _SearchStatusCard extends ConsumerWidget {
   final SearchRefreshSessionState refreshSession;
 
   Future<void> _handleIndexAction(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(searchIndexControllerProvider).indexPendingAndRefresh();
-      if (!context.mounted) {
+      final result = await ref
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(ref.read(searchQueryProvider));
+      if (result != SearchRefreshExecutionResult.completed) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已开始构建索引，请稍后刷新搜索结果。')));
+      if (!messenger.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('已开始构建索引，请稍后刷新搜索结果。')),
+      );
     } catch (_) {
-      if (!context.mounted) {
+      if (!messenger.mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
+      messenger.showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -380,9 +385,9 @@ class _SearchFeedbackCard extends StatelessWidget {
   String _emptyResultActionRoute() {
     final currentReadiness = readiness;
     if (currentReadiness == null || currentReadiness.ready) {
-      return '/search/settings';
+      return AppDestination.searchSettings;
     }
-    return '/models';
+    return AppDestination.models;
   }
 
   IconData _emptyResultActionIcon() {
@@ -635,17 +640,19 @@ class _SearchPendingReindexHandoffCard extends ConsumerWidget {
   final SearchPendingReindexHandoffState handoff;
 
   Future<void> _handleRefresh(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(searchIndexControllerProvider).indexPendingAndRefresh();
-      ref.read(searchPendingReindexHandoffProvider.notifier).state =
-          const SearchPendingReindexHandoffState.hidden();
-    } catch (_) {
-      if (!context.mounted) {
+      final result = await ref
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(ref.read(searchQueryProvider));
+      if (result != SearchRefreshExecutionResult.completed) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
+    } catch (_) {
+      if (!messenger.mounted) {
+        return;
+      }
+      messenger.showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -665,7 +672,9 @@ class _SearchPendingReindexHandoffCard extends ConsumerWidget {
             Text(handoff.message ?? '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。'),
             const SizedBox(height: 12),
             FilledButton.tonalIcon(
-              onPressed: () => _handleRefresh(context, ref),
+              onPressed: ref.watch(searchRefreshSessionProvider).refreshing
+                  ? null
+                  : () => _handleRefresh(context, ref),
               icon: const Icon(Icons.auto_fix_high_outlined),
               label: const Text('立即刷新索引'),
             ),
@@ -930,17 +939,25 @@ class _SearchResultSection extends StatelessWidget {
       isThreeLine: true,
       onTap: () {
         final source = _searchSourceValue(item.matchSources);
-        final query = Uri.encodeQueryComponent(item.title);
-        final contextValue = Uri.encodeQueryComponent(
-          item.semanticHitSummary ?? item.preview,
-        );
+        final query = item.title;
+        final contextValue = item.semanticHitSummary ?? item.preview;
         if (item.type == SearchResultType.secret) {
           context.push(
-            '/vault/secret/${item.id}?query=$query&source=$source&context=$contextValue',
+            AppDestination.secretDetail(
+              item.id,
+              query: query,
+              source: source,
+              context: contextValue,
+            ),
           );
         } else {
           context.push(
-            '/notes/item/${item.id}?query=$query&source=$source&context=$contextValue',
+            AppDestination.noteDetail(
+              item.id,
+              query: query,
+              source: source,
+              context: contextValue,
+            ),
           );
         }
       },

@@ -239,6 +239,104 @@ class _DownloadRepository implements ModelDownloadRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _NoopModelLifecycleStore implements ModelLifecycleStore {
+  const _NoopModelLifecycleStore();
+
+  @override
+  Future<void> commitInstallation({
+    required ModelRegistryEntry registryEntry,
+    required List<ModelDownloadTask> completedTasks,
+  }) async {}
+
+  @override
+  Future<ModelRegistryEntry?> getDeletionManifest(String modelId) async => null;
+
+  @override
+  Future<void> purgeModelData(String modelId) async {}
+}
+
+class _NoopModelRuntimeCoordinator implements ModelRuntimeCoordinator {
+  const _NoopModelRuntimeCoordinator();
+
+  @override
+  Future<ModelRuntimeState> inspectInstalledModel(
+    ModelRegistryEntry entry,
+  ) async {
+    return ModelRuntimeState(
+      ready: true,
+      reason: 'ready',
+      status: ModelRuntimeStatus.ready,
+      modelPath: entry.localPath,
+    );
+  }
+
+  @override
+  Future<ModelRuntimeState> validateCandidate({
+    required ModelCatalogEntry entry,
+    required String modelPath,
+    required String verifiedChecksum,
+    String? multimodalProjectorPath,
+  }) async {
+    return ModelRuntimeState(
+      ready: true,
+      reason: 'ready',
+      status: ModelRuntimeStatus.ready,
+      modelPath: modelPath,
+    );
+  }
+
+  @override
+  Future<void> releaseForMutation(
+    String modelId, {
+    required String? modelType,
+  }) async {}
+}
+
+class _ActiveSelectionStore implements ActiveModelSelectionStore {
+  _ActiveSelectionStore({String? activeEmbeddingModelId})
+    : _activeEmbeddingModelId = activeEmbeddingModelId;
+
+  String? _activeEmbeddingModelId;
+
+  @override
+  Future<String?> loadActiveEmbeddingModelId() async {
+    return _activeEmbeddingModelId;
+  }
+
+  @override
+  Future<void> saveActiveEmbeddingModelId(String? modelId) async {
+    _activeEmbeddingModelId = modelId;
+  }
+}
+
+class _LocalLlmSelectionStore implements LocalLlmSelectionStore {
+  _LocalLlmSelectionStore({String? activeModelId})
+    : _activeModelId = activeModelId;
+
+  String? _activeModelId;
+
+  @override
+  Future<String?> loadActiveModelId() async {
+    return _activeModelId;
+  }
+
+  @override
+  Future<void> saveActiveModelId(String? modelId) async {
+    _activeModelId = modelId;
+  }
+}
+
+class _NoopActiveEmbeddingSelectionEffects
+    implements ActiveEmbeddingSelectionEffects {
+  const _NoopActiveEmbeddingSelectionEffects();
+
+  @override
+  Future<void> prepareForPersistence({
+    required String? previousModelId,
+    required String? nextModelId,
+  }) async {}
+}
+
 class _AlwaysPresentModelDownloadService extends ModelDownloadService {
   _AlwaysPresentModelDownloadService()
     : super(dio: Dio(), logger: const AppLogger());

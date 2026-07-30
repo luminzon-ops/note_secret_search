@@ -3,25 +3,37 @@ import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_sensitive_providers.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/search/application/embedding_runtime_providers.dart';
+import 'package:note_secret_search/features/search/application/search_index_use_cases.dart';
 import 'package:note_secret_search/features/search/application/search_index_service.dart';
 import 'package:note_secret_search/features/search/application/search_fusion_service.dart';
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
+import 'package:note_secret_search/features/search/application/search_lock_guard.dart';
+import 'package:note_secret_search/features/search/application/search_refresh_controller.dart';
 import 'package:note_secret_search/features/search/application/search_service.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_readiness_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
-import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
-import 'package:note_secret_search/features/search/domain/search_scope.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
-part 'search_index_controller.dart';
+export 'search_index_use_cases.dart'
+    show
+        SearchIndexExecutionResult,
+        SearchIndexRunner,
+        SearchIndexTaskStateWriter,
+        SearchRefreshExecutionResult,
+        SearchRefreshFeedbackWriter,
+        SearchRefreshPhaseWriter,
+        SearchRefreshRunner;
+export 'search_lock_guard.dart';
+export 'search_refresh_controller.dart';
+export 'search_refresh_state.dart';
 
 final sqliteEmbeddingRepositoryProvider = Provider<SearchEmbeddingRepository>((
   ref,
@@ -40,24 +52,6 @@ final searchLockGuardProvider = Provider<SearchLockGuard>((ref) {
   });
   return guard;
 });
-
-class SearchLockGuard {
-  SearchLockGuard({required bool accessAllowed})
-    : _accessAllowed = accessAllowed;
-
-  bool _accessAllowed;
-  int _epoch = 0;
-
-  bool get accessAllowed => _accessAllowed;
-  int get epoch => _epoch;
-
-  void updateAccess(bool accessAllowed) {
-    if (_accessAllowed && !accessAllowed) {
-      _epoch += 1;
-    }
-    _accessAllowed = accessAllowed;
-  }
-}
 
 final searchServiceProvider = Provider<SearchService>((ref) {
   return SearchService(cryptoService: ref.watch(cryptoServiceProvider));
@@ -124,15 +118,18 @@ final keywordSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
   );
 });
 
-final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
+const _lockedSearchIndexStatus = SearchIndexStatus(
+  engineReady: false,
+  engineReason: '应用已锁定。',
+  hasActiveEmbeddingModel: false,
+  pendingItems: <SearchIndexPendingItem>[],
+);
+
+final FutureProvider<SearchIndexStatus>
+searchIndexStatusSnapshotProvider = FutureProvider<SearchIndexStatus>((ref) {
   return guardSensitiveFuture<SearchIndexStatus>(
     ref,
-    lockedValue: const SearchIndexStatus(
-      engineReady: false,
-      engineReason: '应用已锁定。',
-      hasActiveEmbeddingModel: false,
-      pendingItems: <SearchIndexPendingItem>[],
-    ),
+    lockedValue: _lockedSearchIndexStatus,
     load: () async {
       final vault = await ref.watch(defaultVaultProvider.future);
       final activeModel = await ref.watch(activeEmbeddingModelProvider.future);
@@ -158,18 +155,21 @@ final searchIndexStatusProvider = FutureProvider<SearchIndexStatus>((ref) {
               modelRevisionHash: modelRevisionHash,
               configuration: configuration,
             );
-      final taskState = ref.watch(searchIndexTaskStateProvider);
-      return SearchIndexStatus(
-        engineReady: baseStatus.engineReady,
-        engineReason: baseStatus.engineReason,
-        hasActiveEmbeddingModel: baseStatus.hasActiveEmbeddingModel,
-        pendingItems: baseStatus.pendingItems,
-        pendingCount: baseStatus.pendingCount,
-        taskState: taskState,
-      );
+      return baseStatus;
     },
   );
 });
+
+final FutureProvider<SearchIndexStatus> searchIndexStatusProvider =
+    FutureProvider<SearchIndexStatus>((ref) {
+      final taskState = ref.watch(searchIndexTaskStateProvider);
+      if (!ref.watch(sensitiveStateAccessAllowedProvider)) {
+        return _lockedSearchIndexStatus.copyWith(taskState: taskState);
+      }
+      return ref
+          .watch(searchIndexStatusSnapshotProvider.future)
+          .then((baseStatus) => baseStatus.copyWith(taskState: taskState));
+    });
 
 final semanticSearchResultsProvider =
     FutureProvider<List<SemanticSearchResult>>((ref) {
@@ -239,62 +239,101 @@ final unifiedSearchResultsProvider = FutureProvider<List<SearchResultItem>>((
   );
 });
 
-final searchIndexControllerProvider = Provider<SearchIndexController>((ref) {
-  return SearchIndexController(ref: ref);
-});
+final Provider<SearchIndexRunner> indexPendingSearchUseCaseProvider =
+    Provider<SearchIndexRunner>((ref) {
+      return IndexPendingSearchUseCase(
+        lockGuard: ref.watch(searchLockGuardProvider),
+        loadIndexStatus: () {
+          return ref.read(searchIndexStatusSnapshotProvider.future);
+        },
+        loadActiveEmbeddingModel: () {
+          return ref.read(activeEmbeddingModelProvider.future);
+        },
+        loadConfiguration: () {
+          return ref.read(searchConfigurationProvider.future);
+        },
+        loadDefaultVault: () {
+          return ref.read(defaultVaultProvider.future);
+        },
+        loadModelRevisionHash: (model) {
+          return ref.read(searchIndexModelRevisionProvider(model).future);
+        },
+        loadCorpusReader: () {
+          return ref.read(searchCorpusReaderProvider);
+        },
+        loadIndexService: () {
+          return ref.read(searchIndexServiceProvider);
+        },
+        invalidateIndexStatus: () {
+          ref.invalidate(searchIndexStatusSnapshotProvider);
+        },
+      );
+    });
 
-final searchIndexTaskStateProvider = StateProvider<SearchIndexTaskState>(
-  (ref) => const SearchIndexTaskState.idle(),
-);
+final Provider<SearchRefreshRunner> refreshSearchIndexUseCaseProvider =
+    Provider<SearchRefreshRunner>((ref) {
+      return RefreshSearchIndexUseCase(
+        lockGuard: ref.watch(searchLockGuardProvider),
+        indexRunner: ref.watch(indexPendingSearchUseCaseProvider),
+        loadUnifiedResults: () {
+          return ref.read(unifiedSearchResultsProvider.future);
+        },
+        invalidateIndexStatus: () {
+          ref.invalidate(searchIndexStatusSnapshotProvider);
+        },
+        invalidateSemanticResults: () {
+          ref.invalidate(semanticSearchResultsProvider);
+        },
+        invalidateUnifiedResults: () {
+          ref.invalidate(unifiedSearchResultsProvider);
+        },
+        awaitIndexStatus: () {
+          return ref.read(searchIndexStatusSnapshotProvider.future);
+        },
+        awaitSemanticResults: () async {
+          await ref.read(semanticSearchResultsProvider.future);
+        },
+        awaitUnifiedResults: () {
+          return ref.read(unifiedSearchResultsProvider.future);
+        },
+      );
+    });
 
-final searchRefreshSessionProvider = StateProvider<SearchRefreshSessionState>(
-  (ref) => const SearchRefreshSessionState.idle(),
-);
+final StateNotifierProvider<SearchRefreshController, SearchRefreshState>
+searchRefreshControllerProvider =
+    StateNotifierProvider<SearchRefreshController, SearchRefreshState>((ref) {
+      return SearchRefreshController(
+        refreshRunner: ref.watch(refreshSearchIndexUseCaseProvider),
+        indexRunner: ref.watch(indexPendingSearchUseCaseProvider),
+        lockGuard: ref.watch(searchLockGuardProvider),
+      );
+    });
 
-final searchRefreshFeedbackProvider = StateProvider<SearchRefreshFeedbackState>(
-  (ref) => const SearchRefreshFeedbackState.hidden(),
-);
+final Provider<SearchIndexTaskState> searchIndexTaskStateProvider =
+    Provider<SearchIndexTaskState>((ref) {
+      return ref.watch(
+        searchRefreshControllerProvider.select((state) => state.task),
+      );
+    });
 
-final searchPendingReindexHandoffProvider =
-    StateProvider<SearchPendingReindexHandoffState>(
-      (ref) => const SearchPendingReindexHandoffState.hidden(),
-    );
+final Provider<SearchRefreshSessionState> searchRefreshSessionProvider =
+    Provider<SearchRefreshSessionState>((ref) {
+      return ref.watch(
+        searchRefreshControllerProvider.select((state) => state.session),
+      );
+    });
 
-final searchScopeControllerProvider = Provider<SearchScopeController>((ref) {
-  return SearchScopeController(ref: ref);
-});
+final Provider<SearchRefreshFeedbackState> searchRefreshFeedbackProvider =
+    Provider<SearchRefreshFeedbackState>((ref) {
+      return ref.watch(
+        searchRefreshControllerProvider.select((state) => state.feedback),
+      );
+    });
 
-class SearchScopeController {
-  SearchScopeController({required Ref ref}) : _ref = ref;
-
-  final Ref _ref;
-
-  Future<void> update(SearchScopeConfig config) async {
-    _ref.read(searchIndexWriteFenceProvider).invalidate();
-    final current = await _ref.read(searchConfigurationProvider.future);
-    final repository = await _ref.read(
-      searchConfigurationRepositoryProvider.future,
-    );
-    await repository.save(
-      _configurationFromScope(current: current, scope: config),
-    );
-    invalidateSearchConfiguration(_ref);
-  }
-}
-
-SearchConfiguration _configurationFromScope({
-  required SearchConfiguration current,
-  required SearchScopeConfig scope,
-}) {
-  return current.copyWith(
-    includeTitle: scope.includeTitle,
-    includeSecretNote: scope.includeSecretNote,
-    includePasswordField: scope.includePasswordField,
-    includeUsername: scope.includeUsername,
-    includeUrl: scope.includeUrl,
-    includeTags: scope.includeTags,
-    includeNoteBody: scope.includeNoteBody,
-    allowLocalEmbedding: scope.allowLocalEmbedding,
-    allowExternalProviderAccess: scope.allowExternalProviderAccess,
-  );
-}
+final Provider<SearchPendingReindexHandoffState>
+searchPendingReindexHandoffProvider =
+    Provider<SearchPendingReindexHandoffState>((ref) {
+      return ref.watch(
+        searchRefreshControllerProvider.select((state) => state.handoff),
+      );
+    });

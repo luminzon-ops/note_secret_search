@@ -8,7 +8,6 @@ import 'package:note_secret_search/features/ai_models/application/model_selectio
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
-import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
@@ -32,14 +31,7 @@ class SensitiveStateInvalidator {
     _ref.read(freeChatControllerProvider.notifier).resetForLock();
 
     _ref.read(searchQueryProvider.notifier).state = '';
-    _ref.read(searchIndexTaskStateProvider.notifier).state =
-        const SearchIndexTaskState.idle();
-    _ref.read(searchRefreshSessionProvider.notifier).state =
-        const SearchRefreshSessionState.idle();
-    _ref.read(searchRefreshFeedbackProvider.notifier).state =
-        const SearchRefreshFeedbackState.hidden();
-    _ref.read(searchPendingReindexHandoffProvider.notifier).state =
-        const SearchPendingReindexHandoffState.hidden();
+    _ref.read(searchRefreshControllerProvider.notifier).resetForLock();
 
     _ref.read(currentChatSessionIdProvider.notifier).state = null;
     _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
@@ -53,6 +45,7 @@ class SensitiveStateInvalidator {
     _ref.invalidate(keywordSearchResultsProvider);
     _ref.invalidate(semanticSearchResultsProvider);
     _ref.invalidate(unifiedSearchResultsProvider);
+    _ref.invalidate(searchIndexStatusSnapshotProvider);
     _ref.invalidate(searchIndexStatusProvider);
 
     _ref.invalidate(chatSessionsProvider);

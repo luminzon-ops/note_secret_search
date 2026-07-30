@@ -81,10 +81,16 @@ final List<Override> contentSearchCompositionOverrides = <Override>[
         return ref.read(searchIndexSettingsProvider.future);
       },
       indexPending: () {
-        return ref.read(searchIndexControllerProvider).indexPending();
+        return ref
+            .read(indexPendingSearchUseCaseProvider)
+            .execute(
+              taskState: ref.read(searchIndexTaskStateProvider),
+              onTaskState: (_) {},
+            )
+            .then((_) {});
       },
       invalidateSearchProjections: () {
-        ref.invalidate(searchIndexStatusProvider);
+        ref.invalidate(searchIndexStatusSnapshotProvider);
         ref.invalidate(semanticSearchResultsProvider);
         ref.invalidate(unifiedSearchResultsProvider);
       },

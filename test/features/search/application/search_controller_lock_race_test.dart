@@ -14,6 +14,7 @@ import 'package:note_secret_search/features/search/application/search_index_serv
 import 'package:note_secret_search/features/search/application/search_index_model_revision_provider.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/search_settings_use_case.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/embedding_index_repository.dart';
@@ -203,7 +204,9 @@ ProviderContainer _buildContainer({
       sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
       defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
       searchCorpusReaderProvider.overrideWith((ref) => _emptyCorpusReader()),
-      searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+      searchIndexStatusSnapshotProvider.overrideWith(
+        (ref) async => _readyStatus(),
+      ),
       activeEmbeddingModelProvider.overrideWith((ref) async => _embeddingModel),
       searchIndexSettingsProvider.overrideWith(
         (ref) async => const SearchIndexSettings.defaults(),
@@ -230,14 +233,7 @@ void _lockAndClearSearchState(
   sessionController.lock();
   container.read(sensitiveStateAccessAllowedProvider.notifier).state = false;
   container.read(searchQueryProvider.notifier).state = '';
-  container.read(searchIndexTaskStateProvider.notifier).state =
-      const SearchIndexTaskState.idle();
-  container.read(searchRefreshSessionProvider.notifier).state =
-      const SearchRefreshSessionState.idle();
-  container.read(searchRefreshFeedbackProvider.notifier).state =
-      const SearchRefreshFeedbackState.hidden();
-  container.read(searchPendingReindexHandoffProvider.notifier).state =
-      const SearchPendingReindexHandoffState.hidden();
+  container.read(searchRefreshControllerProvider.notifier).resetForLock();
 }
 
 void _unlockSensitiveState(
@@ -292,8 +288,8 @@ void main() {
     addTearDown(container.dispose);
 
     final operation = container
-        .read(searchIndexControllerProvider)
-        .indexPending();
+        .read(searchRefreshControllerProvider.notifier)
+        .indexPendingOnly();
     await indexingStarted.future;
     expect(container.read(searchIndexTaskStateProvider).running, isTrue);
 
@@ -320,8 +316,8 @@ void main() {
     addTearDown(container.dispose);
 
     final operation = container
-        .read(searchIndexControllerProvider)
-        .indexPending();
+        .read(searchRefreshControllerProvider.notifier)
+        .indexPendingOnly();
     await indexingStarted.future;
 
     _lockAndClearSearchState(container, sessionController);
@@ -357,16 +353,18 @@ void main() {
 
       container.read(searchQueryProvider.notifier).state =
           'old sensitive query';
-      container
-          .read(searchPendingReindexHandoffProvider.notifier)
-          .state = const SearchPendingReindexHandoffState(
-        visible: true,
-        message: 'old handoff',
-      );
+      container.read(searchRefreshControllerProvider.notifier)
+        ..recordSettingsSaved(
+          SearchSettingsSaveResult(
+            savedConfiguration: SearchConfiguration.defaults(),
+            requiresReindex: true,
+          ),
+        )
+        ..publishHandoff();
 
       final operation = container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
       await refreshReadStarted.future;
       expect(container.read(searchRefreshSessionProvider).refreshing, isTrue);
 
@@ -406,35 +404,21 @@ void main() {
       container.read(searchQueryProvider.notifier).state =
           'old sensitive query';
       final operation = container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
       await refreshReadStarted.future;
 
       _lockAndClearSearchState(container, sessionController);
       _unlockSensitiveState(container, sessionController);
       container.read(searchQueryProvider.notifier).state = 'new query';
-      container
-          .read(searchRefreshSessionProvider.notifier)
-          .state = const SearchRefreshSessionState(
-        refreshing: true,
-        message: 'new refresh',
-      );
-      container
-          .read(searchRefreshFeedbackProvider.notifier)
-          .state = SearchRefreshFeedbackState(
-        visible: true,
-        headline: 'new feedback',
-        message: 'new result',
-        changed: false,
-        queryAtRefresh: 'new query',
-        completedAt: DateTime(2026, 7, 14),
-      );
-      container
-          .read(searchPendingReindexHandoffProvider.notifier)
-          .state = const SearchPendingReindexHandoffState(
-        visible: true,
-        message: 'new handoff',
-      );
+      container.read(searchRefreshControllerProvider.notifier)
+        ..recordSettingsSaved(
+          SearchSettingsSaveResult(
+            savedConfiguration: SearchConfiguration.defaults(),
+            requiresReindex: true,
+          ),
+        )
+        ..publishHandoff();
 
       refreshResults.completeError(StateError('late refresh failure'));
       try {
@@ -442,16 +426,16 @@ void main() {
       } catch (_) {}
 
       final refreshSession = container.read(searchRefreshSessionProvider);
-      expect(refreshSession.refreshing, isTrue);
-      expect(refreshSession.message, 'new refresh');
+      expect(refreshSession.refreshing, isFalse);
+      expect(refreshSession.message, isNull);
       final feedback = container.read(searchRefreshFeedbackProvider);
-      expect(feedback.visible, isTrue);
-      expect(feedback.headline, 'new feedback');
-      expect(feedback.message, 'new result');
-      expect(feedback.queryAtRefresh, 'new query');
+      expect(feedback.visible, isFalse);
+      expect(feedback.headline, isNull);
+      expect(feedback.message, isNull);
+      expect(feedback.queryAtRefresh, isNull);
       final handoff = container.read(searchPendingReindexHandoffProvider);
       expect(handoff.visible, isTrue);
-      expect(handoff.message, 'new handoff');
+      expect(handoff.message, isNotNull);
     },
   );
 }

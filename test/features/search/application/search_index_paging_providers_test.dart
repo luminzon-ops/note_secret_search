@@ -84,7 +84,7 @@ void main() {
         sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
         defaultVaultProvider.overrideWith((ref) async => _defaultVault()),
         searchCorpusReaderProvider.overrideWith((ref) => _emptyCorpusReader()),
-        searchIndexStatusProvider.overrideWith(
+        searchIndexStatusSnapshotProvider.overrideWith(
           (ref) async => const SearchIndexStatus(
             engineReady: true,
             engineReason: 'ready',
@@ -107,7 +107,9 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    await container.read(searchIndexControllerProvider).indexPending();
+    await container
+        .read(searchRefreshControllerProvider.notifier)
+        .indexPendingOnly();
 
     expect(service.indexCorpusPendingCalls, 1);
     expect(container.read(searchIndexTaskStateProvider).lastIndexedCount, 257);

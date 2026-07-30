@@ -11,8 +11,10 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/features/search/application/search_settings_use_case.dart';
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_index_status.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
@@ -21,6 +23,8 @@ import 'package:note_secret_search/features/notes/presentation/note_detail_page.
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/presentation/secret_detail_page.dart';
+
+import '../../../support/widget_test_helpers.dart';
 
 class _FakeCryptoService implements CryptoService {
   const _FakeCryptoService();
@@ -45,27 +49,54 @@ class _FakeCryptoService implements CryptoService {
   }
 }
 
-class _RecordingSearchIndexController extends SearchIndexController {
-  _RecordingSearchIndexController({required super.ref, this.error});
+class _RecordingSearchRefreshRunner implements SearchRefreshRunner {
+  _RecordingSearchRefreshRunner({this.error});
 
-  int calls = 0;
   int refreshCalls = 0;
   final Object? error;
 
   @override
-  Future<void> indexPending() async {
-    calls++;
-    if (error != null) {
-      throw error!;
-    }
-  }
-
-  @override
-  Future<void> indexPendingAndRefresh() async {
+  Future<SearchRefreshExecutionResult> execute({
+    required String query,
+    required SearchIndexTaskState taskState,
+    required SearchIndexTaskStateWriter onTaskState,
+    required SearchRefreshPhaseWriter onReloading,
+    required SearchRefreshFeedbackWriter onFeedback,
+  }) async {
     refreshCalls++;
     if (error != null) {
       throw error!;
     }
+    return SearchRefreshExecutionResult.completed;
+  }
+}
+
+SearchRefreshController _handoffRefreshController(
+  _RecordingSearchRefreshRunner runner,
+) {
+  return SearchRefreshController(
+      refreshRunner: runner,
+      indexRunner: const _NoopIndexRunner(),
+      lockGuard: SearchLockGuard(accessAllowed: true),
+    )
+    ..recordSettingsSaved(
+      SearchSettingsSaveResult(
+        savedConfiguration: SearchConfiguration.defaults(),
+        requiresReindex: true,
+      ),
+    )
+    ..publishHandoff();
+}
+
+class _NoopIndexRunner implements SearchIndexRunner {
+  const _NoopIndexRunner();
+
+  @override
+  Future<SearchIndexExecutionResult> execute({
+    required SearchIndexTaskState taskState,
+    required SearchIndexTaskStateWriter onTaskState,
+  }) async {
+    return SearchIndexExecutionResult.skipped;
   }
 }
 
@@ -2060,7 +2091,7 @@ void main() {
   testWidgets('SearchPage index action uses combined refresh controller flow', (
     tester,
   ) async {
-    late _RecordingSearchIndexController controller;
+    late _RecordingSearchRefreshRunner controller;
     final router = GoRouter(
       routes: [
         GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -2093,8 +2124,8 @@ void main() {
               ],
             ),
           ),
-          searchIndexControllerProvider.overrideWith((ref) {
-            controller = _RecordingSearchIndexController(ref: ref);
+          refreshSearchIndexUseCaseProvider.overrideWith((ref) {
+            controller = _RecordingSearchRefreshRunner();
             return controller;
           }),
           unifiedSearchResultsProvider.overrideWith(
@@ -2195,7 +2226,7 @@ void main() {
   testWidgets(
     'SearchPage pending-reindex handoff action triggers refresh flow',
     (tester) async {
-      late _RecordingSearchIndexController controller;
+      late _RecordingSearchRefreshRunner controller;
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -2211,8 +2242,8 @@ void main() {
                 message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
               ),
             ),
-            searchIndexControllerProvider.overrideWith((ref) {
-              controller = _RecordingSearchIndexController(ref: ref);
+            refreshSearchIndexUseCaseProvider.overrideWith((ref) {
+              controller = _RecordingSearchRefreshRunner();
               return controller;
             }),
             unifiedSearchResultsProvider.overrideWith(
@@ -2237,18 +2268,12 @@ void main() {
   testWidgets(
     'SearchPage clears pending-reindex handoff card after refresh starts successfully',
     (tester) async {
-      late _RecordingSearchIndexController controller;
+      late _RecordingSearchRefreshRunner controller;
       final container = ProviderContainer(
         overrides: [
-          searchPendingReindexHandoffProvider.overrideWith(
-            (ref) => const SearchPendingReindexHandoffState(
-              visible: true,
-              message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
-            ),
-          ),
-          searchIndexControllerProvider.overrideWith((ref) {
-            controller = _RecordingSearchIndexController(ref: ref);
-            return controller;
+          searchRefreshControllerProvider.overrideWith((ref) {
+            controller = _RecordingSearchRefreshRunner();
+            return _handoffRefreshController(controller);
           }),
           unifiedSearchResultsProvider.overrideWith(
             (ref) async => const <SearchResultItem>[],
@@ -2288,21 +2313,14 @@ void main() {
   testWidgets(
     'SearchPage keeps pending-reindex handoff card when refresh trigger fails',
     (tester) async {
-      late _RecordingSearchIndexController controller;
+      late _RecordingSearchRefreshRunner controller;
       final container = ProviderContainer(
         overrides: [
-          searchPendingReindexHandoffProvider.overrideWith(
-            (ref) => const SearchPendingReindexHandoffState(
-              visible: true,
-              message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
-            ),
-          ),
-          searchIndexControllerProvider.overrideWith((ref) {
-            controller = _RecordingSearchIndexController(
-              ref: ref,
+          searchRefreshControllerProvider.overrideWith((ref) {
+            controller = _RecordingSearchRefreshRunner(
               error: StateError('refresh failed'),
             );
-            return controller;
+            return _handoffRefreshController(controller);
           }),
           unifiedSearchResultsProvider.overrideWith(
             (ref) async => const <SearchResultItem>[],
@@ -3018,7 +3036,7 @@ void main() {
   testWidgets(
     'SearchPage can trigger combined refresh action and show success feedback',
     (tester) async {
-      late _RecordingSearchIndexController controller;
+      late _RecordingSearchRefreshRunner controller;
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -3052,8 +3070,11 @@ void main() {
                 taskState: const SearchIndexTaskState.idle(),
               ),
             ),
-            searchIndexControllerProvider.overrideWith((ref) {
-              controller = _RecordingSearchIndexController(ref: ref);
+            searchLockGuardProvider.overrideWith(
+              (ref) => SearchLockGuard(accessAllowed: true),
+            ),
+            refreshSearchIndexUseCaseProvider.overrideWith((ref) {
+              controller = _RecordingSearchRefreshRunner();
               return controller;
             }),
             unifiedSearchResultsProvider.overrideWith(
@@ -3067,9 +3088,9 @@ void main() {
         ),
       );
 
-      await tester.pumpAndSettle();
+      await pumpUntilFound(tester, find.text('立即构建索引'));
       await tester.tap(find.text('立即构建索引'));
-      await tester.pump();
+      await pumpUntilFound(tester, find.text('已开始构建索引，请稍后刷新搜索结果。'));
 
       expect(controller.refreshCalls, 1);
       expect(find.text('已开始构建索引，请稍后刷新搜索结果。'), findsOneWidget);
@@ -3079,7 +3100,7 @@ void main() {
   testWidgets(
     'SearchPage shows failure feedback when combined refresh action fails',
     (tester) async {
-      late _RecordingSearchIndexController controller;
+      late _RecordingSearchRefreshRunner controller;
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -3118,9 +3139,8 @@ void main() {
                 ),
               ),
             ),
-            searchIndexControllerProvider.overrideWith((ref) {
-              controller = _RecordingSearchIndexController(
-                ref: ref,
+            refreshSearchIndexUseCaseProvider.overrideWith((ref) {
+              controller = _RecordingSearchRefreshRunner(
                 error: StateError('索引失败'),
               );
               return controller;

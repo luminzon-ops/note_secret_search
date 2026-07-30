@@ -208,7 +208,9 @@ void main() {
           ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => ''),
-          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          searchIndexStatusSnapshotProvider.overrideWith(
+            (ref) async => _readyStatus(),
+          ),
           activeEmbeddingModelProvider.overrideWith(
             (ref) async => _fakeEmbeddingModel,
           ),
@@ -236,8 +238,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.visible, isTrue);
@@ -262,7 +264,9 @@ void main() {
           ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
-          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          searchIndexStatusSnapshotProvider.overrideWith(
+            (ref) async => _readyStatus(),
+          ),
           activeEmbeddingModelProvider.overrideWith(
             (ref) async => _fakeEmbeddingModel,
           ),
@@ -290,8 +294,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.visible, isTrue);
@@ -316,7 +320,9 @@ void main() {
           ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
-          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          searchIndexStatusSnapshotProvider.overrideWith(
+            (ref) async => _readyStatus(),
+          ),
           activeEmbeddingModelProvider.overrideWith(
             (ref) async => _fakeEmbeddingModel,
           ),
@@ -345,8 +351,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.visible, isTrue);
@@ -371,7 +377,9 @@ void main() {
           ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
-          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          searchIndexStatusSnapshotProvider.overrideWith(
+            (ref) async => _readyStatus(),
+          ),
           activeEmbeddingModelProvider.overrideWith(
             (ref) async => _fakeEmbeddingModel,
           ),
@@ -400,8 +408,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.visible, isTrue);
@@ -426,7 +434,9 @@ void main() {
           ),
           cryptoServiceProvider.overrideWithValue(const _FakeCryptoService()),
           searchQueryProvider.overrideWith((ref) => 'bank'),
-          searchIndexStatusProvider.overrideWith((ref) async => _readyStatus()),
+          searchIndexStatusSnapshotProvider.overrideWith(
+            (ref) async => _readyStatus(),
+          ),
           activeEmbeddingModelProvider.overrideWith(
             (ref) async => _fakeEmbeddingModel,
           ),
@@ -457,8 +467,8 @@ void main() {
       addTearDown(container.dispose);
 
       await container
-          .read(searchIndexControllerProvider)
-          .indexPendingAndRefresh();
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(container.read(searchQueryProvider));
 
       final feedback = container.read(searchRefreshFeedbackProvider);
       expect(feedback.changed, isTrue);

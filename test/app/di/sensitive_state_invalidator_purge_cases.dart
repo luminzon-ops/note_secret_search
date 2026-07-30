@@ -120,6 +120,12 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       final externalRepository = _ExternalRepository();
       final registryRepository = _RegistryRepository();
       final downloadRepository = _DownloadRepository();
+      final activeSelectionStore = _ActiveSelectionStore(
+        activeEmbeddingModelId: _embeddingModel.id,
+      );
+      final localLlmSelectionStore = _LocalLlmSelectionStore(
+        activeModelId: _llmModel.id,
+      );
       final embeddingEngine = _ReadyEmbeddingEngine();
       final llmEngine = _ReadyLlmEngine();
       final searchRepository = _SearchRepository();
@@ -152,8 +158,43 @@ void registerSensitiveStateInvalidatorPurgeTests() {
           externalProviderRepositoryProvider.overrideWithValue(
             externalRepository,
           ),
+          externalProviderClientProvider.overrideWith((ref) {
+            return ExternalProviderClientRouter(
+              openAiCompatible: OpenAiCompatibleProviderClient(dio: Dio()),
+              ollama: OllamaProviderClient(dio: Dio()),
+            );
+          }),
           modelRegistryRepositoryProvider.overrideWithValue(registryRepository),
+          modelLifecycleStoreProvider.overrideWithValue(
+            const _NoopModelLifecycleStore(),
+          ),
+          modelRuntimeCoordinatorProvider.overrideWithValue(
+            const _NoopModelRuntimeCoordinator(),
+          ),
+          localLlmSelectionStoreProvider.overrideWithValue(
+            localLlmSelectionStore,
+          ),
           modelDownloadRepositoryProvider.overrideWithValue(downloadRepository),
+          activeModelSelectionStoreProvider.overrideWith(
+            (ref) async => activeSelectionStore,
+          ),
+          activeEmbeddingSelectionEffectsProvider.overrideWithValue(
+            const _NoopActiveEmbeddingSelectionEffects(),
+          ),
+          modelSelectionRegistryEntriesProvider.overrideWith(
+            (ref) async => const [_embeddingModel, _llmModel],
+          ),
+          modelSelectionEmbeddingRuntimeStatesProvider.overrideWith(
+            (ref) async => {
+              _embeddingModel.id: const EmbeddingEngineState(
+                ready: true,
+                reason: 'ready',
+                status: EmbeddingRuntimeStatus.ready,
+                vectorDimension: 1,
+                modelPath: '/private/models/embedding.onnx',
+              ),
+            },
+          ),
           modelCatalogEntriesProvider.overrideWith((ref) async => const []),
           modelDownloadServiceProvider.overrideWithValue(
             _AlwaysPresentModelDownloadService(),
@@ -188,37 +229,14 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       addTearDown(container.dispose);
 
       container.read(searchQueryProvider.notifier).state = 'Sensitive';
-      container
-          .read(searchIndexTaskStateProvider.notifier)
-          .state = SearchIndexTaskState(
-        running: true,
-        lastCompletedAt: DateTime(2026, 7, 14),
-        lastIndexedCount: 2,
-        lastError: 'sensitive index error',
-      );
-      container
-          .read(searchRefreshSessionProvider.notifier)
-          .state = SearchRefreshSessionState(
-        refreshing: true,
-        message: 'sensitive refresh state',
-        lastCompletedAt: DateTime(2026, 7, 14),
-      );
-      container
-          .read(searchRefreshFeedbackProvider.notifier)
-          .state = SearchRefreshFeedbackState(
-        visible: true,
-        headline: 'sensitive feedback',
-        message: 'sensitive result summary',
-        changed: true,
-        queryAtRefresh: 'Sensitive',
-        completedAt: DateTime(2026, 7, 14),
-      );
-      container
-          .read(searchPendingReindexHandoffProvider.notifier)
-          .state = const SearchPendingReindexHandoffState(
-        visible: true,
-        message: 'sensitive handoff',
-      );
+      container.read(searchRefreshControllerProvider.notifier)
+        ..recordSettingsSaved(
+          SearchSettingsSaveResult(
+            savedConfiguration: SearchConfiguration.defaults(),
+            requiresReindex: true,
+          ),
+        )
+        ..publishHandoff();
 
       expect(
         (await container.read(defaultVaultProvider.future))?.id,
@@ -298,7 +316,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
         isTrue,
       );
       final clientBeforeLock = container.read(externalProviderClientProvider);
-      expect(clientBeforeLock, isA<OllamaProviderClient>());
+      expect(clientBeforeLock, isA<ExternalProviderClientRouter>());
 
       expect(
         await container.read(modelRegistryEntriesProvider.future),
@@ -420,7 +438,10 @@ void registerSensitiveStateInvalidatorPurgeTests() {
       );
       expect(
         container.read(externalProviderClientProvider),
-        isA<OpenAiCompatibleProviderClient>(),
+        allOf(
+          isA<ExternalProviderClientRouter>(),
+          isNot(same(clientBeforeLock)),
+        ),
       );
       expect(
         await container.read(modelRegistryEntriesProvider.future),

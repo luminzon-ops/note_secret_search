@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
-import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
+import 'package:note_secret_search/features/search/application/search_settings_use_case.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';
@@ -21,14 +21,6 @@ final searchConfigurationProvider = FutureProvider<SearchConfiguration>((
     searchConfigurationRepositoryProvider.future,
   );
   return repository.load();
-});
-
-final effectiveSearchPolicyProvider = FutureProvider<EffectiveSearchPolicy>((
-  ref,
-) async {
-  return EffectiveSearchPolicy(
-    await ref.watch(searchConfigurationProvider.future),
-  );
 });
 
 final searchIndexSettingsProvider = FutureProvider<SearchIndexSettings>((
@@ -58,38 +50,23 @@ final searchScopeConfigProvider = FutureProvider<SearchScopeConfig>((
   );
 });
 
-final searchIndexSettingsControllerProvider =
-    Provider<SearchIndexSettingsController>((ref) {
-      return SearchIndexSettingsController(ref: ref);
-    });
-
-class SearchIndexSettingsController {
-  SearchIndexSettingsController({required Ref ref}) : _ref = ref;
-
-  final Ref _ref;
-
-  Future<void> update(SearchIndexSettings settings) async {
-    _ref.read(searchIndexWriteFenceProvider).invalidate();
-    final current = await _ref.read(searchConfigurationProvider.future);
-    final repository = await _ref.read(
-      searchConfigurationRepositoryProvider.future,
-    );
-    await repository.save(
-      current.copyWith(
-        autoIndexEnabled: settings.autoIndexEnabled,
-        maxChunkLength: settings.maxChunkLength,
-      ),
-    );
-    _invalidateSearchConfiguration(_ref);
-  }
-}
+final searchSettingsUseCaseProvider = Provider<SearchSettingsUseCase>((ref) {
+  return SearchSettingsUseCase(
+    writeFence: ref.watch(searchIndexWriteFenceProvider),
+    loadConfiguration: () {
+      return ref.read(searchConfigurationProvider.future);
+    },
+    loadRepository: () {
+      return ref.read(searchConfigurationRepositoryProvider.future);
+    },
+    invalidateConfiguration: () {
+      invalidateSearchConfiguration(ref);
+    },
+  );
+});
 
 void invalidateSearchConfiguration(Ref ref) {
-  _invalidateSearchConfiguration(ref);
-}
-
-void _invalidateSearchConfiguration(Ref ref) {
   ref.invalidate(searchConfigurationProvider);
-  ref.invalidate(effectiveSearchPolicyProvider);
   ref.invalidate(searchIndexSettingsProvider);
+  ref.invalidate(searchScopeConfigProvider);
 }

@@ -59,6 +59,17 @@ class SearchIndexStatus {
   int get pendingCount => _pendingCount ?? pendingItems.length;
 
   bool get hasPending => pendingCount > 0;
+
+  SearchIndexStatus copyWith({SearchIndexTaskState? taskState}) {
+    return SearchIndexStatus(
+      engineReady: engineReady,
+      engineReason: engineReason,
+      hasActiveEmbeddingModel: hasActiveEmbeddingModel,
+      pendingItems: pendingItems,
+      pendingCount: pendingCount,
+      taskState: taskState ?? this.taskState,
+    );
+  }
 }
 
 class SearchIndexTaskState {

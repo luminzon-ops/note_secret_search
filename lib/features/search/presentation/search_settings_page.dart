@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_presentation_formatter.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
@@ -22,41 +23,37 @@ class SearchSettingsPage extends ConsumerStatefulWidget {
 class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
   SearchScopeConfig? _draftScope;
   SearchIndexSettings? _draftIndexSettings;
-  bool _showPostSaveReindexActions = false;
 
   Future<void> _triggerPostSaveRefresh(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(searchIndexControllerProvider).indexPendingAndRefresh();
-      if (!context.mounted) {
+      final result = await ref
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(ref.read(searchQueryProvider));
+      if (result != SearchRefreshExecutionResult.completed) {
         return;
       }
-      setState(() => _showPostSaveReindexActions = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
+      if (!messenger.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
+      );
     } catch (_) {
-      if (!context.mounted) {
+      if (!messenger.mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
+      messenger.showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
   void _returnToSearch(BuildContext context) {
-    ref
-        .read(searchPendingReindexHandoffProvider.notifier)
-        .state = const SearchPendingReindexHandoffState(
-      visible: true,
-      message: '你刚保存了会影响语义索引的设置。刷新索引后，再判断当前语义结果会更准确。',
-    );
-    setState(() => _showPostSaveReindexActions = false);
+    ref.read(searchRefreshControllerProvider.notifier).publishHandoff();
     if (context.canPop()) {
       context.pop();
       return;
     }
-    context.go('/');
+    context.go(AppDestination.search);
   }
 
   @override
@@ -67,6 +64,7 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
     final indexStatusAsync = ref.watch(searchIndexStatusProvider);
     final indexSettingsAsync = ref.watch(searchIndexSettingsProvider);
     final refreshSession = ref.watch(searchRefreshSessionProvider);
+    final refreshState = ref.watch(searchRefreshControllerProvider);
 
     final savedScope = scopeAsync.valueOrNull;
     final savedIndexSettings = indexSettingsAsync.valueOrNull;
@@ -103,7 +101,7 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
     return Scaffold(
       appBar: AppBar(title: const Text('搜索与索引设置')),
       bottomNavigationBar:
-          _showPostSaveReindexActions && !refreshSession.refreshing
+          refreshState.postSaveNeedsReindex && !refreshSession.refreshing
           ? SafeArea(
               top: false,
               child: Padding(
@@ -185,36 +183,26 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
               settings: _draftIndexSettings ?? settings,
               onChanged: (next) => setState(() {
                 _draftIndexSettings = next;
-                _showPostSaveReindexActions = false;
+                ref
+                    .read(searchRefreshControllerProvider.notifier)
+                    .clearPostSaveReindex();
               }),
               onSave: () async {
                 final draft = _draftIndexSettings;
-                final savedScopeSnapshot = savedScope;
-                final savedSettingsSnapshot = savedIndexSettings;
-                final indexStatusSnapshot = indexStatusAsync.valueOrNull;
                 if (draft == null) {
                   return;
                 }
-                final needsReindex =
-                    savedScopeSnapshot != null &&
-                    savedSettingsSnapshot != null &&
-                    indexStatusSnapshot != null &&
-                    buildSearchSettingsImpactPreview(
-                      savedScope: savedScopeSnapshot,
-                      draftScope: _draftScope ?? savedScopeSnapshot,
-                      savedIndexSettings: savedSettingsSnapshot,
-                      draftIndexSettings: draft,
-                      indexStatus: indexStatusSnapshot,
-                    ).reindexItems.isNotEmpty;
-                await ref
-                    .read(searchIndexSettingsControllerProvider)
-                    .update(draft);
+                final result = await ref
+                    .read(searchSettingsUseCaseProvider)
+                    .saveIndexSettings(draft);
                 if (!mounted) {
                   return;
                 }
+                ref
+                    .read(searchRefreshControllerProvider.notifier)
+                    .recordSettingsSaved(result);
                 setState(() {
                   _draftIndexSettings = draft;
-                  _showPostSaveReindexActions = needsReindex;
                 });
               },
             ),
@@ -227,35 +215,26 @@ class _SearchSettingsPageState extends ConsumerState<SearchSettingsPage> {
               scope: _draftScope ?? scope,
               onChanged: (next) => setState(() {
                 _draftScope = next;
-                _showPostSaveReindexActions = false;
+                ref
+                    .read(searchRefreshControllerProvider.notifier)
+                    .clearPostSaveReindex();
               }),
               onSave: () async {
                 final draft = _draftScope;
-                final savedScopeSnapshot = savedScope;
-                final savedSettingsSnapshot = savedIndexSettings;
-                final indexStatusSnapshot = indexStatusAsync.valueOrNull;
                 if (draft == null) {
                   return;
                 }
-                final needsReindex =
-                    savedScopeSnapshot != null &&
-                    savedSettingsSnapshot != null &&
-                    indexStatusSnapshot != null &&
-                    buildSearchSettingsImpactPreview(
-                      savedScope: savedScopeSnapshot,
-                      draftScope: draft,
-                      savedIndexSettings: savedSettingsSnapshot,
-                      draftIndexSettings:
-                          _draftIndexSettings ?? savedSettingsSnapshot,
-                      indexStatus: indexStatusSnapshot,
-                    ).reindexItems.isNotEmpty;
-                await ref.read(searchScopeControllerProvider).update(draft);
+                final result = await ref
+                    .read(searchSettingsUseCaseProvider)
+                    .saveScope(draft);
                 if (!mounted) {
                   return;
                 }
+                ref
+                    .read(searchRefreshControllerProvider.notifier)
+                    .recordSettingsSaved(result);
                 setState(() {
                   _draftScope = draft;
-                  _showPostSaveReindexActions = needsReindex;
                 });
               },
             ),
@@ -350,28 +329,32 @@ class _IndexStatusCard extends ConsumerWidget {
   final SearchRefreshSessionState refreshSession;
 
   Future<void> _handleIndexAction(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     if (!status.hasPending) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前没有待索引内容，无需手动触发构建。')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('当前没有待索引内容，无需手动触发构建。')),
+      );
       return;
     }
 
     try {
-      await ref.read(searchIndexControllerProvider).indexPendingAndRefresh();
-      if (!context.mounted) {
+      final result = await ref
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(ref.read(searchQueryProvider));
+      if (result != SearchRefreshExecutionResult.completed) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
+      if (!messenger.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
+      );
     } catch (_) {
-      if (!context.mounted) {
+      if (!messenger.mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
+      messenger.showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -562,21 +545,25 @@ class _SemanticReadinessCard extends ConsumerWidget {
   final SearchRefreshSessionState refreshSession;
 
   Future<void> _handleIndexAction(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      await ref.read(searchIndexControllerProvider).indexPendingAndRefresh();
-      if (!context.mounted) {
+      final result = await ref
+          .read(searchRefreshControllerProvider.notifier)
+          .refresh(ref.read(searchQueryProvider));
+      if (result != SearchRefreshExecutionResult.completed) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')));
+      if (!messenger.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        const SnackBar(content: Text('已开始处理待索引内容，请稍后查看最新结果。')),
+      );
     } catch (_) {
-      if (!context.mounted) {
+      if (!messenger.mounted) {
         return;
       }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
+      messenger.showSnackBar(const SnackBar(content: Text('索引触发失败，请稍后重试。')));
     }
   }
 
@@ -744,7 +731,12 @@ class _SemanticReadinessCard extends ConsumerWidget {
     final items = <_GuidanceItem>[];
 
     if (readiness.activeEmbeddingModel == null) {
-      items.add(const _GuidanceItem(label: '前往模型管理选择语义模型', route: '/models'));
+      items.add(
+        const _GuidanceItem(
+          label: '前往模型管理选择语义模型',
+          route: AppDestination.models,
+        ),
+      );
     }
     if (!scope.allowLocalEmbedding) {
       items.add(const _GuidanceItem(label: '启用检索范围中的本地语义检索'));

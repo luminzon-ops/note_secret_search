@@ -81,7 +81,7 @@ void _expectImmediateSensitiveProvidersLocked(ProviderContainer container) {
   );
   expect(
     container.read(externalProviderClientProvider),
-    isA<OpenAiCompatibleProviderClient>(),
+    isA<ExternalProviderClientRouter>(),
   );
   _expectImmediateLockedValue(
     container.read(modelRegistryEntriesProvider),

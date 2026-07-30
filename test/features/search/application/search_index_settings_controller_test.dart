@@ -29,8 +29,8 @@ void main() {
       final writeFence = container.read(searchIndexWriteFenceProvider);
 
       await container
-          .read(searchIndexSettingsControllerProvider)
-          .update(
+          .read(searchSettingsUseCaseProvider)
+          .saveIndexSettings(
             const SearchIndexSettings(
               autoIndexEnabled: false,
               maxChunkLength: 160,
@@ -60,8 +60,8 @@ void main() {
     final writeFence = container.read(searchIndexWriteFenceProvider);
 
     await container
-        .read(searchScopeControllerProvider)
-        .update(
+        .read(searchSettingsUseCaseProvider)
+        .saveScope(
           const SearchScopeConfig.defaults().copyWith(includeTitle: false),
         );
 
