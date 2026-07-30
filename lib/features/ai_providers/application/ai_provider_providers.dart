@@ -17,16 +17,12 @@ final externalProviderRepositoryProvider = Provider<ExternalProviderRepository>(
   );
 });
 
-final externalProviderClientProvider = Provider<ExternalProviderClient>((ref) {
-  throw StateError(
-    'externalProviderClientProvider must be overridden by app composition',
-  );
-});
-
 final externalProviderClientRouterProvider = Provider<ExternalProviderClient>((
   ref,
 ) {
-  return ref.watch(externalProviderClientProvider);
+  throw StateError(
+    'externalProviderClientRouterProvider must be overridden by app composition',
+  );
 });
 
 final externalProviderConsentStoreProvider =
@@ -303,7 +299,7 @@ class ExternalProviderSettingsController {
     _ref.invalidate(enabledExternalProviderProvider);
     _ref.invalidate(externalProviderConfigsProvider);
     _ref.invalidate(externalProviderStatusProvider);
-    _ref.invalidate(externalProviderClientProvider);
+    _ref.invalidate(externalProviderClientRouterProvider);
   }
 
   Future<void> testConnection(ExternalProviderConfig config) async {

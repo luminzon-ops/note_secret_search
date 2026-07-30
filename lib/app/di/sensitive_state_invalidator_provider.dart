@@ -55,7 +55,7 @@ class SensitiveStateInvalidator {
 
     _ref.invalidate(enabledExternalProviderProvider);
     _ref.invalidate(externalProviderStatusProvider);
-    _ref.invalidate(externalProviderClientProvider);
+    _ref.invalidate(externalProviderClientRouterProvider);
 
     _ref.invalidate(modelRegistryEntriesProvider);
     _ref.invalidate(modelDownloadTasksProvider);

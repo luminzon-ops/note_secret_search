@@ -136,7 +136,7 @@ final List<Override> aiCompositionOverrides = <Override>[
       cryptoService: ref.watch(cryptoServiceProvider),
     );
   }),
-  externalProviderClientProvider.overrideWith((ref) {
+  externalProviderClientRouterProvider.overrideWith((ref) {
     return ExternalProviderClientRouter(
       openAiCompatible: OpenAiCompatibleProviderClient(dio: Dio()),
       ollama: OllamaProviderClient(dio: Dio()),

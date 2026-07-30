@@ -158,7 +158,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
           externalProviderRepositoryProvider.overrideWithValue(
             externalRepository,
           ),
-          externalProviderClientProvider.overrideWith((ref) {
+          externalProviderClientRouterProvider.overrideWith((ref) {
             return ExternalProviderClientRouter(
               openAiCompatible: OpenAiCompatibleProviderClient(dio: Dio()),
               ollama: OllamaProviderClient(dio: Dio()),
@@ -315,7 +315,9 @@ void registerSensitiveStateInvalidatorPurgeTests() {
         (await container.read(externalProviderStatusProvider.future)).available,
         isTrue,
       );
-      final clientBeforeLock = container.read(externalProviderClientProvider);
+      final clientBeforeLock = container.read(
+        externalProviderClientRouterProvider,
+      );
       expect(clientBeforeLock, isA<ExternalProviderClientRouter>());
 
       expect(
@@ -437,7 +439,7 @@ void registerSensitiveStateInvalidatorPurgeTests() {
         isFalse,
       );
       expect(
-        container.read(externalProviderClientProvider),
+        container.read(externalProviderClientRouterProvider),
         allOf(
           isA<ExternalProviderClientRouter>(),
           isNot(same(clientBeforeLock)),

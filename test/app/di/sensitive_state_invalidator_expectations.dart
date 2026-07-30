@@ -80,7 +80,7 @@ void _expectImmediateSensitiveProvidersLocked(ProviderContainer container) {
         .having((status) => status.config, 'config', isNull),
   );
   expect(
-    container.read(externalProviderClientProvider),
+    container.read(externalProviderClientRouterProvider),
     isA<ExternalProviderClientRouter>(),
   );
   _expectImmediateLockedValue(

@@ -127,7 +127,9 @@ void main() {
               config: _externalProvider,
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(fakeExternalClient),
+          externalProviderClientRouterProvider.overrideWithValue(
+            fakeExternalClient,
+          ),
         ],
       );
 

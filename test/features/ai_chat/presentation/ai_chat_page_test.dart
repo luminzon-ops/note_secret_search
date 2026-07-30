@@ -630,7 +630,7 @@ void main() {
               ],
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(
+          externalProviderClientRouterProvider.overrideWithValue(
             _ImmediateExternalProviderClient(),
           ),
         ],
@@ -714,7 +714,7 @@ void main() {
               ],
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(
+          externalProviderClientRouterProvider.overrideWithValue(
             _ImmediateExternalProviderClient(),
           ),
         ],
@@ -799,7 +799,7 @@ void main() {
               ],
             ),
           ),
-          externalProviderClientProvider.overrideWithValue(
+          externalProviderClientRouterProvider.overrideWithValue(
             _ImmediateExternalProviderClient(),
           ),
         ],
