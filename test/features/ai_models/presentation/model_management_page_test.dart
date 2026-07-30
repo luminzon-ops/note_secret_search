@@ -1026,7 +1026,7 @@ void main() {
     expect(activeChip, findsOneWidget);
   });
 
-  testWidgets('ModelManagementPage shows 下载任务未开始 when no download task exists', (
+  testWidgets('ModelManagementPage shows 尚未创建下载任务 when no download task exists', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -1073,7 +1073,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('下载任务未开始'), findsOneWidget);
+    expect(find.text('尚未创建下载任务'), findsOneWidget);
   });
 
   testWidgets('ModelManagementPage shows queued download guidance for queued task', (

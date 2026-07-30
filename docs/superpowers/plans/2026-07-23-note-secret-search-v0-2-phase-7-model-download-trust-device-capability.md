@@ -77,7 +77,7 @@
 - Device Profiler 返回完整 `supportedAbis`、RAM、存储、SDK 和设备信息；纯 Dart assessment 只生成兼容性说明和默认推荐。
 - 默认推荐依据 `minRamMb`、artifact size、存储余量和 manifest ABI 约束排序；profile 缺失时保留 catalog 顺序。Profiler 永远不写 `ready/enabled`，真实 checksum、文件、ABI/JNI 和 runtime load 仍是最终权威。
 - 当前 LLM runtime supported ABI 为 `arm64-v8a`；`armeabi-v7a`、`x86_64`、`x86` fixture 返回稳定 unsupported，不触发 native load crash；Phase 6 AAR 内容与 hash保持不变。
-- MiniCPM 在 signed catalog、provider、UI、download、registry adoption、Dart bridge、native runtime、instrumentation 各层保持隐藏/unsupported。真实 mtmd backend、完整 digest、ABI packaging 和真机 E2E 另立 Phase 8 计划。
+- MiniCPM 在 signed catalog、provider、UI、download、registry adoption、Dart bridge、native runtime、instrumentation 各层保持隐藏/unsupported。真实 mtmd backend、完整 digest、ABI packaging 和真机 E2E 位于 Phase 8 范围之外，需另立阶段并取得单独授权。
 
 ## 7. 文件范围与 RED→GREEN 提交切片
 

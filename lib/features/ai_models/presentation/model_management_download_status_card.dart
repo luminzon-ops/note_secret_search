@@ -29,8 +29,8 @@ class _DownloadStatusCard extends StatelessWidget {
       return const ListTile(
         contentPadding: EdgeInsets.zero,
         leading: Icon(Icons.downloading_outlined),
-        title: Text('下载任务未开始'),
-        subtitle: Text('当前只建立下载状态机骨架，后续会接入真实下载器。'),
+        title: Text('尚未创建下载任务'),
+        subtitle: Text('开始下载后，这里会显示来源、进度、续传与校验状态。'),
       );
     }
 

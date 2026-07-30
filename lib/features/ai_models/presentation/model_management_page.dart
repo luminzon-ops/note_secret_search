@@ -142,7 +142,7 @@ class _ModelDownloadNoticeCard extends StatelessWidget {
             Text('模型下载与本地部署说明'),
             SizedBox(height: 8),
             Text(
-              '当前已接入目录驱动下载、checksum 校验、断点续传、自动切源、下载恢复与下载后 runtime 校验。MVP 阶段仍未完成签名校验、安装探测增强、benchmark 与更完整设备分级。',
+              '模型目录使用 Ed25519 签名校验，每个 artifact 都有独立 SHA-256。下载支持断点续传、自动切源与恢复，并通过原子安装和安装后 runtime 校验完成部署；设备建议基于 ABI、内存与存储评估。',
             ),
           ],
         ),
