@@ -9,6 +9,8 @@ class _CatalogEntryTile extends ConsumerStatefulWidget {
     required this.llmRuntimeState,
     required this.allTasks,
     required this.capabilityAssessment,
+    required this.activeEmbeddingModelId,
+    required this.activeLlmModelId,
   });
 
   final ModelCatalogEntry entry;
@@ -18,6 +20,8 @@ class _CatalogEntryTile extends ConsumerStatefulWidget {
   final LlmRuntimeState? llmRuntimeState;
   final List<ModelDownloadTask> allTasks;
   final ModelCapabilityAssessment? capabilityAssessment;
+  final String? activeEmbeddingModelId;
+  final String? activeLlmModelId;
 
   @override
   ConsumerState<_CatalogEntryTile> createState() => _CatalogEntryTileState();
@@ -41,11 +45,6 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
   LlmRuntimeState? get llmRuntimeState => widget.llmRuntimeState;
   ModelCapabilityAssessment? get capabilityAssessment =>
       widget.capabilityAssessment;
-
-  String? get _activeLlmModelId {
-    final activeLlmAsync = ref.watch(activeLocalLlmModelProvider);
-    return activeLlmAsync.valueOrNull?.id;
-  }
 
   ModelDownloadTask? _taskForSource(String? sourceId) {
     if (sourceId == null) {
@@ -103,7 +102,6 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
     final maintenance = ref.watch(modelMaintenanceUseCaseProvider);
     final selectedSource = _selectedSource;
     final effectiveSource = _effectiveSource;
-    final selectionAsync = ref.watch(activeModelSelectionProvider);
     final isInstalled = installedEntry?.isInstalled ?? false;
     final canDeleteLocalModel = installedEntry != null;
     final isDownloadSupported = isCatalogEntryDownloadSupported(entry);
@@ -111,10 +109,8 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
     final isDownloading = activeTask?.status == ModelDownloadStatus.downloading;
     final canRetry =
         activeTask?.status == ModelDownloadStatus.failed || activeTask == null;
-    final activeEmbeddingModelId =
-        selectionAsync.valueOrNull?.activeEmbeddingModelId;
     final isActiveEmbeddingModel =
-        entry.type == 'embedding' && activeEmbeddingModelId == entry.id;
+        entry.type == 'embedding' && widget.activeEmbeddingModelId == entry.id;
     final canActivateEmbedding =
         entry.type != 'embedding' ||
         ((installedEntry?.isInstalled ?? false) && runtimeState?.ready == true);
@@ -348,26 +344,20 @@ class _CatalogEntryTileState extends ConsumerState<_CatalogEntryTile> {
               label: Text(isActiveEmbeddingModel ? '取消启用' : '设为语义模型'),
             ),
             if (entry.type == 'llm' && isInstalled) ...[
-              Builder(
-                builder: (context) {
-                  final llmRuntimeStates =
-                      ref.watch(llmRuntimeStatesProvider).valueOrNull ??
-                      const <String, LlmRuntimeState>{};
-                  final llmRuntimeState = llmRuntimeStates[entry.id];
-                  final llmReady = llmRuntimeState?.ready == true;
-                  final isActiveLocalLlm = _activeLlmModelId == entry.id;
-                  return OutlinedButton.icon(
-                    onPressed: !llmReady
-                        ? null
-                        : () => ref
-                              .read(modelActivationUseCaseProvider)
-                              .setLocalLlm(
-                                isActiveLocalLlm ? null : entry.id,
-                              ),
-                    icon: const Icon(Icons.smart_toy_outlined),
-                    label: Text(isActiveLocalLlm ? '取消启用' : '设为当前本地LLM'),
-                  );
-                },
+              OutlinedButton.icon(
+                onPressed: llmRuntimeState?.ready != true
+                    ? null
+                    : () => ref
+                          .read(modelActivationUseCaseProvider)
+                          .setLocalLlm(
+                            widget.activeLlmModelId == entry.id
+                                ? null
+                                : entry.id,
+                          ),
+                icon: const Icon(Icons.smart_toy_outlined),
+                label: Text(
+                  widget.activeLlmModelId == entry.id ? '取消启用' : '设为当前本地LLM',
+                ),
               ),
             ],
             TextButton.icon(

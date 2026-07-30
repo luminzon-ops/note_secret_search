@@ -6,6 +6,7 @@ import 'package:note_secret_search/features/ai_models/application/model_catalog_
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_use_cases.dart';
+import 'package:note_secret_search/features/ai_models/domain/active_model_selection.dart';
 import 'package:note_secret_search/features/ai_models/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_capability_assessment.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
@@ -18,6 +19,7 @@ import 'package:note_secret_search/features/search/domain/embedding_engine.dart'
 
 part 'model_management_catalog_entry.dart';
 part 'model_management_download_status_card.dart';
+part 'model_management_async_state.dart';
 
 class ModelManagementPage extends ConsumerWidget {
   const ModelManagementPage({super.key});
@@ -39,53 +41,19 @@ class ModelManagementPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          DeviceTierCard(
-            profile: deviceProfileAsync.valueOrNull,
-            capabilityReport: capabilityReportAsync.valueOrNull,
+          _buildDeviceCapabilitySection(
+            profileAsync: deviceProfileAsync,
+            capabilityReportAsync: capabilityReportAsync,
           ),
           const SizedBox(height: 16),
           const _ModelDownloadNoticeCard(),
           const SizedBox(height: 16),
-          registryAsync.when(
-            data: (entries) {
-              final runtimeStates =
-                  runtimeStatesAsync.valueOrNull ??
-                  const <String, EmbeddingEngineState>{};
-              final llmRuntimeStates =
-                  llmRuntimeStatesAsync.valueOrNull ??
-                  const <String, LlmRuntimeState>{};
-              final activeLlmModelId = activeLlmAsync.valueOrNull?.id;
-              return selectionAsync.when(
-                data: (selection) => _InstalledModelsCard(
-                  entries: entries,
-                  runtimeStates: runtimeStates,
-                  llmRuntimeStates: llmRuntimeStates,
-                  activeEmbeddingModelId: selection.activeEmbeddingModelId,
-                  activeLlmModelId: activeLlmModelId,
-                ),
-                loading: () => _InstalledModelsCard(
-                  entries: entries,
-                  runtimeStates: runtimeStates,
-                  llmRuntimeStates: llmRuntimeStates,
-                  activeEmbeddingModelId: null,
-                  activeLlmModelId: activeLlmModelId,
-                ),
-                error: (error, stackTrace) => _InstalledModelsCard(
-                  entries: entries,
-                  runtimeStates: runtimeStates,
-                  llmRuntimeStates: llmRuntimeStates,
-                  activeEmbeddingModelId: null,
-                  activeLlmModelId: activeLlmModelId,
-                ),
-              );
-            },
-            loading: () => const SizedBox.shrink(),
-            error: (error, stackTrace) => Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('已安装模型读取失败：$error'),
-              ),
-            ),
+          _buildInstalledModelsSection(
+            registryAsync: registryAsync,
+            runtimeStatesAsync: runtimeStatesAsync,
+            llmRuntimeStatesAsync: llmRuntimeStatesAsync,
+            selectionAsync: selectionAsync,
+            activeLlmAsync: activeLlmAsync,
           ),
           const SizedBox(height: 16),
           catalogAsync.when(
@@ -95,6 +63,12 @@ class ModelManagementPage extends ConsumerWidget {
                     .where((entry) => entry.type != 'multimodal_llm')
                     .toList(growable: false),
                 tasks: tasks,
+                installedAsync: registryAsync,
+                runtimeStatesAsync: runtimeStatesAsync,
+                llmRuntimeStatesAsync: llmRuntimeStatesAsync,
+                selectionAsync: selectionAsync,
+                activeLlmAsync: activeLlmAsync,
+                capabilityReportAsync: capabilityReportAsync,
               ),
               loading: () => const Card(
                 child: Padding(
@@ -316,26 +290,63 @@ String _llmRuntimeStatusLabel(LlmRuntimeStatus status) {
   }
 }
 
-class _CatalogSection extends ConsumerWidget {
-  const _CatalogSection({required this.entries, required this.tasks});
+class _CatalogSection extends StatelessWidget {
+  const _CatalogSection({
+    required this.entries,
+    required this.tasks,
+    required this.installedAsync,
+    required this.runtimeStatesAsync,
+    required this.llmRuntimeStatesAsync,
+    required this.selectionAsync,
+    required this.activeLlmAsync,
+    required this.capabilityReportAsync,
+  });
 
   final List<ModelCatalogEntry> entries;
   final List<ModelDownloadTask> tasks;
+  final AsyncValue<List<ModelRegistryEntry>> installedAsync;
+  final AsyncValue<Map<String, EmbeddingEngineState>> runtimeStatesAsync;
+  final AsyncValue<Map<String, LlmRuntimeState>> llmRuntimeStatesAsync;
+  final AsyncValue<ActiveModelSelection> selectionAsync;
+  final AsyncValue<ModelRegistryEntry?> activeLlmAsync;
+  final AsyncValue<DeviceCapabilityReport> capabilityReportAsync;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final installedAsync = ref.watch(modelRegistryEntriesProvider);
-    final runtimeStatesAsync = ref.watch(embeddingRuntimeStatesProvider);
-    final llmRuntimeStatesAsync = ref.watch(llmRuntimeStatesProvider);
-    final capabilityReport = ref
-        .watch(deviceCapabilityReportProvider)
-        .valueOrNull;
-
+  Widget build(BuildContext context) {
     if (entries.isEmpty) {
       return const Card(
         child: Padding(padding: EdgeInsets.all(16), child: Text('暂无可用模型目录。')),
       );
     }
+
+    final readinessStates = <AsyncValue<dynamic>>[
+      installedAsync,
+      runtimeStatesAsync,
+      llmRuntimeStatesAsync,
+      selectionAsync,
+      activeLlmAsync,
+      capabilityReportAsync,
+    ];
+    final failure = _firstAsyncFailure(readinessStates);
+    final pending = _hasPendingAsyncValue(readinessStates);
+    final installedEntries = installedAsync.hasValue
+        ? installedAsync.requireValue
+        : const <ModelRegistryEntry>[];
+    final runtimeStates = runtimeStatesAsync.hasValue
+        ? runtimeStatesAsync.requireValue
+        : const <String, EmbeddingEngineState>{};
+    final llmRuntimeStates = llmRuntimeStatesAsync.hasValue
+        ? llmRuntimeStatesAsync.requireValue
+        : const <String, LlmRuntimeState>{};
+    final activeEmbeddingModelId = selectionAsync.hasValue
+        ? selectionAsync.requireValue.activeEmbeddingModelId
+        : null;
+    final activeLlmModelId = activeLlmAsync.hasValue
+        ? activeLlmAsync.requireValue?.id
+        : null;
+    final capabilityReport = capabilityReportAsync.hasValue
+        ? capabilityReportAsync.requireValue
+        : null;
 
     return Card(
       child: Padding(
@@ -345,48 +356,37 @@ class _CatalogSection extends ConsumerWidget {
           children: [
             Text('可下载模型目录', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 12),
-            installedAsync.when(
-              data: (installedEntries) {
-                final runtimeStates =
-                    runtimeStatesAsync.valueOrNull ??
-                    const <String, EmbeddingEngineState>{};
-                final llmRuntimeStates =
-                    llmRuntimeStatesAsync.valueOrNull ??
-                    const <String, LlmRuntimeState>{};
-                return Column(
-                  children: [
-                    for (final entry in entries) ...[
-                      Builder(
-                        builder: (context) {
-                          final displayTask = _displayTaskFor(entry.id);
-                          return _CatalogEntryTile(
-                            entry: entry,
-                            latestTask: displayTask,
-                            installedEntry: _installedFor(
-                              installedEntries,
-                              entry.id,
-                            ),
-                            runtimeState: runtimeStates[entry.id],
-                            llmRuntimeState: llmRuntimeStates[entry.id],
-                            allTasks: _tasksFor(entry.id),
-                            capabilityAssessment: capabilityReport
-                                ?.maybeAssessmentFor(entry.id),
-                          );
-                        },
-                      ),
-                      if (entry != entries.last) const Divider(height: 24),
-                    ],
-                  ],
-                );
-              },
-              loading: () => const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: CircularProgressIndicator()),
-              ),
-              error: (error, stackTrace) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('安装状态读取失败：$error'),
-              ),
+            if (failure != null)
+              _ModelAsyncMessage(message: '模型目录状态读取失败：${failure.error}')
+            else if (pending)
+              const _ModelAsyncMessage(message: '正在读取模型目录状态...', loading: true),
+            if (failure != null || pending) const SizedBox(height: 12),
+            Column(
+              children: [
+                for (final entry in entries) ...[
+                  Builder(
+                    builder: (context) {
+                      final displayTask = _displayTaskFor(entry.id);
+                      return _CatalogEntryTile(
+                        entry: entry,
+                        latestTask: displayTask,
+                        installedEntry: _installedFor(
+                          installedEntries,
+                          entry.id,
+                        ),
+                        runtimeState: runtimeStates[entry.id],
+                        llmRuntimeState: llmRuntimeStates[entry.id],
+                        allTasks: _tasksFor(entry.id),
+                        capabilityAssessment: capabilityReport
+                            ?.maybeAssessmentFor(entry.id),
+                        activeEmbeddingModelId: activeEmbeddingModelId,
+                        activeLlmModelId: activeLlmModelId,
+                      );
+                    },
+                  ),
+                  if (entry != entries.last) const Divider(height: 24),
+                ],
+              ],
             ),
           ],
         ),
