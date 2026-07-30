@@ -1,9 +1,42 @@
 part of 'ai_chat_providers.dart';
 
-class AiChatOrchestrator {
-  AiChatOrchestrator({required Ref ref}) : _ref = ref;
+typedef LoadLocalLlmReadiness = Future<LocalLlmReadiness> Function();
+typedef LoadChatLlmEngine = LlmEngine Function();
+typedef LoadExternalChatGateway = ExternalChatGateway Function();
+typedef LoadSemanticSearchReadiness =
+    Future<SemanticSearchReadiness> Function();
+typedef LoadAiChatContextRetriever = AiChatContextRetriever Function();
+typedef LoadChatSearchConfiguration = Future<SearchConfiguration> Function();
+typedef LoadChatContextProjector = ChatContextProjector Function();
+typedef LoadChatPromptComposer = ChatPromptComposer Function();
 
-  final Ref _ref;
+class AiChatOrchestrator {
+  AiChatOrchestrator({
+    required LoadLocalLlmReadiness loadLocalReadiness,
+    required LoadChatLlmEngine loadLlmEngine,
+    required LoadExternalChatGateway loadExternalGateway,
+    required LoadSemanticSearchReadiness loadSemanticReadiness,
+    required LoadAiChatContextRetriever loadContextRetriever,
+    required LoadChatSearchConfiguration loadSearchConfiguration,
+    required LoadChatContextProjector loadContextProjector,
+    required LoadChatPromptComposer loadPromptComposer,
+  }) : _loadLocalReadiness = loadLocalReadiness,
+       _loadLlmEngine = loadLlmEngine,
+       _loadExternalGateway = loadExternalGateway,
+       _loadSemanticReadiness = loadSemanticReadiness,
+       _loadContextRetriever = loadContextRetriever,
+       _loadSearchConfiguration = loadSearchConfiguration,
+       _loadContextProjector = loadContextProjector,
+       _loadPromptComposer = loadPromptComposer;
+
+  final LoadLocalLlmReadiness _loadLocalReadiness;
+  final LoadChatLlmEngine _loadLlmEngine;
+  final LoadExternalChatGateway _loadExternalGateway;
+  final LoadSemanticSearchReadiness _loadSemanticReadiness;
+  final LoadAiChatContextRetriever _loadContextRetriever;
+  final LoadChatSearchConfiguration _loadSearchConfiguration;
+  final LoadChatContextProjector _loadContextProjector;
+  final LoadChatPromptComposer _loadPromptComposer;
   final Map<String, _ActiveChatOperation> _activeOperations =
       <String, _ActiveChatOperation>{};
 
@@ -104,12 +137,12 @@ class AiChatOrchestrator {
   }
 
   Future<_ResolvedChatBackend> _resolveLocalBackend() async {
-    final llmReadiness = await _ref.read(localLlmReadinessProvider.future);
+    final llmReadiness = await _loadLocalReadiness();
     if (!llmReadiness.ready || llmReadiness.activeModel == null) {
       throw StateError(llmReadiness.reason);
     }
     return _ResolvedChatBackend.local(
-      llmEngine: _ref.read(llmEngineProvider),
+      llmEngine: _loadLlmEngine(),
       llmModel: llmReadiness.activeModel!,
       reason: llmReadiness.reason,
     );
@@ -118,7 +151,7 @@ class AiChatOrchestrator {
   Future<_ResolvedChatBackend> _resolveExternalBackend({
     required bool includesPrivateContext,
   }) async {
-    final gateway = _ref.read(externalChatGatewayProvider);
+    final gateway = _loadExternalGateway();
     final authorization = await gateway.authorize(
       includesPrivateContext: includesPrivateContext,
     );
@@ -136,21 +169,17 @@ class AiChatOrchestrator {
     required List<ChatHistoryTurn> history,
     required _ActiveChatOperation operation,
   }) async {
-    final semanticReadiness = await _ref.read(
-      semanticSearchReadinessProvider.future,
-    );
+    final semanticReadiness = await _loadSemanticReadiness();
     _throwIfCancelled(operation);
     if (!semanticReadiness.ready ||
         semanticReadiness.activeEmbeddingModel == null) {
       throw StateError(semanticReadiness.reason);
     }
 
-    final contextItems = await _ref
-        .read(aiChatContextRetrieverProvider)
-        .retrieve(
-          query: userInput,
-          embeddingModel: semanticReadiness.activeEmbeddingModel!,
-        );
+    final contextItems = await _loadContextRetriever().retrieve(
+      query: userInput,
+      embeddingModel: semanticReadiness.activeEmbeddingModel!,
+    );
     _throwIfCancelled(operation);
     final usedPrivateContext = contextItems.isNotEmpty;
     final prompt = _composePrompt(
@@ -196,34 +225,28 @@ class AiChatOrchestrator {
         : const <ChatContextItem>[];
     var projectedManualItems = const <ProjectedChatContextItem>[];
     if (manualItems.isNotEmpty) {
-      final configuration = await _ref.read(searchConfigurationProvider.future);
+      final configuration = await _loadSearchConfiguration();
       _throwIfCancelled(operation);
-      projectedManualItems = await _ref
-          .read(chatContextProjectorProvider)
-          .projectManual(
-            items: manualItems,
-            configuration: configuration,
-            target: backend.type == _ChatBackendType.local
-                ? ChatContextProjectionTarget.local
-                : ChatContextProjectionTarget.external,
-          );
+      projectedManualItems = await _loadContextProjector().projectManual(
+        items: manualItems,
+        configuration: configuration,
+        target: backend.type == _ChatBackendType.local
+            ? ChatContextProjectionTarget.local
+            : ChatContextProjectionTarget.external,
+      );
       _throwIfCancelled(operation);
     }
     var autoItems = const <ChatContextItem>[];
 
     if (request.allowPrivateContext) {
-      final semanticReadiness = await _ref.read(
-        semanticSearchReadinessProvider.future,
-      );
+      final semanticReadiness = await _loadSemanticReadiness();
       _throwIfCancelled(operation);
       if (semanticReadiness.ready &&
           semanticReadiness.activeEmbeddingModel != null) {
-        autoItems = await _ref
-            .read(aiChatContextRetrieverProvider)
-            .retrieve(
-              query: userInput,
-              embeddingModel: semanticReadiness.activeEmbeddingModel!,
-            );
+        autoItems = await _loadContextRetriever().retrieve(
+          query: userInput,
+          embeddingModel: semanticReadiness.activeEmbeddingModel!,
+        );
         _throwIfCancelled(operation);
       }
     }
@@ -275,21 +298,18 @@ class AiChatOrchestrator {
         const <ProjectedChatContextItem>[],
     List<ChatContextItem> autoItems = const <ChatContextItem>[],
   }) {
-    return _ref
-        .read(chatPromptComposerProvider)
-        .compose(
-          mode: mode,
-          question: userInput,
-          target: backend.type == _ChatBackendType.local
-              ? ChatPromptTarget.local
-              : ChatPromptTarget.external,
-          manualItems: manualItems,
-          history: history,
-          autoItems: autoItems,
-          externalProviderFingerprint:
-              backend.externalAuthorization?.fingerprint,
-          includesPrivateContext: includesPrivateContext,
-        );
+    return _loadPromptComposer().compose(
+      mode: mode,
+      question: userInput,
+      target: backend.type == _ChatBackendType.local
+          ? ChatPromptTarget.local
+          : ChatPromptTarget.external,
+      manualItems: manualItems,
+      history: history,
+      autoItems: autoItems,
+      externalProviderFingerprint: backend.externalAuthorization?.fingerprint,
+      includesPrivateContext: includesPrivateContext,
+    );
   }
 
   Future<_GeneratedChatResponse> _generateText({

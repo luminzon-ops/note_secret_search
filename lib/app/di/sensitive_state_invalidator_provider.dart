@@ -33,9 +33,6 @@ class SensitiveStateInvalidator {
     _ref.read(searchQueryProvider.notifier).state = '';
     _ref.read(searchRefreshControllerProvider.notifier).resetForLock();
 
-    _ref.read(currentChatSessionIdProvider.notifier).state = null;
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
-
     _ref.invalidate(defaultVaultProvider);
     _ref.invalidate(secretListProvider);
     _ref.invalidate(secretDetailProvider);

@@ -220,7 +220,9 @@ void main() {
 
       addTearDown(container.dispose);
 
-      container.read(currentChatSessionIdProvider.notifier).state = 'session-1';
+      await container
+          .read(chatSessionCoordinatorProvider.notifier)
+          .selectSharedSession('session-1');
 
       final messages = await container.read(currentChatMessagesProvider.future);
       expect(messages, hasLength(1));
@@ -300,14 +302,18 @@ void main() {
 
     addTearDown(container.dispose);
 
-    container.read(currentChatSessionIdProvider.notifier).state = 'session-a';
+    await container
+        .read(chatSessionCoordinatorProvider.notifier)
+        .selectSharedSession('session-a');
     final firstMessages = await container.read(
       currentChatMessagesProvider.future,
     );
     expect(firstMessages.single.id, 'a-1');
 
     container.invalidate(currentChatMessagesProvider);
-    container.read(currentChatSessionIdProvider.notifier).state = 'session-b';
+    await container
+        .read(chatSessionCoordinatorProvider.notifier)
+        .selectSharedSession('session-b');
     final secondMessages = await container.read(
       currentChatMessagesProvider.future,
     );

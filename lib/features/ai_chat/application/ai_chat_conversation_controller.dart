@@ -5,11 +5,14 @@ class AiChatConversationController
     with _AiChatConversationSelection {
   AiChatConversationController({required Ref ref, required ChatMode mode})
     : _ref = ref,
+      _sessionCoordinator = ref.read(chatSessionCoordinatorProvider.notifier),
       _orchestrator = ref.read(aiChatOrchestratorProvider),
       super(AiChatConversationState(mode: mode));
 
   @override
   final Ref _ref;
+  @override
+  final ChatSessionCoordinator _sessionCoordinator;
   final AiChatOrchestrator _orchestrator;
   static const _uuid = Uuid();
   final Map<String, _SendingChatOperation> _sendingOperations =
@@ -19,8 +22,8 @@ class AiChatConversationController
 
   Future<void> restoreSessionIfNeeded() async {
     final generation = _generation;
-    final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
-    final startingAttempt = _ref.read(chatSessionSelectionAttemptProvider);
+    final startingIntent = _sessionCoordinator.state.selectionIntent;
+    final startingAttempt = _sessionCoordinator.state.selectionAttempt;
     if (!_restoreCanContinue(generation, startingIntent) ||
         _hasPendingSelectionAttempt) {
       return;
@@ -29,7 +32,7 @@ class AiChatConversationController
       return;
     }
 
-    final selectedSessionId = _ref.read(currentChatSessionIdProvider);
+    final selectedSessionId = _sessionCoordinator.state.currentSessionId;
     if (selectedSessionId != null && selectedSessionId.isNotEmpty) {
       if (!_intentAllowsTarget(startingIntent, selectedSessionId)) {
         return;
@@ -122,7 +125,7 @@ class AiChatConversationController
       return;
     }
 
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
+    _sessionCoordinator.publishSession(sessionId, suppressRestore: false);
     state = state.copyWith(
       currentSessionId: sessionId,
       backendPreference: ChatBackendPreference.local,
@@ -133,27 +136,19 @@ class AiChatConversationController
       clearErrorMessage: true,
       suppressSessionRestore: false,
     );
-
-    if (_ref.read(currentChatSessionIdProvider) != sessionId) {
-      _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
-    }
-    _ref.invalidate(currentChatMessagesProvider);
-    _ref.invalidate(currentChatSessionProvider);
   }
 
   Future<void> startNewSession() async {
-    _cancelPendingSelectionAttempts();
     _generation++;
     await _cancelActiveRequests();
-    _claimSelectionIntent(null);
+    _sessionCoordinator.resetForNewSession(mode: state.mode);
     _resetConversation();
   }
 
   void resetForLock() {
-    _cancelPendingSelectionAttempts();
     _generation++;
     unawaited(_cancelActiveRequests());
-    _claimSelectionIntent(null);
+    _sessionCoordinator.resetForLock();
     _resetConversation();
   }
 
@@ -168,14 +163,10 @@ class AiChatConversationController
 
   void _resetConversation() {
     _sendingOperations.clear();
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = true;
-    _ref.read(currentChatSessionIdProvider.notifier).state = null;
     state = AiChatConversationState(
       mode: state.mode,
       suppressSessionRestore: true,
     );
-    _ref.invalidate(currentChatMessagesProvider);
-    _ref.invalidate(currentChatSessionProvider);
   }
 
   Future<void> send(String input) async {
@@ -196,13 +187,13 @@ class AiChatConversationController
     final existingSessionId = state.currentSessionId;
     final originSessionId = existingSessionId ?? _uuid.v4();
     final publicationIntent = existingSessionId == null
-        ? _ref.read(chatSessionSelectionIntentProvider)
+        ? _sessionCoordinator.state.selectionIntent
         : null;
     final publicationSessionId = existingSessionId == null
-        ? _ref.read(currentChatSessionIdProvider)
+        ? _sessionCoordinator.state.currentSessionId
         : null;
     final publicationAttempt = existingSessionId == null
-        ? _ref.read(chatSessionSelectionAttemptProvider)
+        ? _sessionCoordinator.state.selectionAttempt
         : null;
     if (_sendingOperations.containsKey(originSessionId)) {
       return;
@@ -451,8 +442,7 @@ class AiChatConversationController
 
   void _publishNewOriginSession(String sessionId) {
     _claimSelectionIntent(sessionId);
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
-    _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
+    _sessionCoordinator.publishSession(sessionId, suppressRestore: false);
     state = state.copyWith(
       currentSessionId: sessionId,
       clearErrorMessage: true,
@@ -470,13 +460,12 @@ class AiChatConversationController
         _intentIsCurrent(startingIntent) &&
         _selectionAttemptIsCurrent(startingAttempt) &&
         !_hasPendingSelectionAttempt &&
-        _ref.read(currentChatSessionIdProvider) == startingSessionId;
+        _sessionCoordinator.state.currentSessionId == startingSessionId;
   }
 
   void _activateExistingOriginSession(String sessionId) {
     _claimSelectionIntent(sessionId);
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
-    _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
+    _sessionCoordinator.publishSession(sessionId, suppressRestore: false);
     _invalidateSelectedChatSession(_ref);
   }
 

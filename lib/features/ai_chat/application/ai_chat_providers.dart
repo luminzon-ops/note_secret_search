@@ -24,6 +24,7 @@ import 'package:note_secret_search/features/search/application/search_index_sett
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
+import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
@@ -54,7 +55,17 @@ final chatPromptComposerProvider = Provider<ChatPromptComposer>((ref) {
 });
 
 final aiChatOrchestratorProvider = Provider<AiChatOrchestrator>((ref) {
-  return AiChatOrchestrator(ref: ref);
+  return AiChatOrchestrator(
+    loadLocalReadiness: () => ref.read(localLlmReadinessProvider.future),
+    loadLlmEngine: () => ref.read(llmEngineProvider),
+    loadExternalGateway: () => ref.read(externalChatGatewayProvider),
+    loadSemanticReadiness: () =>
+        ref.read(semanticSearchReadinessProvider.future),
+    loadContextRetriever: () => ref.read(aiChatContextRetrieverProvider),
+    loadSearchConfiguration: () => ref.read(searchConfigurationProvider.future),
+    loadContextProjector: () => ref.read(chatContextProjectorProvider),
+    loadPromptComposer: () => ref.read(chatPromptComposerProvider),
+  );
 });
 
 final privateQaChatControllerProvider =

@@ -451,8 +451,8 @@ void main() {
 
     await tester.pumpAndSettle();
     await container
-        .read(chatSessionControllerProvider)
-        .selectSession('session-1');
+        .read(chatSessionCoordinatorProvider.notifier)
+        .selectSharedSession('session-1');
     await tester.pumpAndSettle();
 
     expect(container.read(currentChatSessionIdProvider), 'session-1');
