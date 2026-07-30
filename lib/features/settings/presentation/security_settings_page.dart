@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class SecuritySettingsPage extends ConsumerWidget {
   const SecuritySettingsPage({super.key});
@@ -32,7 +33,7 @@ class SecuritySettingsPage extends ConsumerWidget {
                       value: settings.pinEnabled,
                       onChanged: (value) async {
                         if (value && !pinState.hasPinMaterial) {
-                          await context.push('/settings/security/pin');
+                          await context.push(AppDestination.pinSetup);
                           return;
                         }
                         await ref
@@ -50,7 +51,7 @@ class SecuritySettingsPage extends ConsumerWidget {
                       title: const Text('设置 / 更新 PIN'),
                       subtitle: const Text('设置或更新时需要再次完成系统认证'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => context.push('/settings/security/pin'),
+                      onTap: () => context.push(AppDestination.pinSetup),
                     ),
                     ListTile(
                       title: const Text('自动锁定时间'),

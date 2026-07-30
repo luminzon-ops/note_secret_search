@@ -7,6 +7,7 @@ import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/search/presentation/detail_search_hit_target.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class SecretDetailPage extends ConsumerWidget {
   const SecretDetailPage({
@@ -31,7 +32,7 @@ class SecretDetailPage extends ConsumerWidget {
         title: const Text('密码详情'),
         actions: [
           IconButton(
-            onPressed: () => context.push('/vault/secret/$secretId/edit'),
+            onPressed: () => context.push(AppDestination.editSecret(secretId)),
             icon: const Icon(Icons.edit_outlined),
           ),
           IconButton(

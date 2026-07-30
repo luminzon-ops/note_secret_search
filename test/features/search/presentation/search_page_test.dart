@@ -498,7 +498,7 @@ void main() {
 
       expect(find.text('当前统一结果已混合关键词与语义信号，排序会优先展示双命中内容。'), findsOneWidget);
       expect(find.text('结果构成：1 条关键词结果，1 条语义结果。'), findsOneWidget);
-      expect(find.text('下方“占位语义匹配”区块展示的是当前语义召回明细。'), findsOneWidget);
+      expect(find.text('下方“语义匹配”区块展示的是当前语义召回明细。'), findsOneWidget);
     },
   );
 

@@ -287,7 +287,7 @@ class _SearchSemanticQualityHintBlock extends StatelessWidget {
         Text(qualityHint, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 8),
         Text(
-          '下方“占位语义匹配”区块展示的是当前语义召回明细。',
+          '下方“语义匹配”区块展示的是当前语义召回明细。',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ],

@@ -6,6 +6,7 @@ import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/auth_security/presentation/security_status_card.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class SecretListPage extends ConsumerWidget {
   const SecretListPage({super.key});
@@ -31,7 +32,7 @@ class SecretListPage extends ConsumerWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/vault/secret/new'),
+        onPressed: () => context.push(AppDestination.newSecret()),
         icon: const Icon(Icons.add),
         label: const Text('新增密码'),
       ),
@@ -114,7 +115,9 @@ class _SecretListSection extends StatelessWidget {
                         : Icons.lock_outline,
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/vault/secret/${item.id}'),
+                  onTap: () => context.push(
+                    AppDestination.secretDetail(item.id as String),
+                  ),
                 ),
             ],
           );

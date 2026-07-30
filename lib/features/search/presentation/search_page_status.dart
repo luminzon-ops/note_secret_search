@@ -88,7 +88,7 @@ class _SearchStatusCard extends ConsumerWidget {
                     : () {
                         switch (summary.primaryAction) {
                           case SearchStatusPrimaryAction.openModelManagement:
-                            context.push('/models');
+                            context.push(AppDestination.models);
                             break;
                           case SearchStatusPrimaryAction.triggerIndex:
                             _handleIndexAction(context, ref);
