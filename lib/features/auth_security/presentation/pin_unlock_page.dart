@@ -75,15 +75,11 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                 errorText: _errorText,
               ),
               validator: (value) {
-                final raw = value ?? '';
-                if (raw.length < AppPinPolicy.minimumLength ||
-                    raw.length > AppPinPolicy.maximumLength) {
-                  return 'PIN 长度需为 4-8 位';
-                }
-                if (!RegExp(r'^\d+$').hasMatch(raw)) {
-                  return 'PIN 仅支持数字';
-                }
-                return null;
+                return switch (AppPinPolicy.validate(value ?? '')) {
+                  PinValidationFailure.invalidLength => 'PIN 长度需为 4-8 位',
+                  PinValidationFailure.nonNumeric => 'PIN 仅支持数字',
+                  null => null,
+                };
               },
             ),
             const SizedBox(height: 24),
