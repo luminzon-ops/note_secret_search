@@ -75,6 +75,7 @@ import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 part 'sensitive_state_invalidator_expectations.dart';
+part 'sensitive_state_invalidator_purge_fixture.dart';
 part 'sensitive_state_invalidator_purge_cases.dart';
 part 'sensitive_state_invalidator_test_fakes.dart';
 part 'sensitive_state_invalidator_widget_cases.dart';

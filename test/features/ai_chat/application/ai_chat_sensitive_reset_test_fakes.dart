@@ -224,3 +224,57 @@ class _SensitiveTestContextProjector implements ChatContextProjector {
         .toList(growable: false);
   }
 }
+
+ProviderContainer _buildContainer({
+  required ChatSessionRepository repository,
+  required LlmEngine llmEngine,
+}) {
+  return ProviderContainer(
+    overrides: [
+      sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
+      chatSessionRepositoryProvider.overrideWithValue(repository),
+      llmEngineProvider.overrideWithValue(llmEngine),
+      localLlmReadinessProvider.overrideWith(
+        (ref) async => const LocalLlmReadiness(
+          ready: true,
+          reason: 'ready',
+          activeModel: _llmModel,
+          runtimeState: LlmRuntimeState(
+            ready: true,
+            reason: 'ready',
+            status: LlmRuntimeStatus.ready,
+            modelPath: '/private/models/sensitive.gguf',
+          ),
+        ),
+      ),
+      semanticSearchReadinessProvider.overrideWith(
+        (ref) async => const SemanticSearchReadiness(
+          ready: false,
+          reason: 'semantic retrieval disabled for controller test',
+        ),
+      ),
+      searchConfigurationProvider.overrideWith(
+        (ref) async => SearchConfiguration.defaults(),
+      ),
+      chatContextProjectorProvider.overrideWithValue(
+        const _SensitiveTestContextProjector(),
+      ),
+    ],
+  );
+}
+
+void _expectBlankConversation(
+  ProviderContainer container,
+  AiChatConversationController controller,
+) {
+  expect(controller.state.messages, isEmpty);
+  expect(controller.state.sending, isFalse);
+  expect(controller.state.backendPreference, ChatBackendPreference.local);
+  expect(controller.state.allowPrivateContext, isFalse);
+  expect(controller.state.manualItems, isEmpty);
+  expect(controller.state.currentSessionId, isNull);
+  expect(controller.state.errorMessage, isNull);
+  expect(controller.state.suppressSessionRestore, isTrue);
+  expect(container.read(currentChatSessionIdProvider), isNull);
+  expect(container.read(suppressRestoredChatSessionProvider), isTrue);
+}
