@@ -39,6 +39,12 @@ SearchRefreshController _handoffRefreshController(
     ..publishHandoff();
 }
 
+Future<void> _revealSearchPage(WidgetTester tester, Finder target) =>
+    reveal(tester, target, scrollable: find.byType(ListView));
+
+Future<void> _revealAndTapSearchPage(WidgetTester tester, Finder target) =>
+    revealAndTap(tester, target, scrollable: find.byType(ListView));
+
 class _NoopIndexRunner implements SearchIndexRunner {
   const _NoopIndexRunner();
 

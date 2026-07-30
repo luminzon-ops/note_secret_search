@@ -69,22 +69,12 @@ void _runSearchSettingsStatusCases() {
       expect(find.text('已完成 · 检索范围：已启用本地语义检索'), findsOneWidget);
       expect(find.text('已完成 · 索引状态：可立即构建或刷新本地索引'), findsOneWidget);
 
-      await tester.scrollUntilVisible(
-        find.text('语义索引设置'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('语义索引设置'));
 
       expect(find.text('语义索引设置'), findsOneWidget);
       expect(find.text('单 chunk 最大长度'), findsOneWidget);
 
-      await tester.scrollUntilVisible(
-        find.text('检索范围控制'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('检索范围控制'));
 
       expect(find.text('检索范围控制'), findsOneWidget);
     },
@@ -381,7 +371,7 @@ void _runSearchSettingsStatusCases() {
 
       expect(find.text('正在刷新搜索状态与结果...'), findsWidgets);
       final button = tester.widget<FilledButton>(
-        find.byType(FilledButton).first,
+        find.widgetWithText(FilledButton, '立即构建索引'),
       );
       expect(button.onPressed, isNull);
     },

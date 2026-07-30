@@ -192,9 +192,6 @@ void _registerTrustCopyCases() {
   testWidgets(
     'dropdown items never show trust suffixes from signature metadata',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1000, 1600));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -253,7 +250,7 @@ void _registerTrustCopyCases() {
       await tester.pumpAndSettle();
 
       // Open dropdown
-      final dropdownFinder = find.byType(DropdownButton<String>).first;
+      final dropdownFinder = find.byType(DropdownButton<String>);
       await scrollUntilFound(tester, dropdownFinder);
       await tester.tap(dropdownFinder);
       await tester.pumpAndSettle();

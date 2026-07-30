@@ -51,9 +51,7 @@ void main() {
               appIsForeground: () => true,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith(
-            (ref) => repository,
-          ),
+          securitySettingsRepositoryProvider.overrideWith((ref) => repository),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,
@@ -84,8 +82,8 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextFormField).first, '1234');
-    await tester.enterText(find.byType(TextFormField).last, '1234');
+    await tester.enterText(_pinField('输入 4-8 位 PIN'), '1234');
+    await tester.enterText(_pinField('确认 PIN'), '1234');
     await tester.tap(find.text('保存 PIN'));
     await tester.pumpAndSettle();
 
@@ -95,90 +93,92 @@ void main() {
     expect(secureKeyGateway.lastConfiguredPin, '1234');
   });
 
-  testWidgets(
-    'pin setup waits for lazy settings load before enabling save',
-    (tester) async {
-      final sessionController = LockSessionController();
-      final pinStateController = PinStateController();
-      final repository = _FakeSecuritySettingsRepository()
-        ..pendingLoad = Completer<SecuritySettings>();
-      final secureKeyGateway = _FakeSecureKeyGateway();
-      bool? result;
+  testWidgets('pin setup waits for lazy settings load before enabling save', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController();
+    final pinStateController = PinStateController();
+    final repository = _FakeSecuritySettingsRepository()
+      ..pendingLoad = Completer<SecuritySettings>();
+    final secureKeyGateway = _FakeSecureKeyGateway();
+    bool? result;
 
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            lockSessionControllerProvider.overrideWith(
-              (ref) => sessionController,
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          lockSessionControllerProvider.overrideWith(
+            (ref) => sessionController,
+          ),
+          pinStateControllerProvider.overrideWith((ref) => pinStateController),
+          securityOrchestratorProvider.overrideWith(
+            (ref) => SecurityOrchestrator(
+              biometricGateway: _FakeBiometricGateway(),
+              screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
+              secureKeyGateway: secureKeyGateway,
+              sessionController: sessionController,
+              pinStateController: pinStateController,
+              sessionKeyStore: DatabaseSessionKeyStore(),
+              database: FakeAppDatabase(),
+              logger: const AppLogger(),
+              appIsForeground: () => true,
             ),
-            pinStateControllerProvider.overrideWith(
-              (ref) => pinStateController,
+          ),
+          securitySettingsRepositoryProvider.overrideWith((ref) => repository),
+          securitySettingsControllerProvider.overrideWith(
+            (ref) => SecuritySettingsController(
+              repository: repository,
+              securityOrchestrator: ref.read(securityOrchestratorProvider),
+              pinStateController: pinStateController,
             ),
-            securityOrchestratorProvider.overrideWith(
-              (ref) => SecurityOrchestrator(
-                biometricGateway: _FakeBiometricGateway(),
-                screenshotProtectionGateway: _FakeScreenshotProtectionGateway(),
-                secureKeyGateway: secureKeyGateway,
-                sessionController: sessionController,
-                pinStateController: pinStateController,
-                sessionKeyStore: DatabaseSessionKeyStore(),
-                database: FakeAppDatabase(),
-                logger: const AppLogger(),
-                appIsForeground: () => true,
-              ),
-            ),
-            securitySettingsRepositoryProvider.overrideWith(
-              (ref) => repository,
-            ),
-            securitySettingsControllerProvider.overrideWith(
-              (ref) => SecuritySettingsController(
-                repository: repository,
-                securityOrchestrator: ref.read(securityOrchestratorProvider),
-                pinStateController: pinStateController,
-              ),
-            ),
-          ],
-          child: MaterialApp(
-            home: Builder(
-              builder: (context) => Scaffold(
-                body: Center(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      result = await Navigator.of(context).push<bool>(
-                        MaterialPageRoute(builder: (_) => const PinSetupPage()),
-                      );
-                    },
-                    child: const Text('open delayed'),
-                  ),
+          ),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    result = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(builder: (_) => const PinSetupPage()),
+                    );
+                  },
+                  child: const Text('open delayed'),
                 ),
               ),
             ),
           ),
         ),
-      );
+      ),
+    );
 
-      await tester.tap(find.text('open delayed'));
-      await pumpUntilFound(tester, find.text('保存 PIN'));
+    await tester.tap(find.text('open delayed'));
+    await pumpUntilFound(tester, find.text('保存 PIN'));
 
-      final saveButton = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '保存 PIN'),
-      );
-      expect(saveButton.onPressed, isNull);
-      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    final saveButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '保存 PIN'),
+    );
+    expect(saveButton.onPressed, isNull);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-      repository.pendingLoad!.complete(repository.settings);
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextFormField).first, '1234');
-      await tester.enterText(find.byType(TextFormField).last, '1234');
-      await tester.tap(find.text('保存 PIN'));
-      await tester.pumpAndSettle();
+    repository.pendingLoad!.complete(repository.settings);
+    await tester.pumpAndSettle();
+    await tester.enterText(_pinField('输入 4-8 位 PIN'), '1234');
+    await tester.enterText(_pinField('确认 PIN'), '1234');
+    await tester.tap(find.text('保存 PIN'));
+    await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull);
-      expect(result, isNull);
-      expect(sessionController.state.isUnlocked, isFalse);
-      expect(sessionController.state.pinEnabled, isTrue);
-      expect(secureKeyGateway.lastConfiguredPin, '1234');
-    },
+    expect(tester.takeException(), isNull);
+    expect(result, isNull);
+    expect(sessionController.state.isUnlocked, isFalse);
+    expect(sessionController.state.pinEnabled, isTrue);
+    expect(secureKeyGateway.lastConfiguredPin, '1234');
+  });
+}
+
+Finder _pinField(String labelText) {
+  return find.ancestor(
+    of: find.text(labelText),
+    matching: find.byType(TextFormField),
   );
 }
 

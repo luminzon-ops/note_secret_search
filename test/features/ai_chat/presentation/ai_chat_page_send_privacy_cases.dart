@@ -58,8 +58,8 @@ void _runAiChatSendPrivacyCases() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('自由聊天'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).last, '你好，本地模型');
-      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
+      await tester.enterText(_chatFieldWithHint('输入你的问题或消息'), '你好，本地模型');
+      await tester.tap(_visibleChatSendButton);
       await tester.pump();
       await tester.pumpAndSettle();
 
@@ -146,10 +146,12 @@ void _runAiChatSendPrivacyCases() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('允许参考私密内容'));
       await tester.pump();
-      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-      await tester.tap(find.text('发送'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        _chatFieldWithHint('输入你的问题或消息'),
+        '帮我回忆 GitHub 登录信息',
+      );
+      await tester.tap(_visibleChatSendButton);
+      await pumpUntilFound(tester, find.text('确认使用外部模型'));
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
       expect(find.text('包含私密上下文：是'), findsOneWidget);
@@ -226,10 +228,9 @@ void _runAiChatSendPrivacyCases() {
         find.descendant(of: privateSelector, matching: find.text('外部')),
       );
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField).first, '帮我总结邮箱账号');
-      await tester.tap(find.text('发送'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(_chatFieldWithHint('输入你的私密内容问题'), '帮我总结邮箱账号');
+      await tester.tap(_visibleChatSendButton);
+      await pumpUntilFound(tester, find.text('确认使用外部模型'));
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
       expect(find.text('包含私密上下文：是'), findsOneWidget);
@@ -313,10 +314,12 @@ void _runAiChatSendPrivacyCases() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('允许参考私密内容'));
       await tester.pump();
-      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-      await tester.tap(find.text('发送'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        _chatFieldWithHint('输入你的问题或消息'),
+        '帮我回忆 GitHub 登录信息',
+      );
+      await tester.tap(_visibleChatSendButton);
+      await pumpUntilFound(tester, find.text('确认使用外部模型'));
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
     },

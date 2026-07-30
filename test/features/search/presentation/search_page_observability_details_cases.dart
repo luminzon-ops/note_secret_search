@@ -60,13 +60,6 @@ void _registerSearchPageObservabilityDetailCases() {
   testWidgets('SearchPage keeps observability summary compact by default', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(800, 1600);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(() {
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
-    });
-
     final router = GoRouter(
       routes: [
         GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -119,6 +112,7 @@ void _registerSearchPageObservabilityDetailCases() {
 
     await tester.pumpAndSettle();
 
+    await _revealSearchPage(tester, find.widgetWithText(TextButton, '展开更多观测'));
     expect(find.textContaining('命中结构：'), findsOneWidget);
     expect(find.text('展开更多观测'), findsOneWidget);
 
@@ -130,13 +124,6 @@ void _registerSearchPageObservabilityDetailCases() {
   testWidgets(
     'SearchPage can expand and collapse secondary observability diagnostics',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -230,7 +217,10 @@ void _registerSearchPageObservabilityDetailCases() {
       );
       expect(find.text('当前语义命中主要集中在正文字段（1 条）。'), findsNothing);
 
-      await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
+      await _revealAndTapSearchPage(
+        tester,
+        find.widgetWithText(TextButton, '展开更多观测'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('收起观测详情'), findsOneWidget);
@@ -243,7 +233,10 @@ void _registerSearchPageObservabilityDetailCases() {
       expect(find.textContaining('a' * 64), findsNothing);
       expect(find.text('当前语义命中主要集中在正文字段（1 条）。'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(TextButton, '收起观测详情'));
+      await _revealAndTapSearchPage(
+        tester,
+        find.widgetWithText(TextButton, '收起观测详情'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('展开更多观测'), findsOneWidget);

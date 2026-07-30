@@ -48,12 +48,7 @@ void _registerSearchPageResultStructureCase() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.text('结果概览：共 2 条，密码 1 条，笔记 1 条。'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('结果概览：共 2 条，密码 1 条，笔记 1 条。'));
 
       expect(find.text('结果概览：共 2 条，密码 1 条，笔记 1 条。'), findsOneWidget);
       expect(find.text('密码结果'), findsOneWidget);
@@ -328,12 +323,7 @@ void _registerSearchPageResultSummaryCases() {
 
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(
-      find.text('双命中'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
+    await _revealSearchPage(tester, find.text('双命中'));
 
     expect(find.text('双命中'), findsOneWidget);
   });
@@ -385,12 +375,7 @@ void _registerSearchPageResultSummaryCases() {
 
     await tester.pumpAndSettle();
 
-    await tester.scrollUntilVisible(
-      find.text('关键词优先'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
+    await _revealSearchPage(tester, find.text('关键词优先'));
 
     expect(find.text('关键词优先'), findsOneWidget);
     expect(find.text('语义命中'), findsOneWidget);

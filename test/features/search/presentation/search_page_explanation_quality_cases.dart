@@ -4,13 +4,6 @@ void _registerSearchPageSemanticTierCases() {
   testWidgets(
     'SearchPage shows semantic tier counts in the top summary when semantic signals are present',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -134,12 +127,7 @@ void _registerSearchPageSemanticTierCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('排序依据'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('排序依据'));
 
       expect(find.text('• 重点语义命中：标题属于高可信语义字段'), findsOneWidget);
     },
@@ -183,12 +171,7 @@ void _registerSearchPageSemanticTierCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('排序依据'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('排序依据'));
 
       expect(find.text('• 补充语义线索：标签属于补充语义线索'), findsOneWidget);
     },
@@ -303,13 +286,6 @@ void _registerSearchPageResultExplanationCase() {
   testWidgets(
     'SearchPage shows result-card explanation for high-quality dual-hit result',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -349,12 +325,7 @@ void _registerSearchPageResultExplanationCase() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这条结果同时命中关键词与重点语义字段，可优先查看。'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('这条结果同时命中关键词与重点语义字段，可优先查看。'));
 
       expect(find.text('这条结果同时命中关键词与重点语义字段，可优先查看。'), findsOneWidget);
     },

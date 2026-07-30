@@ -70,13 +70,8 @@ void _registerSearchPageNavigationCases() {
     );
 
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('密码结果'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Bank Account').first);
+    await _revealSearchPage(tester, find.text('密码结果'));
+    await tester.tap(find.text('Bank Account').hitTestable());
     await tester.pumpAndSettle();
 
     expect(find.text('来自搜索'), findsOneWidget);
@@ -146,13 +141,8 @@ void _registerSearchPageNavigationCases() {
     );
 
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.text('笔记结果'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Recovery Note').first);
+    await _revealSearchPage(tester, find.text('笔记结果'));
+    await tester.tap(find.text('Recovery Note').hitTestable());
     await tester.pumpAndSettle();
 
     expect(find.text('来自搜索'), findsOneWidget);

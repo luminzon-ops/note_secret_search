@@ -3,11 +3,9 @@ part of 'model_management_page_test.dart';
 Future<void> scrollUntilFound(
   WidgetTester tester,
   Finder finder, {
-  double delta = 320,
   int maxScrolls = 30,
 }) async {
-  await tester.scrollUntilVisible(finder, delta, maxScrolls: maxScrolls);
-  await tester.pumpAndSettle();
+  await reveal(tester, finder, maxScrolls: maxScrolls);
   expect(finder, findsOneWidget);
 }
 

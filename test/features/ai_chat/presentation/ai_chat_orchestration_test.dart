@@ -20,6 +20,8 @@ import 'package:note_secret_search/features/ai_models/domain/model_registry_entr
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 
+import '../../../support/widget_test_helpers.dart';
+
 part 'ai_chat_orchestration_fakes.dart';
 
 const _embeddingModel = ModelRegistryEntry(
@@ -56,8 +58,7 @@ void main() {
         child: MaterialApp(home: AiChatPage()),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await pumpUntilFound(tester, _visibleSendButton);
   }
 
   testWidgets('private QA tab disables send when semantic readiness is false', (
@@ -98,9 +99,7 @@ void main() {
     await pumpChatPage(tester, container);
 
     expect(find.text('尚未选择本地 embedding 模型。'), findsOneWidget);
-    final button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, '发送').first,
-    );
+    final button = tester.widget<FilledButton>(_visibleSendButton);
     expect(button.onPressed, isNull);
   });
 
@@ -142,9 +141,7 @@ void main() {
     await tester.tap(find.text('自由聊天'));
     await tester.pumpAndSettle();
 
-    final button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, '发送').first,
-    );
+    final button = tester.widget<FilledButton>(_visibleSendButton);
     expect(button.onPressed, isNotNull);
   });
 
@@ -281,9 +278,7 @@ void main() {
 
       await pumpChatPage(tester, container);
 
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '发送').first,
-      );
+      final button = tester.widget<FilledButton>(_visibleSendButton);
       expect(button.onPressed, isNull);
     },
   );
@@ -382,10 +377,9 @@ void main() {
         ChatBackendPreference.external,
       );
 
-      await tester.enterText(find.byType(TextField).last, '普通外部问题');
-      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(_chatInputWithHint('输入你的问题或消息'), '普通外部问题');
+      await tester.tap(_visibleSendButton);
+      await pumpUntilFound(tester, find.text('确认使用外部模型'));
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
       expect(find.text('提供商：OpenAI 兼容接口'), findsOneWidget);
@@ -402,10 +396,12 @@ void main() {
 
       await tester.tap(find.text('允许参考私密内容'));
       await tester.pump();
-      await tester.enterText(find.byType(TextField).last, '帮我回忆 GitHub 登录信息');
-      await tester.tap(find.widgetWithText(FilledButton, '发送').last);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(
+        _chatInputWithHint('输入你的问题或消息'),
+        '帮我回忆 GitHub 登录信息',
+      );
+      await tester.tap(_visibleSendButton);
+      await pumpUntilFound(tester, find.text('确认使用外部模型'));
 
       expect(find.text('确认使用外部模型'), findsOneWidget);
       expect(find.text('包含私密上下文：是'), findsOneWidget);
@@ -418,4 +414,17 @@ void main() {
       expect(externalClient.lastUsedPrivateContext, isTrue);
     },
   );
+}
+
+Finder get _visibleSendButton =>
+    find.widgetWithText(FilledButton, '发送').hitTestable();
+
+Finder _chatInputWithHint(String hintText) {
+  return find
+      .byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.hintText == hintText,
+        description: 'chat input with hint "$hintText"',
+      )
+      .hitTestable();
 }

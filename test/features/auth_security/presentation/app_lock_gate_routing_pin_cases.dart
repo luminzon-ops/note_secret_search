@@ -77,8 +77,6 @@ void _registerAppLockRoutingPinCases() {
       ),
     );
 
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
     await tester.pumpAndSettle();
 
     expect(find.text('使用应用 PIN 解锁'), findsOneWidget);
@@ -299,8 +297,6 @@ void _registerAppLockRoutingPinCases() {
         ),
       );
 
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
       await tester.pumpAndSettle();
 
       expect(find.text('使用应用 PIN 解锁'), findsOneWidget);

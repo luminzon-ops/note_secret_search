@@ -4,13 +4,6 @@ void _registerSearchPageObservabilityPrimaryCases() {
   testWidgets(
     'SearchPage shows observability summary for mixed search result composition',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -99,7 +92,10 @@ void _registerSearchPageObservabilityPrimaryCases() {
 
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
+      await _revealAndTapSearchPage(
+        tester,
+        find.widgetWithText(TextButton, '展开更多观测'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('搜索观测摘要'), findsOneWidget);
@@ -112,13 +108,6 @@ void _registerSearchPageObservabilityPrimaryCases() {
   testWidgets(
     'SearchPage shows semantic-only filtering stats in observability summary',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -228,7 +217,10 @@ void _registerSearchPageObservabilityPrimaryCases() {
 
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
+      await _revealAndTapSearchPage(
+        tester,
+        find.widgetWithText(TextButton, '展开更多观测'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('语义过滤：语义直达候选 3 条，保留 1 条，过滤 2 条。'), findsOneWidget);
@@ -283,13 +275,6 @@ void _registerSearchPageObservabilityPrimaryCases() {
   testWidgets(
     'SearchPage shows dominant signal and dominant field hints in observability summary',
     (tester) async {
-      tester.view.physicalSize = const Size(800, 1600);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(() {
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
-
       final router = GoRouter(
         routes: [
           GoRoute(path: '/', builder: (context, state) => const SearchPage()),
@@ -352,8 +337,12 @@ void _registerSearchPageObservabilityPrimaryCases() {
 
       await tester.pumpAndSettle();
 
+      await _revealSearchPage(tester, find.text('当前结果主要由双命中主导（1 条）。'));
       expect(find.text('当前结果主要由双命中主导（1 条）。'), findsOneWidget);
-      await tester.tap(find.widgetWithText(TextButton, '展开更多观测'));
+      await _revealAndTapSearchPage(
+        tester,
+        find.widgetWithText(TextButton, '展开更多观测'),
+      );
       await tester.pumpAndSettle();
 
       expect(find.text('当前语义命中主要集中在标题字段（1 条）。'), findsOneWidget);

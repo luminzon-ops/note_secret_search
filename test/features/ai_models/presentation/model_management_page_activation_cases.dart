@@ -13,9 +13,6 @@ void _registerActivationCases() {
         },
       );
 
-      await tester.binding.setSurfaceSize(const Size(1000, 1600));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -247,8 +244,6 @@ void _registerActivationCases() {
   testWidgets('stale registry keeps model cleanup retry available', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 1600));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
     late _RecordingModelDownloadController controller;
 
     await tester.pumpWidget(

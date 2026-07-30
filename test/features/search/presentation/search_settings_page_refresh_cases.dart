@@ -50,7 +50,7 @@ void _runSearchSettingsRefreshCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.tap(find.text('立即构建索引').first);
+      await revealAndTap(tester, find.widgetWithText(ActionChip, '立即构建索引'));
       await tester.pump();
 
       expect(runner.refreshCalls, 1);

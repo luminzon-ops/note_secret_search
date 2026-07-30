@@ -116,6 +116,6 @@ class _RecordingSearchSettingsUseCase extends SearchSettingsUseCase {
 Future<void> _selectChunkLength(WidgetTester tester, int value) async {
   await tester.tap(find.byType(DropdownButton<int>));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('$value').last);
+  await tester.tap(find.text('$value').hitTestable());
   await tester.pumpAndSettle();
 }

@@ -25,6 +25,8 @@ import 'package:note_secret_search/features/ai_models/presentation/model_managem
 import 'package:note_secret_search/features/search/domain/embedding_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../support/widget_test_helpers.dart';
+
 part 'model_management_page_fakes.dart';
 part 'model_management_page_fixture.dart';
 part 'model_management_page_harness.dart';

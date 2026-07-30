@@ -17,6 +17,8 @@ import 'package:note_secret_search/features/ai_providers/domain/external_provide
 import 'package:note_secret_search/features/ai_providers/presentation/external_provider_settings_page.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 
+import '../../../support/widget_test_helpers.dart';
+
 void main() {
   testWidgets(
     'settings page exposes external provider entry and route renders config page',
@@ -82,13 +84,13 @@ void main() {
   testWidgets(
     'external provider settings page renders form and tests connection',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(800, 1200));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = _MemoryExternalProviderRepository();
       final client = _RecordingExternalProviderClient();
 
-      await tester.pumpWidget(
-        ProviderScope(
+      await pumpRouteAtViewport(
+        tester,
+        viewport: const Size(393, 852),
+        route: ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
             externalProviderConsentStoreProvider.overrideWithValue(
@@ -108,6 +110,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final pageList = find.byType(ListView);
 
       await tester.enterText(
         find.widgetWithText(TextFormField, '配置名称'),
@@ -130,7 +133,11 @@ void main() {
         'text-embedding-3-small',
       );
 
-      await tester.tap(find.text('测试连接'));
+      await revealAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, '测试连接'),
+        scrollable: pageList,
+      );
       await tester.pumpAndSettle();
       expect(client.lastTested?.baseUrl, 'https://example.com/v1');
 
@@ -146,12 +153,24 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(find.text('保存配置'));
+      await revealAndTap(
+        tester,
+        find.widgetWithText(FilledButton, '保存配置'),
+        scrollable: pageList,
+      );
       await tester.pumpAndSettle();
       expect(repository.saved.last.enabled, isFalse);
 
-      await tester.tap(find.text('启用外部 AI'));
-      await tester.tap(find.text('保存配置'));
+      await revealAndTap(
+        tester,
+        find.widgetWithText(SwitchListTile, '启用外部 AI'),
+        scrollable: pageList,
+      );
+      await revealAndTap(
+        tester,
+        find.widgetWithText(FilledButton, '保存配置'),
+        scrollable: pageList,
+      );
       await tester.pumpAndSettle();
       expect(repository.saved.last.displayName, '我的 OpenAI 兼容服务');
       expect(repository.saved.last.enabled, isTrue);
@@ -161,8 +180,6 @@ void main() {
   testWidgets(
     'saved provider can be explicitly disabled and consent can be revoked',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(800, 1200));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = _MemoryExternalProviderRepository(
         configs: const [
           ExternalProviderConfig(
@@ -179,8 +196,10 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(
-        ProviderScope(
+      await pumpRouteAtViewport(
+        tester,
+        viewport: const Size(393, 852),
+        route: ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
             externalProviderConsentStoreProvider.overrideWithValue(
@@ -195,11 +214,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final pageList = find.byType(ListView);
 
+      final disableButton = find.widgetWithText(OutlinedButton, '停用外部 AI');
+      await reveal(tester, disableButton, scrollable: pageList);
       expect(find.text('停用外部 AI'), findsOneWidget);
       expect(find.text('撤销发送确认'), findsOneWidget);
 
-      await tester.tap(find.text('停用外部 AI'));
+      await revealAndTap(tester, disableButton, scrollable: pageList);
       await tester.pumpAndSettle();
       expect(repository.saved.last.enabled, isFalse);
     },
@@ -208,8 +230,6 @@ void main() {
   testWidgets(
     'disable targets the persisted provider while form edits remain unsaved',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(800, 1200));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
       final repository = _MemoryExternalProviderRepository(
         configs: const [
           ExternalProviderConfig(
@@ -226,8 +246,10 @@ void main() {
         ],
       );
 
-      await tester.pumpWidget(
-        ProviderScope(
+      await pumpRouteAtViewport(
+        tester,
+        viewport: const Size(393, 852),
+        route: ProviderScope(
           overrides: [
             sensitiveStateAccessAllowedProvider.overrideWith((ref) => true),
             externalProviderConsentStoreProvider.overrideWithValue(
@@ -242,17 +264,22 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final pageList = find.byType(ListView);
 
       await tester.tap(find.text('OpenAI 兼容接口'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Ollama 本地服务').last);
+      await tester.tap(find.text('Ollama 本地服务').hitTestable());
       await tester.pumpAndSettle();
       await tester.enterText(
         find.widgetWithText(TextFormField, '配置名称'),
         'Unsaved Ollama edit',
       );
 
-      await tester.tap(find.text('停用外部 AI'));
+      await revealAndTap(
+        tester,
+        find.widgetWithText(OutlinedButton, '停用外部 AI'),
+        scrollable: pageList,
+      );
       await tester.pumpAndSettle();
 
       expect(repository.saved.last.id, 'persisted-provider-id');

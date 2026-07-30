@@ -58,7 +58,7 @@ void _registerSearchPageRefreshSessionCases() {
       expect(find.text('正在刷新搜索状态与结果...'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsWidgets);
       final button = tester.widget<FilledButton>(
-        find.byType(FilledButton).first,
+        find.widgetWithText(FilledButton, '立即构建索引'),
       );
       expect(button.onPressed, isNull);
     },

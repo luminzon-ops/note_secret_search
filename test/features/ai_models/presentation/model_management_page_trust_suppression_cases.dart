@@ -373,9 +373,6 @@ void _registerTrustSuppressionCases() {
     testWidgets(
       '(d) signature metadata on another source produces no trust text',
       (tester) async {
-        await tester.binding.setSurfaceSize(const Size(1000, 1600));
-        addTearDown(() => tester.binding.setSurfaceSize(null));
-
         await tester.pumpWidget(
           ProviderScope(
             overrides: [

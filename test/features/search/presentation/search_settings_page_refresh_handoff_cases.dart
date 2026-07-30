@@ -63,7 +63,7 @@ void _runSearchSettingsRefreshHandoffCases() {
     );
 
     await tester.pumpAndSettle();
-    await tester.tap(find.text('立即构建索引').first);
+    await revealAndTap(tester, find.widgetWithText(ActionChip, '立即构建索引'));
     await tester.pump();
 
     expect(runner.refreshCalls, 1);
@@ -133,14 +133,9 @@ void _runSearchSettingsRefreshHandoffCases() {
         ),
       );
 
-      await pumpUntilFound(tester, find.text('立即构建索引'));
-      await tester.scrollUntilVisible(
-        find.text('立即构建索引').first,
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await pumpUntilFound(tester, find.text('立即构建索引').hitTestable());
-      await tester.tap(find.text('立即构建索引').first);
+      final indexAction = find.widgetWithText(ActionChip, '立即构建索引');
+      await pumpUntilFound(tester, indexAction);
+      await revealAndTap(tester, indexAction);
       await pumpUntilFound(tester, find.text('已开始处理待索引内容，请稍后查看最新结果。'));
 
       expect(runner.refreshCalls, 1);
@@ -210,13 +205,7 @@ void _runSearchSettingsRefreshHandoffCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('立即构建索引').first,
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('立即构建索引').first);
+      await revealAndTap(tester, find.widgetWithText(ActionChip, '立即构建索引'));
       await tester.pump();
 
       expect(runner.refreshCalls, 1);

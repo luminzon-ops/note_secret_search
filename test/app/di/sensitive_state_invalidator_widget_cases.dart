@@ -32,10 +32,7 @@ void registerSensitiveStateInvalidatorWidgetTests() {
 
       expect(secretRepository.reads, 1);
       expect(
-        tester
-            .widget<TextFormField>(find.byType(TextFormField).first)
-            .controller
-            ?.text,
+        tester.widget<TextFormField>(_secretTitleField).controller?.text,
         'Sensitive secret',
       );
 
@@ -55,12 +52,12 @@ void registerSensitiveStateInvalidatorWidgetTests() {
       expect(container.read(sensitiveStateAccessAllowedProvider), isFalse);
       expect(secretRepository.reads, readsAfterLock);
       expect(
-        tester
-            .widget<TextFormField>(find.byType(TextFormField).first)
-            .controller
-            ?.text,
+        tester.widget<TextFormField>(_secretTitleField).controller?.text,
         isEmpty,
       );
     },
   );
 }
+
+Finder get _secretTitleField =>
+    find.ancestor(of: find.text('标题 *'), matching: find.byType(TextFormField));

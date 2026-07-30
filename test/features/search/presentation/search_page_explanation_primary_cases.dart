@@ -40,12 +40,7 @@ void _registerSearchPageExplanationPrimaryCases() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.text('• 标题：Bank Account'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('• 标题：Bank Account'));
 
       expect(find.text('语义命中'), findsWidgets);
       expect(find.text('• 标题：Bank Account'), findsOneWidget);
@@ -99,12 +94,7 @@ void _registerSearchPageExplanationPrimaryCases() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.text('排序依据'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('排序依据'));
 
       expect(find.text('排序依据'), findsOneWidget);
       expect(find.text('• 强信号：同时命中关键词与语义检索'), findsOneWidget);
@@ -151,12 +141,7 @@ void _registerSearchPageExplanationPrimaryCases() {
 
       await tester.pumpAndSettle();
 
-      await tester.scrollUntilVisible(
-        find.text('• 中信号：命中语义检索'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await _revealSearchPage(tester, find.text('• 中信号：命中语义检索'));
 
       expect(find.text('• 中信号：命中语义检索'), findsOneWidget);
       expect(find.text('• 优先查看标签字段，确认标签线索是否匹配。'), findsOneWidget);

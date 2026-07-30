@@ -31,12 +31,7 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这些设置会如何影响结果'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('这些设置会如何影响结果'));
 
       expect(find.text('这些设置会如何影响结果'), findsOneWidget);
       expect(find.text('检索范围类设置会立即影响结果；索引内容类设置在你下次重建索引后生效。'), findsOneWidget);
@@ -73,26 +68,10 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这些设置会如何影响结果'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await reveal(tester, find.text('这些设置会如何影响结果'));
+      await revealAndTap(tester, find.widgetWithText(SwitchListTile, '密码字段'));
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('检索范围控制'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(SwitchListTile, '密码字段'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这些设置会如何影响结果'),
-        -300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('这些设置会如何影响结果'));
 
       expect(find.text('你当前的草稿会立即影响搜索结果。保存后可以直接回到搜索页查看变化。'), findsOneWidget);
       expect(find.text('• 密码字段检索范围'), findsOneWidget);
@@ -129,20 +108,10 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('语义索引设置'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('语义索引设置'));
       await _selectChunkLength(tester, 160);
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这些设置会如何影响结果'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('这些设置会如何影响结果'));
 
       expect(find.text('你当前的草稿会影响语义索引内容。保存后需要重新索引，语义结果才会更新。'), findsOneWidget);
       expect(find.text('• 单 chunk 最大长度'), findsOneWidget);
@@ -188,20 +157,9 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('检索范围控制'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await revealAndTap(tester, find.widgetWithText(SwitchListTile, '检索标题'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(SwitchListTile, '检索标题'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('这些设置会如何影响结果'),
-        -300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('这些设置会如何影响结果'));
 
       expect(
         find.text('你当前的草稿包含两类影响：部分改动会立即影响结果，部分改动需要重新索引后生效。'),
@@ -246,15 +204,10 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('语义索引设置'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('语义索引设置'));
       await _selectChunkLength(tester, 160);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('保存索引设置'));
+      await revealAndTap(tester, find.widgetWithText(FilledButton, '保存索引设置'));
       await tester.pumpAndSettle();
 
       expect(settingsUseCase.lastIndexSettings?.maxChunkLength, 160);
@@ -304,17 +257,12 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('语义索引设置'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('语义索引设置'));
       await _selectChunkLength(tester, 160);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('保存索引设置'));
+      await revealAndTap(tester, find.widgetWithText(FilledButton, '保存索引设置'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('立即刷新'));
+      await revealAndTap(tester, find.widgetWithText(FilledButton, '立即刷新'));
       await tester.pump();
 
       expect(settingsUseCase.lastIndexSettings?.maxChunkLength, 160);
@@ -371,23 +319,12 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('语义索引设置'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
+      await reveal(tester, find.text('语义索引设置'));
       await _selectChunkLength(tester, 160);
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('保存索引设置'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await revealAndTap(tester, find.widgetWithText(FilledButton, '保存索引设置'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('保存索引设置'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('返回搜索'));
+      await revealAndTap(tester, find.widgetWithText(TextButton, '返回搜索'));
       await tester.pumpAndSettle();
 
       expect(settingsUseCase.lastIndexSettings?.maxChunkLength, 160);
@@ -432,21 +369,9 @@ void _runSearchSettingsImpactSaveCases() {
       );
 
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('检索范围控制'),
-        300,
-        scrollable: find.byType(Scrollable).first,
-      );
+      await revealAndTap(tester, find.widgetWithText(SwitchListTile, '密码字段'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(SwitchListTile, '密码字段'));
-      await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('保存检索范围'),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('保存检索范围'));
+      await revealAndTap(tester, find.widgetWithText(FilledButton, '保存检索范围'));
       await tester.pumpAndSettle();
 
       expect(settingsUseCase.lastScope?.includePasswordField, isTrue);

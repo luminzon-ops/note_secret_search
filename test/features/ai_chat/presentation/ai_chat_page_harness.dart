@@ -79,6 +79,19 @@ Future<void> _pumpChatRouteAtSize(
   await pumpUntilFound(tester, find.text('AI 问答'));
 }
 
+Finder get _visibleChatSendButton =>
+    find.widgetWithText(FilledButton, '发送').hitTestable();
+
+Finder _chatFieldWithHint(String hintText) {
+  return find
+      .byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.hintText == hintText,
+        description: 'chat field with hint "$hintText"',
+      )
+      .hitTestable();
+}
+
 class _MemoryExternalProviderConsentStore
     implements ExternalProviderConsentStore {
   _MemoryExternalProviderConsentStore({

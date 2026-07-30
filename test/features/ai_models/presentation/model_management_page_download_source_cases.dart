@@ -4,9 +4,6 @@ void _registerDownloadSourceCases() {
   testWidgets(
     'ModelManagementPage lets the user switch the selected download source',
     (tester) async {
-      await tester.binding.setSurfaceSize(const Size(1000, 1600));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
       late _RecordingModelDownloadController controller;
 
       await tester.pumpWidget(
@@ -66,11 +63,11 @@ void _registerDownloadSourceCases() {
       expect(find.text('当前下载源'), findsOneWidget);
       expect(find.textContaining('GitHub Releases'), findsAtLeast(2));
 
-      final dropdownFinder = find.byType(DropdownButton<String>).first;
+      final dropdownFinder = find.byType(DropdownButton<String>);
       await scrollUntilFound(tester, dropdownFinder);
       await tester.tap(dropdownFinder);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('备用镜像').last);
+      await tester.tap(find.text('备用镜像').hitTestable());
       await tester.pumpAndSettle();
 
       // After switching, the source label updates and dropdown item is selected.
@@ -81,9 +78,6 @@ void _registerDownloadSourceCases() {
   testWidgets('ModelManagementPage starts download with the selected source', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(1000, 1600));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
     late _RecordingModelDownloadController controller;
 
     await tester.pumpWidget(
@@ -141,11 +135,11 @@ void _registerDownloadSourceCases() {
 
     await tester.pumpAndSettle();
 
-    final dropdownFinder = find.byType(DropdownButton<String>).first;
+    final dropdownFinder = find.byType(DropdownButton<String>);
     await scrollUntilFound(tester, dropdownFinder);
     await tester.tap(dropdownFinder);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('备用镜像').last);
+    await tester.tap(find.text('备用镜像').hitTestable());
     await tester.pumpAndSettle();
 
     final downloadButtonFinder = find.text('开始下载');
