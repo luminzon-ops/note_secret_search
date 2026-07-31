@@ -7,6 +7,7 @@ import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
+import 'package:note_secret_search/features/ai_models/application/model_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
@@ -72,12 +73,21 @@ void main() {
     final downloadService = _SuccessfulDownloadService();
     final controllerProvider = Provider<ModelDownloadController>((ref) {
       return ModelDownloadController(
-        ref: ref,
         repository: downloadRepository,
         registryRepository: registryRepository,
         downloadService: downloadService,
         lifecycleStore: lifecycleStore,
         artifactStore: const _NoopArtifactStore(),
+        runtimeCoordinator: ref.read(modelRuntimeCoordinatorProvider),
+        loadRegistryEntries: () =>
+            ref.read(modelRegistryEntriesProvider.future),
+        loadCatalogEntries: () => ref.read(modelCatalogEntriesProvider.future),
+        invalidateDownloadTasks: () =>
+            ref.invalidate(modelDownloadTasksProvider),
+        invalidateRegistryEntries: () =>
+            ref.invalidate(modelRegistryEntriesProvider),
+        invalidateEmbeddingRuntimeStates: () =>
+            ref.invalidate(embeddingRuntimeStatesProvider),
         logger: const AppLogger(),
       );
     });
@@ -185,12 +195,22 @@ void main() {
       );
       final controllerProvider = Provider<ModelDownloadController>((ref) {
         return ModelDownloadController(
-          ref: ref,
           repository: downloadRepository,
           registryRepository: registryRepository,
           downloadService: downloadService,
           lifecycleStore: lifecycleStore,
           artifactStore: const _NoopArtifactStore(),
+          runtimeCoordinator: ref.read(modelRuntimeCoordinatorProvider),
+          loadRegistryEntries: () =>
+              ref.read(modelRegistryEntriesProvider.future),
+          loadCatalogEntries: () =>
+              ref.read(modelCatalogEntriesProvider.future),
+          invalidateDownloadTasks: () =>
+              ref.invalidate(modelDownloadTasksProvider),
+          invalidateRegistryEntries: () =>
+              ref.invalidate(modelRegistryEntriesProvider),
+          invalidateEmbeddingRuntimeStates: () =>
+              ref.invalidate(embeddingRuntimeStatesProvider),
           logger: const AppLogger(),
         );
       });

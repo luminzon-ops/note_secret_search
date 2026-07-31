@@ -1,8 +1,8 @@
 part of 'ai_chat_providers.dart';
 
 mixin _AiChatConversationSelection on StateNotifier<AiChatConversationState> {
-  Ref get _ref;
   ChatSessionCoordinator get _sessionCoordinator;
+  bool Function() get _sensitiveAccessAllowed;
   int get _generation;
 
   int _claimSelectionAttempt() {
@@ -68,7 +68,6 @@ mixin _AiChatConversationSelection on StateNotifier<AiChatConversationState> {
   }
 
   bool _canContinue(int generation) {
-    return generation == _generation &&
-        _ref.read(sensitiveStateAccessAllowedProvider);
+    return generation == _generation && _sensitiveAccessAllowed();
   }
 }

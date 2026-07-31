@@ -35,7 +35,6 @@ part 'model_download_structured_support.dart';
 
 class ModelDownloadController {
   ModelDownloadController({
-    required Ref ref,
     required ModelDownloadRepository repository,
     required ModelRegistryRepository registryRepository,
     required ModelDownloadGateway downloadService,
@@ -47,8 +46,13 @@ class ModelDownloadController {
     ModelRuntimeCoordinator? runtimeCoordinator,
     ModelInstallJournalStore? installJournalStore,
     ModelSessionReleaser? sessionReleaser,
-  }) : _ref = ref,
-       _repository = repository,
+    ModelSourceProbe? sourceProbe,
+    Future<List<ModelRegistryEntry>> Function()? loadRegistryEntries,
+    Future<List<ModelCatalogEntry>> Function()? loadCatalogEntries,
+    void Function()? invalidateDownloadTasks,
+    void Function()? invalidateRegistryEntries,
+    void Function()? invalidateEmbeddingRuntimeStates,
+  }) : _repository = repository,
        _registryRepository = registryRepository,
        _downloadService = downloadService,
        _integrityVerifier = ModelRegistryIntegrityVerifier(
@@ -58,6 +62,15 @@ class ModelDownloadController {
        _providedRevisionStore = revisionStore,
        _providedBundledArtifactStager = bundledArtifactStager,
        _providedRuntimeCoordinator = runtimeCoordinator,
+       _sourceProbe = sourceProbe,
+       _loadRegistryEntries =
+           loadRegistryEntries ?? registryRepository.listInstalledModels,
+       _loadCatalogEntries =
+           loadCatalogEntries ?? (() async => const <ModelCatalogEntry>[]),
+       _invalidateDownloadTasks = invalidateDownloadTasks ?? _noop,
+       _invalidateRegistryEntries = invalidateRegistryEntries ?? _noop,
+       _invalidateEmbeddingRuntimeStates =
+           invalidateEmbeddingRuntimeStates ?? _noop,
        _installJournalStore =
            installJournalStore ??
            (lifecycleStore is ModelInstallJournalStore
@@ -68,14 +81,15 @@ class ModelDownloadController {
          artifactStore: artifactStore,
          sessionReleaser: sessionReleaser,
          prepareModelMutation: (modelId, modelType) {
-           final ModelRuntimeCoordinator coordinator =
-               runtimeCoordinator ?? ref.read(modelRuntimeCoordinatorProvider);
+           final coordinator = runtimeCoordinator;
+           if (coordinator == null) {
+             throw StateError('model_runtime_coordinator_not_configured');
+           }
            return coordinator.releaseForMutation(modelId, modelType: modelType);
          },
        ),
        _logger = logger;
 
-  final Ref _ref;
   final ModelDownloadRepository _repository;
   final ModelRegistryRepository _registryRepository;
   final ModelDownloadGateway _downloadService;
@@ -84,6 +98,12 @@ class ModelDownloadController {
   final ModelRevisionStore? _providedRevisionStore;
   final BundledModelArtifactStager? _providedBundledArtifactStager;
   final ModelRuntimeCoordinator? _providedRuntimeCoordinator;
+  final ModelSourceProbe? _sourceProbe;
+  final Future<List<ModelRegistryEntry>> Function() _loadRegistryEntries;
+  final Future<List<ModelCatalogEntry>> Function() _loadCatalogEntries;
+  final void Function() _invalidateDownloadTasks;
+  final void Function() _invalidateRegistryEntries;
+  final void Function() _invalidateEmbeddingRuntimeStates;
   final ModelInstallJournalStore? _installJournalStore;
   final ModelLifecycleController _modelLifecycleController;
   final AppLogger _logger;
@@ -94,14 +114,16 @@ class ModelDownloadController {
   static const _uuid = Uuid();
 
   ModelRevisionStore get _revisionStore =>
-      _providedRevisionStore ?? _ref.read(modelRevisionStoreProvider);
+      _providedRevisionStore ??
+      (throw StateError('model_revision_store_not_configured'));
 
   BundledModelArtifactStager get _bundledArtifactStager =>
       _providedBundledArtifactStager ??
-      _ref.read(bundledModelArtifactStagerProvider);
+      (throw StateError('bundled_artifact_stager_not_configured'));
 
   ModelRuntimeCoordinator get _runtimeCoordinator =>
-      _providedRuntimeCoordinator ?? _ref.read(modelRuntimeCoordinatorProvider);
+      _providedRuntimeCoordinator ??
+      (throw StateError('model_runtime_coordinator_not_configured'));
 
   Future<void> enqueueDownload({
     required String modelId,
@@ -180,15 +202,15 @@ class ModelDownloadController {
       _logger.info('model_revalidation_saved');
     }
 
-    _ref.invalidate(modelRegistryEntriesProvider);
-    _ref.invalidate(embeddingRuntimeStatesProvider);
+    _invalidateRegistryEntries();
+    _invalidateEmbeddingRuntimeStates();
     _logger.info('model_revalidation_invalidated');
   }
 
   /// Repairs a broken installed model from the trusted catalog.
   /// Structured models reuse verified artifacts and replace only broken ones.
   Future<void> repairInstalledModel(String modelId) async {
-    final catalogEntries = await _ref.read(modelCatalogEntriesProvider.future);
+    final catalogEntries = await _loadCatalogEntries();
     final catalogEntry = catalogEntries
         .where((e) => e.id == modelId)
         .firstOrNull;
@@ -221,3 +243,5 @@ class ModelDownloadController {
   /// returning an updated entry with corrected [filePresent], [enabled], and
   /// [integrityStatus]. Does NOT persist — caller decides when to save.
 }
+
+void _noop() {}

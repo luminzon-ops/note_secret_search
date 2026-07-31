@@ -58,7 +58,6 @@ final modelDownloadControllerProvider = Provider<ModelDownloadController>((
   ref,
 ) {
   return ModelDownloadController(
-    ref: ref,
     repository: ref.watch(modelDownloadRepositoryProvider),
     registryRepository: ref.watch(modelRegistryRepositoryProvider),
     downloadService: ref.watch(modelDownloadServiceProvider),
@@ -67,6 +66,14 @@ final modelDownloadControllerProvider = Provider<ModelDownloadController>((
     revisionStore: ref.watch(modelRevisionStoreProvider),
     bundledArtifactStager: ref.watch(bundledModelArtifactStagerProvider),
     runtimeCoordinator: ref.watch(modelRuntimeCoordinatorProvider),
+    sourceProbe: ref.watch(modelSourceProbeServiceProvider),
+    loadRegistryEntries: () => ref.read(modelRegistryEntriesProvider.future),
+    loadCatalogEntries: () => ref.read(modelCatalogEntriesProvider.future),
+    invalidateDownloadTasks: () => ref.invalidate(modelDownloadTasksProvider),
+    invalidateRegistryEntries: () =>
+        ref.invalidate(modelRegistryEntriesProvider),
+    invalidateEmbeddingRuntimeStates: () =>
+        ref.invalidate(embeddingRuntimeStatesProvider),
     logger: ref.watch(loggerProvider),
   );
 });

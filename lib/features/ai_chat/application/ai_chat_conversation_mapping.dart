@@ -28,11 +28,6 @@ List<ChatContextItem> _mapNotesToContextItems(List<NoteItem> notes) {
       .toList(growable: false);
 }
 
-void _invalidateSelectedChatSession(Ref ref) {
-  ref.invalidate(currentChatMessagesProvider);
-  ref.invalidate(currentChatSessionProvider);
-}
-
 List<ChatMessage> _replaceChatMessageById({
   required List<ChatMessage> messages,
   required String targetId,

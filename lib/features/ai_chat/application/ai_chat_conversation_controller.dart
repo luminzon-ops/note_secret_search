@@ -3,17 +3,36 @@ part of 'ai_chat_providers.dart';
 class AiChatConversationController
     extends StateNotifier<AiChatConversationState>
     with _AiChatConversationSelection {
-  AiChatConversationController({required Ref ref, required ChatMode mode})
-    : _ref = ref,
-      _sessionCoordinator = ref.read(chatSessionCoordinatorProvider.notifier),
-      _orchestrator = ref.read(aiChatOrchestratorProvider),
-      super(AiChatConversationState(mode: mode));
+  AiChatConversationController({
+    required ChatMode mode,
+    required ChatSessionCoordinator sessionCoordinator,
+    required AiChatOrchestrator orchestrator,
+    required ChatSessionRepository repository,
+    required Future<List<ChatSession>> Function() loadSessions,
+    required Future<LocalLlmReadiness> Function() loadLocalReadiness,
+    required bool Function() sensitiveAccessAllowed,
+    required void Function() invalidateSessions,
+    required void Function() invalidateSelectedSession,
+  }) : _sessionCoordinator = sessionCoordinator,
+       _orchestrator = orchestrator,
+       _repository = repository,
+       _loadSessions = loadSessions,
+       _loadLocalReadiness = loadLocalReadiness,
+       _sensitiveAccessAllowed = sensitiveAccessAllowed,
+       _invalidateSessions = invalidateSessions,
+       _invalidateSelectedSession = invalidateSelectedSession,
+       super(AiChatConversationState(mode: mode));
 
-  @override
-  final Ref _ref;
   @override
   final ChatSessionCoordinator _sessionCoordinator;
   final AiChatOrchestrator _orchestrator;
+  final ChatSessionRepository _repository;
+  final Future<List<ChatSession>> Function() _loadSessions;
+  final Future<LocalLlmReadiness> Function() _loadLocalReadiness;
+  @override
+  final bool Function() _sensitiveAccessAllowed;
+  final void Function() _invalidateSessions;
+  final void Function() _invalidateSelectedSession;
   static const _uuid = Uuid();
   final Map<String, _SendingChatOperation> _sendingOperations =
       <String, _SendingChatOperation>{};
@@ -50,7 +69,7 @@ class AiChatConversationController
       return;
     }
 
-    final sessions = await _ref.read(chatSessionsProvider.future);
+    final sessions = await _loadSessions();
     if (!_restoreCanContinue(generation, startingIntent) ||
         !_selectionAttemptIsCurrent(startingAttempt) ||
         _hasPendingSelectionAttempt) {
@@ -72,15 +91,14 @@ class AiChatConversationController
       if (!_canContinue(generation)) {
         return;
       }
-      final startingIntent = _ref.read(chatSessionSelectionIntentProvider);
-      final repository = _ref.read(chatSessionRepositoryProvider);
-      final messages = await repository.listMessages(sessionId);
+      final startingIntent = _sessionCoordinator.state.selectionIntent;
+      final messages = await _repository.listMessages(sessionId);
       if (!_canContinue(generation) ||
           !_selectionAttemptIsCurrent(selectionAttempt) ||
           !_intentIsCurrent(startingIntent)) {
         return;
       }
-      final session = await repository.getSession(sessionId);
+      final session = await _repository.getSession(sessionId);
       if (!_canContinue(generation) ||
           !_selectionAttemptIsCurrent(selectionAttempt) ||
           !_intentIsCurrent(startingIntent) ||
@@ -111,13 +129,12 @@ class AiChatConversationController
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
-    final repository = _ref.read(chatSessionRepositoryProvider);
     final messages =
-        validatedMessages ?? await repository.listMessages(sessionId);
+        validatedMessages ?? await _repository.listMessages(sessionId);
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
-    final session = validatedSession ?? await repository.getSession(sessionId);
+    final session = validatedSession ?? await _repository.getSession(sessionId);
     if (!_selectionCanContinue(generation, intent, sessionId)) {
       return;
     }
@@ -205,13 +222,12 @@ class AiChatConversationController
     _sendingOperations[originSessionId] = sendingOperation;
 
     try {
-      final repository = _ref.read(chatSessionRepositoryProvider);
       if (backendPreference == ChatBackendPreference.local) {
-        await _ref.read(localLlmReadinessProvider.future);
+        await _loadLocalReadiness();
       }
       final existingSession = existingSessionId == null
           ? null
-          : await repository.getSession(originSessionId);
+          : await _repository.getSession(originSessionId);
       if (!_canContinue(generation)) {
         return;
       }
@@ -250,7 +266,7 @@ class AiChatConversationController
         status: ChatMessageStatus.loading,
       );
 
-      await repository.saveSession(session);
+      await _repository.saveSession(session);
       if (!_canContinue(generation)) {
         return;
       }
@@ -262,7 +278,7 @@ class AiChatConversationController
           )) {
         _publishNewOriginSession(originSessionId);
       }
-      await repository.saveMessage(
+      await _repository.saveMessage(
         ChatStoredMessage(
           id: userMessage.id,
           sessionId: originSessionId,
@@ -312,7 +328,7 @@ class AiChatConversationController
           sourceType: response.sourceType,
           backendUsage: response.usage,
         );
-        await repository.saveSession(
+        await _repository.saveSession(
           session.copyWith(
             title: sessionTitle,
             allowPrivateContext: allowPrivateContext,
@@ -323,7 +339,7 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        await repository.saveMessage(
+        await _repository.saveMessage(
           ChatStoredMessage(
             id: assistantMessage.id,
             sessionId: originSessionId,
@@ -347,7 +363,7 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        _ref.invalidate(chatSessionsProvider);
+        _invalidateSessions();
         if (_isOriginSelected(originSessionId, conversationMode)) {
           state = state.copyWith(
             messages: _replaceChatMessageById(
@@ -357,7 +373,7 @@ class AiChatConversationController
             ),
             sending: false,
           );
-          _invalidateSelectedChatSession(_ref);
+          _invalidateSelectedSession();
         }
       } catch (error) {
         if (!_canContinue(generation)) {
@@ -370,7 +386,7 @@ class AiChatConversationController
           createdAt: DateTime.now(),
           status: ChatMessageStatus.error,
         );
-        await repository.saveSession(
+        await _repository.saveSession(
           session.copyWith(
             title: sessionTitle,
             allowPrivateContext: allowPrivateContext,
@@ -380,7 +396,7 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        await repository.saveMessage(
+        await _repository.saveMessage(
           ChatStoredMessage(
             id: failedMessage.id,
             sessionId: originSessionId,
@@ -393,7 +409,7 @@ class AiChatConversationController
         if (!_canContinue(generation)) {
           return;
         }
-        _ref.invalidate(chatSessionsProvider);
+        _invalidateSessions();
         if (_isOriginSelected(originSessionId, conversationMode)) {
           state = state.copyWith(
             messages: _replaceChatMessageById(
@@ -404,7 +420,7 @@ class AiChatConversationController
             sending: false,
             errorMessage: failedMessage.text,
           );
-          _invalidateSelectedChatSession(_ref);
+          _invalidateSelectedSession();
         }
       }
     } finally {
@@ -420,21 +436,21 @@ class AiChatConversationController
   }
 
   void setAllowPrivateContext(bool value) {
-    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+    if (!_sensitiveAccessAllowed()) {
       return;
     }
     state = state.copyWith(allowPrivateContext: value);
   }
 
   void setBackendPreference(ChatBackendPreference value) {
-    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+    if (!_sensitiveAccessAllowed()) {
       return;
     }
     state = state.copyWith(backendPreference: value);
   }
 
   void setManualItems(List<ChatContextItem> items) {
-    if (!_ref.read(sensitiveStateAccessAllowedProvider)) {
+    if (!_sensitiveAccessAllowed()) {
       return;
     }
     state = state.copyWith(manualItems: items);
@@ -448,7 +464,7 @@ class AiChatConversationController
       clearErrorMessage: true,
       suppressSessionRestore: false,
     );
-    _invalidateSelectedChatSession(_ref);
+    _invalidateSelectedSession();
   }
 
   bool _canPublishNewOrigin(
@@ -466,7 +482,7 @@ class AiChatConversationController
   void _activateExistingOriginSession(String sessionId) {
     _claimSelectionIntent(sessionId);
     _sessionCoordinator.publishSession(sessionId, suppressRestore: false);
-    _invalidateSelectedChatSession(_ref);
+    _invalidateSelectedSession();
   }
 
   Future<void> _cancelActiveRequests() async {

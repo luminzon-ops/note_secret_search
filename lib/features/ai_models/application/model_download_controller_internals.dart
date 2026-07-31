@@ -18,7 +18,14 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       return ordered;
     }
 
-    final probeService = _ref.read(modelSourceProbeServiceProvider);
+    final probeService = _sourceProbe;
+    if (probeService == null) {
+      fallbackSources.sort(
+        (left, right) => left.priority.compareTo(right.priority),
+      );
+      ordered.addAll(fallbackSources);
+      return ordered;
+    }
     final probeResults = await Future.wait(
       fallbackSources.map(
         (candidate) => probeService.probeSource(
@@ -81,7 +88,7 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
           updatedAt: DateTime.now(),
         ),
       );
-      _ref.invalidate(modelDownloadTasksProvider);
+      _invalidateDownloadTasks();
 
       try {
         final result = await _downloadService.download(
@@ -108,7 +115,7 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
                 updatedAt: DateTime.now(),
               ),
             );
-            _ref.invalidate(modelDownloadTasksProvider);
+            _invalidateDownloadTasks();
           },
         );
         results[source] = result;
@@ -222,8 +229,8 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       );
     }
 
-    _ref.invalidate(modelDownloadTasksProvider);
-    _ref.invalidate(modelRegistryEntriesProvider);
+    _invalidateDownloadTasks();
+    _invalidateRegistryEntries();
   }
 
   Future<void> _completeSuccessfulDownload({
@@ -251,9 +258,9 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       completedTasks: <ModelDownloadTask>[completedTask],
     );
 
-    _ref.invalidate(modelDownloadTasksProvider);
-    _ref.invalidate(modelRegistryEntriesProvider);
-    _ref.invalidate(embeddingRuntimeStatesProvider);
+    _invalidateDownloadTasks();
+    _invalidateRegistryEntries();
+    _invalidateEmbeddingRuntimeStates();
   }
 
   Future<ModelRegistryEntry> _validatedRegistryEntry({

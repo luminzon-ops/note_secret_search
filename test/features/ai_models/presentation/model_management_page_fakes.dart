@@ -66,7 +66,7 @@ class _FakeModelArtifactStore implements ModelArtifactStore {
 }
 
 class _FakeModelDownloadController extends ModelDownloadController {
-  _FakeModelDownloadController({required super.ref})
+  _FakeModelDownloadController({required Ref ref})
     : super(
         repository: const _FakeModelDownloadRepository(),
         registryRepository: const _FakeModelRegistryRepository(),

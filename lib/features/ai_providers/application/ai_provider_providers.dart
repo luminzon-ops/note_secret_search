@@ -96,7 +96,20 @@ final externalPrivacyConfirmationControllerProvider =
 
 final externalProviderSettingsControllerProvider =
     Provider<ExternalProviderSettingsController>((ref) {
-      return ExternalProviderSettingsController(ref: ref);
+      return ExternalProviderSettingsController(
+        repository: ref.watch(externalProviderRepositoryProvider),
+        confirmation: ref.watch(externalPrivacyConfirmationControllerProvider),
+        gateway: ref.watch(externalChatGatewayProvider),
+        testConnection: (config) => ref
+            .read(externalProviderClientRouterProvider)
+            .testConnection(config),
+        invalidateProviderState: () {
+          ref.invalidate(enabledExternalProviderProvider);
+          ref.invalidate(externalProviderConfigsProvider);
+          ref.invalidate(externalProviderStatusProvider);
+          ref.invalidate(externalProviderClientRouterProvider);
+        },
+      );
     });
 
 final externalChatGatewayProvider = Provider<ExternalChatGateway>((ref) {
@@ -208,30 +221,40 @@ class ExternalPrivacyConfirmationController {
 }
 
 class ExternalProviderSettingsController {
-  ExternalProviderSettingsController({required Ref ref}) : _ref = ref;
+  ExternalProviderSettingsController({
+    required ExternalProviderRepository repository,
+    required ExternalPrivacyConfirmationController confirmation,
+    required ExternalChatGateway gateway,
+    required Future<void> Function(ExternalProviderConfig config)
+    testConnection,
+    required void Function() invalidateProviderState,
+  }) : _repository = repository,
+       _confirmation = confirmation,
+       _gateway = gateway,
+       _testConnection = testConnection,
+       _invalidateProviderState = invalidateProviderState;
 
-  final Ref _ref;
+  final ExternalProviderRepository _repository;
+  final ExternalPrivacyConfirmationController _confirmation;
+  final ExternalChatGateway _gateway;
+  final Future<void> Function(ExternalProviderConfig config) _testConnection;
+  final void Function() _invalidateProviderState;
 
   Future<void> save(ExternalProviderConfig config) async {
-    final repository = _ref.read(externalProviderRepositoryProvider);
-    final existing = await repository.loadById(config.id);
+    final existing = await _repository.loadById(config.id);
     if (existing != null) {
       await _invalidateChangedConsent(existing: existing, updated: config);
     }
-    final previouslyEnabled = await repository.loadEnabled();
+    final previouslyEnabled = await _repository.loadEnabled();
     if (config.enabled &&
         previouslyEnabled != null &&
         previouslyEnabled.id != config.id) {
-      await _ref
-          .read(externalPrivacyConfirmationControllerProvider)
-          .revoke(previouslyEnabled);
-      _ref
-          .read(externalChatGatewayProvider)
-          .invalidateConfiguration(previouslyEnabled.id);
+      await _confirmation.revoke(previouslyEnabled);
+      _gateway.invalidateConfiguration(previouslyEnabled.id);
     }
-    await repository.save(config);
+    await _repository.save(config);
     if (existing?.enabled == true && !config.enabled) {
-      _ref.read(externalChatGatewayProvider).invalidateConfiguration(config.id);
+      _gateway.invalidateConfiguration(config.id);
     }
     _invalidateProviderState();
   }
@@ -240,30 +263,20 @@ class ExternalProviderSettingsController {
     ExternalProviderConfig config, {
     required bool enabled,
   }) async {
-    final repository = _ref.read(externalProviderRepositoryProvider);
-    final persisted = await repository.loadById(config.id) ?? config;
+    final persisted = await _repository.loadById(config.id) ?? config;
     await save(persisted.copyWith(enabled: enabled));
   }
 
   Future<void> revokeConsent(ExternalProviderConfig config) async {
-    final repository = _ref.read(externalProviderRepositoryProvider);
-    final persisted = await repository.loadById(config.id) ?? config;
-    await _ref
-        .read(externalPrivacyConfirmationControllerProvider)
-        .revoke(persisted);
-    _ref
-        .read(externalChatGatewayProvider)
-        .invalidateConfiguration(persisted.id);
+    final persisted = await _repository.loadById(config.id) ?? config;
+    await _confirmation.revoke(persisted);
+    _gateway.invalidateConfiguration(persisted.id);
   }
 
   Future<void> _invalidateChangedConsent({
     required ExternalProviderConfig existing,
     required ExternalProviderConfig updated,
   }) async {
-    final confirmation = _ref.read(
-      externalPrivacyConfirmationControllerProvider,
-    );
-    final gateway = _ref.read(externalChatGatewayProvider);
     final oldStandard = externalProviderConsentFingerprint(
       existing,
       scope: ExternalProviderConsentScope.standard,
@@ -273,8 +286,8 @@ class ExternalProviderSettingsController {
       scope: ExternalProviderConsentScope.standard,
     );
     if (oldStandard != newStandard) {
-      await confirmation.revoke(existing);
-      gateway.invalidateConfiguration(existing.id);
+      await _confirmation.revoke(existing);
+      _gateway.invalidateConfiguration(existing.id);
       return;
     }
 
@@ -287,24 +300,15 @@ class ExternalProviderSettingsController {
       scope: ExternalProviderConsentScope.privateContext,
     );
     if (oldPrivate != newPrivate) {
-      await confirmation.revokeScope(
+      await _confirmation.revokeScope(
         existing,
         scope: ExternalProviderConsentScope.privateContext,
       );
-      gateway.invalidateFingerprint(oldPrivate);
+      _gateway.invalidateFingerprint(oldPrivate);
     }
   }
 
-  void _invalidateProviderState() {
-    _ref.invalidate(enabledExternalProviderProvider);
-    _ref.invalidate(externalProviderConfigsProvider);
-    _ref.invalidate(externalProviderStatusProvider);
-    _ref.invalidate(externalProviderClientRouterProvider);
-  }
-
   Future<void> testConnection(ExternalProviderConfig config) async {
-    await _ref
-        .read(externalProviderClientRouterProvider)
-        .testConnection(config);
+    await _testConnection(config);
   }
 }

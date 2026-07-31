@@ -239,12 +239,12 @@ extension _StructuredModelDownload on ModelDownloadController {
         existing: existing,
         operation: operation,
       );
-      _ref.invalidate(modelDownloadTasksProvider);
-      _ref.invalidate(modelRegistryEntriesProvider);
-      _ref.invalidate(embeddingRuntimeStatesProvider);
+      _invalidateDownloadTasks();
+      _invalidateRegistryEntries();
+      _invalidateEmbeddingRuntimeStates();
     } on _StructuredDownloadPaused {
       _logger.info('structured_model_download_paused');
-      _ref.invalidate(modelDownloadTasksProvider);
+      _invalidateDownloadTasks();
     } catch (error, stackTrace) {
       _logger.error('structured_model_download_failed', error, stackTrace);
       await _tryRecordStructuredFailure(

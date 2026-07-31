@@ -15,6 +15,7 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_context_policy.d
 import 'package:note_secret_search/features/ai_chat/domain/chat_message.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
+import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
@@ -23,11 +24,14 @@ import 'package:note_secret_search/features/search/application/search_index_mode
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/application/semantic_quality_policy.dart';
+import 'package:note_secret_search/features/search/application/semantic_search_service.dart';
 import 'package:note_secret_search/features/search/domain/effective_search_policy.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
+import 'package:note_secret_search/features/search/domain/search_corpus_reader.dart';
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 import 'package:note_secret_search/features/search/domain/semantic_search_result.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
+import 'package:note_secret_search/features/vault/domain/vault.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
@@ -39,7 +43,14 @@ part 'ai_chat_orchestrator.dart';
 part 'ai_chat_sensitive_providers.dart';
 
 final aiChatContextRetrieverProvider = Provider<AiChatContextRetriever>((ref) {
-  return SemanticAiChatContextRetriever(ref: ref);
+  return SemanticAiChatContextRetriever(
+    loadConfiguration: () => ref.read(searchConfigurationProvider.future),
+    loadVault: () => ref.read(defaultVaultProvider.future),
+    loadModelRevisionHash: (model) =>
+        ref.read(searchIndexModelRevisionProvider(model).future),
+    semanticSearchService: ref.watch(semanticSearchServiceProvider),
+    corpus: ref.watch(searchCorpusReaderProvider),
+  );
 });
 
 final chatContextProjectorProvider = Provider<ChatContextProjector>((ref) {
@@ -73,7 +84,7 @@ final privateQaChatControllerProvider =
       AiChatConversationController,
       AiChatConversationState
     >((ref) {
-      return AiChatConversationController(ref: ref, mode: ChatMode.privateQa);
+      return _buildConversationController(ref, ChatMode.privateQa);
     });
 
 final freeChatControllerProvider =
@@ -81,8 +92,28 @@ final freeChatControllerProvider =
       AiChatConversationController,
       AiChatConversationState
     >((ref) {
-      return AiChatConversationController(ref: ref, mode: ChatMode.freeChat);
+      return _buildConversationController(ref, ChatMode.freeChat);
     });
+
+AiChatConversationController _buildConversationController(
+  Ref ref,
+  ChatMode mode,
+) {
+  return AiChatConversationController(
+    mode: mode,
+    sessionCoordinator: ref.read(chatSessionCoordinatorProvider.notifier),
+    orchestrator: ref.read(aiChatOrchestratorProvider),
+    repository: ref.read(chatSessionRepositoryProvider),
+    loadSessions: () => ref.read(chatSessionsProvider.future),
+    loadLocalReadiness: () => ref.read(localLlmReadinessProvider.future),
+    sensitiveAccessAllowed: () => ref.read(sensitiveStateAccessAllowedProvider),
+    invalidateSessions: () => ref.invalidate(chatSessionsProvider),
+    invalidateSelectedSession: () {
+      ref.invalidate(currentChatMessagesProvider);
+      ref.invalidate(currentChatSessionProvider);
+    },
+  );
+}
 
 abstract interface class AiChatContextRetriever {
   Future<List<ChatContextItem>> retrieve({
@@ -93,13 +124,27 @@ abstract interface class AiChatContextRetriever {
 
 class SemanticAiChatContextRetriever implements AiChatContextRetriever {
   const SemanticAiChatContextRetriever({
-    required Ref ref,
+    required Future<SearchConfiguration> Function() loadConfiguration,
+    required Future<Vault?> Function() loadVault,
+    required Future<String> Function(ModelRegistryEntry model)
+    loadModelRevisionHash,
+    required SemanticSearchService semanticSearchService,
+    required SearchCorpusReader corpus,
     SemanticQualityPolicy qualityPolicy =
         const SemanticQualityPolicy.conservativeMvp(),
-  }) : _ref = ref,
+  }) : _loadConfiguration = loadConfiguration,
+       _loadVault = loadVault,
+       _loadModelRevisionHash = loadModelRevisionHash,
+       _semanticSearchService = semanticSearchService,
+       _corpus = corpus,
        _qualityPolicy = qualityPolicy;
 
-  final Ref _ref;
+  final Future<SearchConfiguration> Function() _loadConfiguration;
+  final Future<Vault?> Function() _loadVault;
+  final Future<String> Function(ModelRegistryEntry model)
+  _loadModelRevisionHash;
+  final SemanticSearchService _semanticSearchService;
+  final SearchCorpusReader _corpus;
   final SemanticQualityPolicy _qualityPolicy;
 
   @override
@@ -107,25 +152,21 @@ class SemanticAiChatContextRetriever implements AiChatContextRetriever {
     required String query,
     required ModelRegistryEntry embeddingModel,
   }) async {
-    final configuration = await _ref.read(searchConfigurationProvider.future);
-    final vault = await _ref.read(defaultVaultProvider.future);
+    final configuration = await _loadConfiguration();
+    final vault = await _loadVault();
     if (vault == null) {
       return const <ChatContextItem>[];
     }
-    final modelRevisionHash = await _ref.read(
-      searchIndexModelRevisionProvider(embeddingModel).future,
+    final modelRevisionHash = await _loadModelRevisionHash(embeddingModel);
+    final results = await _semanticSearchService.searchCorpus(
+      activeVaultId: vault.id,
+      query: query,
+      configuration: configuration,
+      modelRevisionHash: modelRevisionHash,
+      activeEmbeddingModel: embeddingModel,
+      corpus: _corpus,
+      operation: SearchOperation.aiAutoContext,
     );
-    final results = await _ref
-        .read(semanticSearchServiceProvider)
-        .searchCorpus(
-          activeVaultId: vault.id,
-          query: query,
-          configuration: configuration,
-          modelRevisionHash: modelRevisionHash,
-          activeEmbeddingModel: embeddingModel,
-          corpus: _ref.read(searchCorpusReaderProvider),
-          operation: SearchOperation.aiAutoContext,
-        );
 
     return normalizeChatContextItems(
       results

@@ -46,31 +46,43 @@ final modelSelectionEmbeddingRuntimeStatesProvider =
 
 final activeModelSelectionControllerProvider =
     Provider<ActiveModelSelectionController>((ref) {
-      return ActiveModelSelectionController(ref: ref);
+      return ActiveModelSelectionController(
+        store: ref.watch(activeModelSelectionStoreProvider.future),
+        effects: ref.watch(activeEmbeddingSelectionEffectsProvider),
+        invalidateSelection: () {
+          ref.invalidate(activeModelSelectionProvider);
+          ref.invalidate(activeEmbeddingRuntimeSelectionProvider);
+          ref.invalidate(activeEmbeddingModelProvider);
+        },
+      );
     });
 
 class ActiveModelSelectionController {
-  ActiveModelSelectionController({required Ref ref}) : _ref = ref;
+  ActiveModelSelectionController({
+    required Future<ActiveModelSelectionStore> store,
+    required ActiveEmbeddingSelectionEffects effects,
+    required void Function() invalidateSelection,
+  }) : _store = store,
+       _effects = effects,
+       _invalidateSelection = invalidateSelection;
 
-  final Ref _ref;
+  final Future<ActiveModelSelectionStore> _store;
+  final ActiveEmbeddingSelectionEffects _effects;
+  final void Function() _invalidateSelection;
 
   Future<void> setActiveEmbeddingModel(String? modelId) async {
     final normalizedModelId = modelId == null || modelId.isEmpty
         ? null
         : modelId;
-    final store = await _ref.read(activeModelSelectionStoreProvider.future);
+    final store = await _store;
     final previousModelId = await store.loadActiveEmbeddingModelId();
-    await _ref
-        .read(activeEmbeddingSelectionEffectsProvider)
-        .prepareForPersistence(
-          previousModelId: previousModelId,
-          nextModelId: normalizedModelId,
-        );
+    await _effects.prepareForPersistence(
+      previousModelId: previousModelId,
+      nextModelId: normalizedModelId,
+    );
     await store.saveActiveEmbeddingModelId(normalizedModelId);
 
-    _ref.invalidate(activeModelSelectionProvider);
-    _ref.invalidate(activeEmbeddingRuntimeSelectionProvider);
-    _ref.invalidate(activeEmbeddingModelProvider);
+    _invalidateSelection();
   }
 }
 

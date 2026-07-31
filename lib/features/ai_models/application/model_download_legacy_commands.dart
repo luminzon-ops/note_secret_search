@@ -24,7 +24,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         updatedAt: now,
       );
       await _repository.saveTask(next);
-      _ref.invalidate(modelDownloadTasksProvider);
+      _invalidateDownloadTasks();
       return;
     }
 
@@ -42,7 +42,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
       updatedAt: now,
     );
     await _repository.saveTask(task);
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 
   Future<void> _markLegacyDownloading(String modelId) async {
@@ -57,7 +57,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         updatedAt: DateTime.now(),
       ),
     );
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 
   Future<void> _startLegacyDownload({
@@ -83,9 +83,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
       entry.id,
     );
     if (existingRegistry != null) {
-      final normalizedEntries = await _ref.read(
-        modelRegistryEntriesProvider.future,
-      );
+      final normalizedEntries = await _loadRegistryEntries();
       existingRegistry =
           normalizedEntries.where((item) => item.id == entry.id).firstOrNull ??
           existingRegistry;
@@ -94,7 +92,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         existingRegistry.localPath,
       );
       if (existingRegistry.isInstalled && filePresent) {
-        _ref.invalidate(modelRegistryEntriesProvider);
+        _invalidateRegistryEntries();
         return;
       }
       await _modelLifecycleController.prepareForMutation(
@@ -198,7 +196,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
           updatedAt: DateTime.now(),
         ),
       );
-      _ref.invalidate(modelDownloadTasksProvider);
+      _invalidateDownloadTasks();
 
       try {
         final result = await _downloadService.download(
@@ -227,7 +225,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
                 updatedAt: DateTime.now(),
               ),
             );
-            _ref.invalidate(modelDownloadTasksProvider);
+            _invalidateDownloadTasks();
           },
         );
 
@@ -279,15 +277,15 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
       ),
     );
     _downloadService.cancel(task.id);
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 
   Future<void> _deleteLegacyInstalledModel(String modelId) async {
     await _modelLifecycleController.deleteInstalledModel(modelId);
 
-    _ref.invalidate(modelRegistryEntriesProvider);
-    _ref.invalidate(modelDownloadTasksProvider);
-    _ref.invalidate(embeddingRuntimeStatesProvider);
+    _invalidateRegistryEntries();
+    _invalidateDownloadTasks();
+    _invalidateEmbeddingRuntimeStates();
   }
 
   Future<bool> _isLegacyInstalled(String modelId) async {
@@ -311,7 +309,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         updatedAt: DateTime.now(),
       ),
     );
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 
   Future<void> _markLegacyFailedForSource(
@@ -334,7 +332,7 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         updatedAt: DateTime.now(),
       ),
     );
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 
   Future<void> _markLegacyCompleted(String modelId) async {
@@ -350,6 +348,6 @@ extension _LegacyModelDownloadCommands on ModelDownloadController {
         updatedAt: DateTime.now(),
       ),
     );
-    _ref.invalidate(modelDownloadTasksProvider);
+    _invalidateDownloadTasks();
   }
 }

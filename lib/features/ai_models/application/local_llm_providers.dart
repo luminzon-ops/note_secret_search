@@ -119,24 +119,27 @@ final localLlmReadinessProvider = FutureProvider<LocalLlmReadiness>((ref) {
 final activeLocalLlmSelectionControllerProvider =
     Provider<ActiveLocalLlmSelectionController>((ref) {
       return ActiveLocalLlmSelectionController(
-        ref: ref,
         store: ref.watch(localLlmSelectionStoreProvider),
         runtimeCoordinator: ref.watch(modelRuntimeCoordinatorProvider),
+        invalidateSelection: () {
+          ref.invalidate(activeLocalLlmModelProvider);
+          ref.invalidate(localLlmReadinessProvider);
+        },
       );
     });
 
 class ActiveLocalLlmSelectionController {
   ActiveLocalLlmSelectionController({
-    required Ref ref,
     required LocalLlmSelectionStore store,
     required ModelRuntimeCoordinator runtimeCoordinator,
-  }) : _ref = ref,
-       _store = store,
-       _runtimeCoordinator = runtimeCoordinator;
+    required void Function() invalidateSelection,
+  }) : _store = store,
+       _runtimeCoordinator = runtimeCoordinator,
+       _invalidateSelection = invalidateSelection;
 
-  final Ref _ref;
   final LocalLlmSelectionStore _store;
   final ModelRuntimeCoordinator _runtimeCoordinator;
+  final void Function() _invalidateSelection;
 
   Future<void> setActiveLocalLlmModel(String? modelId) async {
     final normalized = modelId?.trim();
@@ -154,8 +157,7 @@ class ActiveLocalLlmSelectionController {
     }
     await _store.saveActiveModelId(nextModelId);
 
-    _ref.invalidate(activeLocalLlmModelProvider);
-    _ref.invalidate(localLlmReadinessProvider);
+    _invalidateSelection();
   }
 }
 
