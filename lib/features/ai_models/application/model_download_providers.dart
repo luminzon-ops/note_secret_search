@@ -46,7 +46,7 @@ class ModelDownloadController {
     ModelRuntimeCoordinator? runtimeCoordinator,
     ModelInstallJournalStore? installJournalStore,
     ModelSessionReleaser? sessionReleaser,
-    ModelSourceProbe? sourceProbe,
+    ModelSourceProbe Function()? loadSourceProbe,
     Future<List<ModelRegistryEntry>> Function()? loadRegistryEntries,
     Future<List<ModelCatalogEntry>> Function()? loadCatalogEntries,
     void Function()? invalidateDownloadTasks,
@@ -62,7 +62,7 @@ class ModelDownloadController {
        _providedRevisionStore = revisionStore,
        _providedBundledArtifactStager = bundledArtifactStager,
        _providedRuntimeCoordinator = runtimeCoordinator,
-       _sourceProbe = sourceProbe,
+       _loadSourceProbe = loadSourceProbe,
        _loadRegistryEntries =
            loadRegistryEntries ?? registryRepository.listInstalledModels,
        _loadCatalogEntries =
@@ -98,7 +98,7 @@ class ModelDownloadController {
   final ModelRevisionStore? _providedRevisionStore;
   final BundledModelArtifactStager? _providedBundledArtifactStager;
   final ModelRuntimeCoordinator? _providedRuntimeCoordinator;
-  final ModelSourceProbe? _sourceProbe;
+  final ModelSourceProbe Function()? _loadSourceProbe;
   final Future<List<ModelRegistryEntry>> Function() _loadRegistryEntries;
   final Future<List<ModelCatalogEntry>> Function() _loadCatalogEntries;
   final void Function() _invalidateDownloadTasks;

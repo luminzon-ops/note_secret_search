@@ -66,7 +66,7 @@ final modelDownloadControllerProvider = Provider<ModelDownloadController>((
     revisionStore: ref.watch(modelRevisionStoreProvider),
     bundledArtifactStager: ref.watch(bundledModelArtifactStagerProvider),
     runtimeCoordinator: ref.watch(modelRuntimeCoordinatorProvider),
-    sourceProbe: ref.watch(modelSourceProbeServiceProvider),
+    loadSourceProbe: () => ref.read(modelSourceProbeServiceProvider),
     loadRegistryEntries: () => ref.read(modelRegistryEntriesProvider.future),
     loadCatalogEntries: () => ref.read(modelCatalogEntriesProvider.future),
     invalidateDownloadTasks: () => ref.invalidate(modelDownloadTasksProvider),

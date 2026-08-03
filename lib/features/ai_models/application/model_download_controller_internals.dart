@@ -18,7 +18,7 @@ extension _ModelDownloadControllerInternals on ModelDownloadController {
       return ordered;
     }
 
-    final probeService = _sourceProbe;
+    final probeService = _loadSourceProbe?.call();
     if (probeService == null) {
       fallbackSources.sort(
         (left, right) => left.priority.compareTo(right.priority),
