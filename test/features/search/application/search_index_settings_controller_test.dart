@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/application/search_index_write_fence.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration_repository.dart';
 import 'package:note_secret_search/features/search/domain/search_index_settings.dart';

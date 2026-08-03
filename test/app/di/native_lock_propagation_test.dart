@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/auth_security/infrastructure/native_security_bridge.dart';
 
 void main() {
   test(

@@ -5,7 +5,6 @@ import 'package:note_secret_search/features/ai_chat/application/llm_runtime_prov
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
-import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/local_llm_selection_store.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 

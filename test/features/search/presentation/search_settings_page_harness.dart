@@ -64,30 +64,15 @@ class _RecordingSearchRefreshRunner implements SearchRefreshRunner {
   }
 }
 
-class _NoopSearchIndexRunner implements SearchIndexRunner {
-  const _NoopSearchIndexRunner();
-
-  @override
-  Future<SearchIndexExecutionResult> execute({
-    required SearchIndexTaskState taskState,
-    required SearchIndexTaskStateWriter onTaskState,
-  }) async {
-    return SearchIndexExecutionResult.skipped;
-  }
-}
-
 class _RecordingSearchSettingsUseCase extends SearchSettingsUseCase {
-  _RecordingSearchSettingsUseCase({
-    this.indexRequiresReindex = true,
-    this.scopeRequiresReindex = false,
-  }) : super(
+  _RecordingSearchSettingsUseCase({this.scopeRequiresReindex = false})
+    : super(
          writeFence: SearchIndexWriteFence(),
          loadConfiguration: () async => SearchConfiguration.defaults(),
          loadRepository: () async => throw UnimplementedError(),
          invalidateConfiguration: () {},
        );
 
-  final bool indexRequiresReindex;
   final bool scopeRequiresReindex;
   SearchIndexSettings? lastIndexSettings;
   SearchScopeConfig? lastScope;
@@ -99,7 +84,7 @@ class _RecordingSearchSettingsUseCase extends SearchSettingsUseCase {
     lastIndexSettings = settings;
     return SearchSettingsSaveResult(
       savedConfiguration: SearchConfiguration.defaults(),
-      requiresReindex: indexRequiresReindex,
+      requiresReindex: true,
     );
   }
 

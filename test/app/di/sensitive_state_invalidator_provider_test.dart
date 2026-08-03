@@ -19,7 +19,6 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_session_reposito
 import 'package:note_secret_search/features/ai_chat/domain/llm_engine.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
 import 'package:note_secret_search/features/ai_models/application/model_catalog_providers.dart';
-import 'package:note_secret_search/features/ai_models/application/local_llm_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_download_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
 import 'package:note_secret_search/features/ai_models/application/model_runtime_providers.dart';
@@ -68,7 +67,6 @@ import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_repository.dart';
 import 'package:note_secret_search/features/secrets/presentation/secret_editor_page.dart'
     as secret_editor;
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 import 'package:note_secret_search/features/vault/domain/vault.dart';
 import 'package:note_secret_search/features/vault/domain/vault_repository.dart';
