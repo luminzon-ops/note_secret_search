@@ -102,8 +102,8 @@ AiChatConversationController _buildConversationController(
   return AiChatConversationController(
     mode: mode,
     sessionCoordinator: ref.read(chatSessionCoordinatorProvider.notifier),
-    orchestrator: ref.read(aiChatOrchestratorProvider),
-    repository: ref.read(chatSessionRepositoryProvider),
+    loadOrchestrator: () => ref.read(aiChatOrchestratorProvider),
+    loadRepository: () => ref.read(chatSessionRepositoryProvider),
     loadSessions: () => ref.read(chatSessionsProvider.future),
     loadLocalReadiness: () => ref.read(localLlmReadinessProvider.future),
     sensitiveAccessAllowed: () => ref.read(sensitiveStateAccessAllowedProvider),

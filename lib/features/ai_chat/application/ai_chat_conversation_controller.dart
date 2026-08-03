@@ -6,16 +6,16 @@ class AiChatConversationController
   AiChatConversationController({
     required ChatMode mode,
     required ChatSessionCoordinator sessionCoordinator,
-    required AiChatOrchestrator orchestrator,
-    required ChatSessionRepository repository,
+    required AiChatOrchestrator Function() loadOrchestrator,
+    required ChatSessionRepository Function() loadRepository,
     required Future<List<ChatSession>> Function() loadSessions,
     required Future<LocalLlmReadiness> Function() loadLocalReadiness,
     required bool Function() sensitiveAccessAllowed,
     required void Function() invalidateSessions,
     required void Function() invalidateSelectedSession,
   }) : _sessionCoordinator = sessionCoordinator,
-       _orchestrator = orchestrator,
-       _repository = repository,
+       _loadOrchestrator = loadOrchestrator,
+       _loadRepository = loadRepository,
        _loadSessions = loadSessions,
        _loadLocalReadiness = loadLocalReadiness,
        _sensitiveAccessAllowed = sensitiveAccessAllowed,
@@ -25,8 +25,8 @@ class AiChatConversationController
 
   @override
   final ChatSessionCoordinator _sessionCoordinator;
-  final AiChatOrchestrator _orchestrator;
-  final ChatSessionRepository _repository;
+  final AiChatOrchestrator Function() _loadOrchestrator;
+  final ChatSessionRepository Function() _loadRepository;
   final Future<List<ChatSession>> Function() _loadSessions;
   final Future<LocalLlmReadiness> Function() _loadLocalReadiness;
   @override
@@ -38,6 +38,9 @@ class AiChatConversationController
       <String, _SendingChatOperation>{};
   @override
   var _generation = 0;
+
+  AiChatOrchestrator get _orchestrator => _loadOrchestrator();
+  ChatSessionRepository get _repository => _loadRepository();
 
   Future<void> restoreSessionIfNeeded() async {
     final generation = _generation;
