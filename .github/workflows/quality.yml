@@ -377,3 +377,101 @@ jobs:
           name: api34-smoke-diagnostics
           path: artifacts/android/*logcat.txt
           retention-days: 14
+
+  sign-release-candidate:
+    name: Sign release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - artifact-audit
+      - api24-smoke
+      - api34-smoke
+    environment: release-signing
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Sign APK and AAB from package-once payload
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NSS_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NSS_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NSS_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NSS_RELEASE_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ secrets.NSS_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p signed
+          keystore="$RUNNER_TEMP/nss-release.jks"
+          trap 'rm -f "$keystore" "$RUNNER_TEMP/key.properties"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+          chmod 600 "$keystore"
+          release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
+          release_aab=$(find artifacts/android -name '*release*.aab' | head -n 1)
+          zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$zipalign" -p -f 4 "$release_apk" signed/app-release-aligned.apk
+          "$apksigner" sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass pass:"$KEYSTORE_PASSWORD" --key-pass pass:"$KEY_PASSWORD" --out signed/app-release-signed.apk signed/app-release-aligned.apk
+          "$apksigner" verify --print-certs signed/app-release-signed.apk > signed/app-release-apk-certs.txt
+          jarsigner -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -signedjar signed/app-release-signed.aab "$release_aab" "$KEY_ALIAS"
+          jarsigner -verify -verbose -certs signed/app-release-signed.aab > signed/app-release-aab-certs.txt
+          if [ -n "$EXPECTED_CERT_SHA256" ]; then
+            grep -qi "$EXPECTED_CERT_SHA256" signed/app-release-apk-certs.txt
+          fi
+          sha256sum signed/app-release-signed.apk signed/app-release-signed.aab > signed/SHA256SUMS
+
+      - name: Upload signed release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: signed
+          retention-days: 30
+
+      - name: Attest signed release candidate
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            signed/app-release-signed.apk
+            signed/app-release-signed.aab
+
+  draft-release:
+    name: Draft GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: sign-release-candidate
+    environment: release-publish
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download signed candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-release-candidate
+          path: signed
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" signed/* --draft --title "$GITHUB_REF_NAME" --notes-file docs/release/v0.2.0-release-notes.md

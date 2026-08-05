@@ -90,6 +90,19 @@ void main() {
     expect(workflow, contains('apksigner'));
   });
 
+  test('tag workflow signs and attests only in protected release jobs', () {
+    final workflow = _read('.github/workflows/quality.yml');
+    expect(workflow, contains('release-signing'));
+    expect(workflow, contains('NSS_RELEASE_KEYSTORE_BASE64'));
+    expect(workflow, contains('verify --print-certs'));
+    expect(workflow, contains('jarsigner -verify'));
+    expect(workflow, contains('actions/attest-build-provenance'));
+    expect(workflow, contains('gh release create'));
+    expect(workflow, contains('contents: write'));
+    expect(workflow, contains('attestations: write'));
+    expect(workflow, contains('id-token: write'));
+  });
+
   test(
     'local release gates consume artifacts without hard-coded Windows paths',
     () {
