@@ -287,3 +287,93 @@ jobs:
             artifacts/android/*apk.entries.txt
             artifacts/android/SHA256SUMS
           retention-days: 14
+
+  api24-smoke:
+    name: API 24 artifact smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: package-once
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Install debug tests and smoke release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          target: default
+          arch: x86_64
+          script: |
+            set -euo pipefail
+            adb install -r artifacts/android/app-debug.apk
+            adb install -r artifacts/android/app-debug-androidTest.apk
+            adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner
+            adb uninstall com.example.note_secret_search.test || true
+            adb uninstall com.example.note_secret_search || true
+            release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
+            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
+            adb install -r "$RUNNER_TEMP/release-signed.apk"
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb shell am force-stop com.example.note_secret_search
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb logcat -d > artifacts/android/api24-logcat.txt
+
+      - name: Upload API 24 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api24-smoke-diagnostics
+          path: artifacts/android/*logcat.txt
+          retention-days: 14
+
+  api34-smoke:
+    name: API 34 artifact smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: package-once
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Install debug tests and smoke release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          script: |
+            set -euo pipefail
+            adb install -r artifacts/android/app-debug.apk
+            adb install -r artifacts/android/app-debug-androidTest.apk
+            adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner
+            adb uninstall com.example.note_secret_search.test || true
+            adb uninstall com.example.note_secret_search || true
+            release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
+            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
+            adb install -r "$RUNNER_TEMP/release-signed.apk"
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb shell am force-stop com.example.note_secret_search
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb logcat -d > artifacts/android/api34-logcat.txt
+
+      - name: Upload API 34 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api34-smoke-diagnostics
+          path: artifacts/android/*logcat.txt
+          retention-days: 14

@@ -78,6 +78,18 @@ void main() {
     },
   );
 
+  test('quality workflow runs API 24 and API 34 artifact smoke jobs', () {
+    final workflow = _read('.github/workflows/quality.yml');
+    expect(workflow, contains('api24-smoke'));
+    expect(workflow, contains('api-level: 24'));
+    expect(workflow, contains('api34-smoke'));
+    expect(workflow, contains('api-level: 34'));
+    expect(workflow, contains('ReleaseReadinessSmokeInstrumentationTest'));
+    expect(workflow, contains('app-debug-androidTest.apk'));
+    expect(workflow, contains('zipalign'));
+    expect(workflow, contains('apksigner'));
+  });
+
   test(
     'local release gates consume artifacts without hard-coded Windows paths',
     () {
