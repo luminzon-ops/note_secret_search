@@ -35,7 +35,7 @@ void main() {
     expect(policy['releaseObfuscationEnabled'], isFalse);
     expect(
       policy['forbiddenAssetPrefixes'],
-      contains('flutter_assets/assets/model_catalog/minicpm/'),
+      contains('assets/flutter_assets/assets/model_catalog/minicpm/'),
     );
   });
 

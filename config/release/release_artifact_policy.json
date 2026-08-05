@@ -37,13 +37,13 @@
     "librnllama_v8.so"
   ],
   "requiredTokenizerAssets": [
-    "flutter_assets/assets/model_catalog/tokenizers/bge_small_zh_v1_5_tokenizer.json",
-    "flutter_assets/assets/model_catalog/tokenizers/embed_min_cn_v1_tokenizer.json"
+    "assets/flutter_assets/assets/model_catalog/tokenizers/bge_small_zh_v1_5_tokenizer.json",
+    "assets/flutter_assets/assets/model_catalog/tokenizers/embed_min_cn_v1_tokenizer.json"
   ],
   "forbiddenAssetPrefixes": [
-    "flutter_assets/assets/model_catalog/minicpm/",
-    "flutter_assets/assets/model_catalog/mtmd/",
-    "flutter_assets/assets/model_catalog/mmproj/"
+    "assets/flutter_assets/assets/model_catalog/minicpm/",
+    "assets/flutter_assets/assets/model_catalog/mtmd/",
+    "assets/flutter_assets/assets/model_catalog/mmproj/"
   ],
   "forbiddenReleaseNativeLibraries": [
     "libVkLayer_khronos_validation.so"
