@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
   [switch]$SkipAndroid,
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$PackageOnce,
+  [string]$ArtifactOutputRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +20,69 @@ function Invoke-NativeCommand {
   & $FilePath @ArgumentList
   if ($LASTEXITCODE -ne 0) {
     throw "$FilePath exited with code $LASTEXITCODE"
+  }
+}
+
+function Resolve-GradleWrapper {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AndroidRoot
+  )
+
+  $wrapperName = if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+    'gradlew.bat'
+  }
+  else {
+    'gradlew'
+  }
+  $wrapper = Join-Path $AndroidRoot $wrapperName
+  if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
+    throw "Gradle wrapper not found: $wrapper"
+  }
+  if ($wrapperName -eq 'gradlew') {
+    & chmod +x $wrapper
+  }
+  return $wrapper
+}
+
+function Invoke-AndroidGradle {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Tasks
+  )
+
+  $androidRoot = Join-Path $repoRoot 'android'
+  $gradleWrapper = Resolve-GradleWrapper -AndroidRoot $androidRoot
+  Push-Location $androidRoot
+  try {
+    Invoke-NativeCommand $gradleWrapper ($Tasks + @('--no-daemon', '--stacktrace'))
+  }
+  finally {
+    Pop-Location
+  }
+}
+
+function Copy-AndroidPackageArtifacts {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$OutputRoot
+  )
+
+  if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
+    return
+  }
+  New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+  $paths = @(
+    'build\app\outputs\flutter-apk\app-debug.apk',
+    'build\app\outputs\apk\androidTest\debug\app-debug-androidTest.apk',
+    'build\app\outputs\flutter-apk\app-release.apk',
+    'build\app\outputs\bundle\release\app-release.aab'
+  )
+  foreach ($relativePath in $paths) {
+    $source = Join-Path $repoRoot $relativePath
+    if (Test-Path -LiteralPath $source -PathType Leaf) {
+      Copy-Item -LiteralPath $source -Destination $OutputRoot -Force
+    }
   }
 }
 
@@ -41,21 +106,25 @@ $env:TMP = Join-Path $cacheRoot 'tmp'
 Push-Location $repoRoot
 try {
   Invoke-NativeCommand 'flutter' @('pub', 'get', '--enforce-lockfile')
-  Invoke-NativeCommand 'flutter' @('analyze')
-  Invoke-NativeCommand 'flutter' @('test')
+  Invoke-NativeCommand 'flutter' @('analyze', '--no-pub')
+  Invoke-NativeCommand 'flutter' @('test', '--no-pub')
 
   if (-not $SkipAndroid) {
-    Push-Location (Join-Path $repoRoot 'android')
-    try {
-      Invoke-NativeCommand '.\gradlew.bat' @(':app:testDebugUnitTest', '--no-daemon')
-    }
-    finally {
-      Pop-Location
-    }
+    Invoke-AndroidGradle @(':app:testDebugUnitTest')
   }
 
   if (-not $SkipBuild) {
-    Invoke-NativeCommand 'flutter' @('build', 'apk', '--debug')
+    $packageTasks = @(
+      ':app:assembleDebug',
+      ':app:assembleDebugAndroidTest',
+      ':app:assembleRelease',
+      ':app:bundleRelease'
+    )
+    if (-not $PackageOnce) {
+      Write-Host 'PackageOnce is the default Phase 9 packaging strategy; -PackageOnce is accepted for explicit local runs.'
+    }
+    Invoke-AndroidGradle $packageTasks
+    Copy-AndroidPackageArtifacts -OutputRoot $ArtifactOutputRoot
   }
 }
 finally {

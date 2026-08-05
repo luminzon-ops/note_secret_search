@@ -2,6 +2,7 @@
 param(
   [string]$RepoRoot = '',
   [switch]$SkipRebuild,
+  [switch]$Rebuild,
   [switch]$Offline,
   [string]$BuildRoot = '',
   [string]$AndroidSdkRoot = ''
@@ -418,7 +419,7 @@ if (Test-Path -LiteralPath $legacyAppJniRoot -PathType Container) {
   }
 }
 
-if (-not $SkipRebuild) {
+if ($Rebuild -and -not $SkipRebuild) {
   $buildScript = Join-Path $RepoRoot 'scripts\llm\Build-LlmAar.ps1'
   Assert-Text -Condition (Test-Path -LiteralPath $buildScript -PathType Leaf) `
     -Message 'Reproducible LLM AAR build script is missing.'
@@ -440,6 +441,9 @@ if (-not $SkipRebuild) {
   if ($LASTEXITCODE -ne 0) {
     throw "LLM AAR rebuild verification exited with code $LASTEXITCODE"
   }
+}
+else {
+  Write-Host 'Skipping LLM AAR rebuild; use -Rebuild for an explicit provenance rebuild.'
 }
 
 Write-Host "Phase 6 LLM AAR provenance gate passed: $artifactHash"

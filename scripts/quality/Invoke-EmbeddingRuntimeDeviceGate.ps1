@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
   [string]$Serial = 'H8B4C19731000256',
-  [string]$ModelPath = ''
+  [string]$ModelPath = '',
+  [string]$ExistingDebugApkPath = '',
+  [string]$ExistingAndroidTestApkPath = '',
+  [string]$ExpectedDebugApkSha256 = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +22,46 @@ function Invoke-NativeCommand {
   if ($LASTEXITCODE -ne 0) {
     throw "$FilePath exited with code $LASTEXITCODE"
   }
+}
+
+function Resolve-GradleWrapper {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AndroidRoot
+  )
+
+  $wrapperName = if ([IO.Path]::DirectorySeparatorChar -eq '\') {
+    'gradlew.bat'
+  }
+  else {
+    'gradlew'
+  }
+  $wrapper = Join-Path $AndroidRoot $wrapperName
+  if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
+    throw "Gradle wrapper not found: $wrapper"
+  }
+  if ($wrapperName -eq 'gradlew') {
+    & chmod +x $wrapper
+  }
+  return $wrapper
+}
+
+function Resolve-ExistingArtifact {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return ''
+  }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "$Label artifact is missing: $Path"
+  }
+  return (Resolve-Path -LiteralPath $Path).Path
 }
 
 function Invoke-InstrumentationWithTimeout {
@@ -174,23 +217,45 @@ $env:TMP = Join-Path $cacheRoot 'tmp'
 $env:ANDROID_SERIAL = $Serial
 
 $adb = (Get-Command adb -ErrorAction Stop).Source
-$mainApk = Join-Path $repoRoot 'build\app\outputs\apk\debug\app-debug.apk'
-$testApk = Join-Path $repoRoot 'build\app\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
+$mainApk = Resolve-ExistingArtifact `
+  -Path $ExistingDebugApkPath `
+  -Label 'Debug APK'
+$testApk = Resolve-ExistingArtifact `
+  -Path $ExistingAndroidTestApkPath `
+  -Label 'androidTest APK'
+if ([string]::IsNullOrWhiteSpace($mainApk) -xor [string]::IsNullOrWhiteSpace($testApk)) {
+  throw 'ExistingDebugApkPath and ExistingAndroidTestApkPath must be supplied together.'
+}
+if ([string]::IsNullOrWhiteSpace($mainApk)) {
+  $mainApk = Join-Path $repoRoot 'build\app\outputs\apk\debug\app-debug.apk'
+  $testApk = Join-Path $repoRoot 'build\app\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
+}
+elseif (-not [string]::IsNullOrWhiteSpace($ExpectedDebugApkSha256)) {
+  $debugApkHash = (Get-FileHash -LiteralPath $mainApk -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($debugApkHash -ne $ExpectedDebugApkSha256.ToLowerInvariant()) {
+    throw 'Debug APK checksum mismatch.'
+  }
+}
 $deviceDirectory = '/sdcard/Android/data/com.example.note_secret_search/files/phase5-embedding'
 $modelPathSentinel = 'PHASE5_EMBEDDING_MODEL_PATH_SENTINEL_5D70A1'
 $textSentinel = 'PHASE5_EMBEDDING_TEXT_SENTINEL_26C94B'
 $deviceModelPath = "$deviceDirectory/$modelPathSentinel.onnx"
 
-Push-Location (Join-Path $repoRoot 'android')
-try {
-  Invoke-NativeCommand '.\gradlew.bat' @(
-    ':app:assembleDebug',
-    ':app:assembleDebugAndroidTest',
-    '--no-daemon'
-  )
-}
-finally {
-  Pop-Location
+if ([string]::IsNullOrWhiteSpace($ExistingDebugApkPath)) {
+  $androidRoot = Join-Path $repoRoot 'android'
+  $gradleWrapper = Resolve-GradleWrapper -AndroidRoot $androidRoot
+  Push-Location $androidRoot
+  try {
+    Invoke-NativeCommand $gradleWrapper @(
+      ':app:assembleDebug',
+      ':app:assembleDebugAndroidTest',
+      '--no-daemon',
+      '--stacktrace'
+    )
+  }
+  finally {
+    Pop-Location
+  }
 }
 
 foreach ($apk in @($mainApk, $testApk)) {
