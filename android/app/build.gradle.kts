@@ -4,17 +4,29 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+fun requiredIntProperty(name: String): Int =
+    providers.gradleProperty(name).get().toInt()
+
+fun requiredStringProperty(name: String): String =
+    providers.gradleProperty(name).get()
+
+val projectJavaVersion = JavaVersion.toVersion(
+    requiredStringProperty("noteSecretSearch.javaVersion"),
+)
+val flutterVersionCode = flutter.versionCode
+val flutterVersionName = flutter.versionName
+
 android {
     namespace = "com.example.note_secret_search"
-    compileSdk = 36
-    ndkVersion = "28.2.13676358"
+    compileSdk = requiredIntProperty("noteSecretSearch.android.compileSdk")
+    ndkVersion = requiredStringProperty("noteSecretSearch.android.ndkVersion")
 
     defaultConfig {
         applicationId = "com.example.note_secret_search"
-        minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        minSdk = requiredIntProperty("noteSecretSearch.android.minSdk")
+        targetSdk = requiredIntProperty("noteSecretSearch.android.targetSdk")
+        versionCode = flutterVersionCode
+        versionName = flutterVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -26,12 +38,12 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = projectJavaVersion
+        targetCompatibility = projectJavaVersion
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = requiredStringProperty("noteSecretSearch.javaVersion")
     }
 
     packaging {

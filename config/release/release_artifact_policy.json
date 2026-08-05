@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "product": "Note Secret Search",
+  "versionName": "0.2.0",
+  "versionCode": 2,
+  "tag": "v0.2.0",
+  "flutter": "3.41.5",
+  "dart": "3.11.3",
+  "jdk": "17",
+  "gradle": "8.11.1",
+  "agp": "8.9.1",
+  "kotlin": "2.2.20",
+  "compileSdk": 36,
+  "targetSdk": 34,
+  "minSdk": 24,
+  "ndk": "28.2.13676358",
+  "applicationId": "com.example.note_secret_search",
+  "releaseMinifyEnabled": false,
+  "releaseShrinkResources": false,
+  "releaseObfuscationEnabled": false,
+  "releaseCleartextTrafficAllowed": false,
+  "releaseDebuggableAllowed": false,
+  "releaseAllowBackup": false,
+  "llamacppAarPath": "android/third_party/llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar",
+  "llamacppAarSha256": "9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41",
+  "llamacppAarAbis": [
+    "arm64-v8a"
+  ],
+  "apkAbis": [
+    "arm64-v8a",
+    "armeabi-v7a",
+    "x86_64"
+  ],
+  "requiredNativeLibraries": [
+    "libonnxruntime.so",
+    "libonnxruntime4j_jni.so",
+    "librnllama_v8.so"
+  ],
+  "requiredTokenizerAssets": [
+    "flutter_assets/assets/model_catalog/tokenizers/bge_small_zh_v1_5_tokenizer.json",
+    "flutter_assets/assets/model_catalog/tokenizers/embed_min_cn_v1_tokenizer.json"
+  ],
+  "forbiddenAssetPrefixes": [
+    "flutter_assets/assets/model_catalog/minicpm/",
+    "flutter_assets/assets/model_catalog/mtmd/",
+    "flutter_assets/assets/model_catalog/mmproj/"
+  ],
+  "forbiddenReleaseNativeLibraries": [
+    "libVkLayer_khronos_validation.so"
+  ],
+  "signing": {
+    "environment": "release-signing",
+    "certificateSha256": "UNSET_RELEASE_CERTIFICATE_SHA256"
+  }
+}
