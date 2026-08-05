@@ -103,6 +103,35 @@ void main() {
     expect(workflow, contains('id-token: write'));
   });
 
+  test('v0.2.0 release documents exist and avoid unsupported claims', () {
+    for (final path in const [
+      'CHANGELOG.md',
+      'docs/release/v0.2.0-release-notes.md',
+      'docs/release/supported-devices.md',
+      'docs/release/threat-model.md',
+      'docs/release/known-limitations.md',
+      'docs/release/v0.2.0-release-ledger.md',
+    ]) {
+      expect(File(path).existsSync(), isTrue, reason: path);
+    }
+
+    final readme = _read('README.md');
+    expect(readme, contains('0.2.0+2'));
+    expect(readme, contains('Flutter 3.41.5'));
+    expect(readme, contains('Release 仅允许 HTTPS'));
+    expect(readme, contains('MiniCPM / 多模态未实现'));
+
+    final ledger = _read('docs/release/v0.2.0-release-ledger.md');
+    expect(ledger, contains('2ff2db6'));
+    expect(ledger, contains('SPN-AL00 / API 29'));
+    expect(
+      ledger,
+      contains(
+        '9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41',
+      ),
+    );
+  });
+
   test(
     'local release gates consume artifacts without hard-coded Windows paths',
     () {
