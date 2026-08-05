@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
@@ -9,6 +11,7 @@ import 'package:note_secret_search/features/ai_providers/application/ai_provider
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/search/application/search_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/settings/application/secure_clipboard_providers.dart';
 import 'package:note_secret_search/features/vault/application/vault_providers.dart';
 
 final sensitiveStateInvalidatorProvider = Provider<SensitiveStateInvalidator>((
@@ -23,6 +26,8 @@ class SensitiveStateInvalidator {
   final Ref _ref;
 
   void clearForLock() {
+    unawaited(_ref.read(secureClipboardControllerProvider).clearForLock());
+
     if (_ref.read(sensitiveStateAccessAllowedProvider)) {
       _ref.read(sensitiveStateAccessAllowedProvider.notifier).state = false;
     }

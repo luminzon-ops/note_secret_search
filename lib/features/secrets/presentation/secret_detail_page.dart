@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/secure_clipboard.dart';
 import 'package:note_secret_search/features/search/presentation/detail_search_hit_target.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
+import 'package:note_secret_search/features/settings/application/secure_clipboard_providers.dart';
 import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class SecretDetailPage extends ConsumerWidget {
@@ -49,6 +50,7 @@ class SecretDetailPage extends ConsumerWidget {
           return _SecretDetailBody(
             secret: secret,
             cryptoService: ref.read(cryptoServiceProvider),
+            clipboardController: ref.read(secureClipboardControllerProvider),
             searchQuery: searchQuery,
             searchSource: searchSource,
             searchContext: searchContext,
@@ -72,6 +74,7 @@ class _SecretDetailBody extends StatefulWidget {
   const _SecretDetailBody({
     required this.secret,
     required this.cryptoService,
+    required this.clipboardController,
     this.searchQuery,
     this.searchSource,
     this.searchContext,
@@ -79,6 +82,7 @@ class _SecretDetailBody extends StatefulWidget {
 
   final SecretItem secret;
   final CryptoService cryptoService;
+  final SecureClipboardController clipboardController;
   final String? searchQuery;
   final String? searchSource;
   final String? searchContext;
@@ -225,16 +229,23 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                 _SecretDetailRow(
                   label: '账号',
                   value: username,
+                  clipboardController: widget.clipboardController,
                   highlightKey: usernameKey,
                   highlightMarkerKey:
                       hitTarget == SecretDetailSearchHitTarget.username
                       ? const ValueKey('secret-hit-username')
                       : null,
                 ),
-                _SecretDetailRow(label: '密码', value: password, obscure: true),
+                _SecretDetailRow(
+                  label: '密码',
+                  value: password,
+                  clipboardController: widget.clipboardController,
+                  obscure: true,
+                ),
                 _SecretDetailRow(
                   label: '网址',
                   value: website,
+                  clipboardController: widget.clipboardController,
                   highlightKey: websiteKey,
                   highlightMarkerKey:
                       hitTarget == SecretDetailSearchHitTarget.website
@@ -244,6 +255,7 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                 _SecretDetailRow(
                   label: '标签',
                   value: secret.tags.join(', '),
+                  clipboardController: widget.clipboardController,
                   highlightKey: tagsKey,
                   highlightMarkerKey:
                       hitTarget == SecretDetailSearchHitTarget.tags
@@ -253,6 +265,7 @@ class _SecretDetailBodyState extends State<_SecretDetailBody> {
                 _SecretDetailRow(
                   label: '备注',
                   value: note,
+                  clipboardController: widget.clipboardController,
                   highlightKey: noteKey,
                   highlightMarkerKey:
                       hitTarget == SecretDetailSearchHitTarget.note
@@ -322,6 +335,7 @@ class _SecretDetailRow extends StatefulWidget {
   const _SecretDetailRow({
     required this.label,
     required this.value,
+    required this.clipboardController,
     this.obscure = false,
     this.highlightKey,
     this.highlightMarkerKey,
@@ -329,6 +343,7 @@ class _SecretDetailRow extends StatefulWidget {
 
   final String label;
   final String value;
+  final SecureClipboardController clipboardController;
   final bool obscure;
   final GlobalKey? highlightKey;
   final Key? highlightMarkerKey;
@@ -382,8 +397,8 @@ class _SecretDetailRowState extends State<_SecretDetailRow> {
                       ? null
                       : () async {
                           final messenger = ScaffoldMessenger.of(context);
-                          await Clipboard.setData(
-                            ClipboardData(text: widget.value),
+                          await widget.clipboardController.copySensitiveText(
+                            widget.value,
                           );
                           if (mounted) {
                             messenger.showSnackBar(

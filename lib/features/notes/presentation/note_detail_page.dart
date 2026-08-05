@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/security/crypto_service.dart';
+import 'package:note_secret_search/core/security/secure_clipboard.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
 import 'package:note_secret_search/features/notes/domain/note_item.dart';
 import 'package:note_secret_search/features/search/presentation/detail_search_hit_target.dart';
+import 'package:note_secret_search/features/settings/application/secure_clipboard_providers.dart';
 import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class NoteDetailPage extends ConsumerWidget {
@@ -49,6 +50,7 @@ class NoteDetailPage extends ConsumerWidget {
           return _NoteDetailBody(
             note: note,
             cryptoService: ref.read(cryptoServiceProvider),
+            clipboardController: ref.read(secureClipboardControllerProvider),
             searchQuery: searchQuery,
             searchSource: searchSource,
             searchContext: searchContext,
@@ -72,6 +74,7 @@ class _NoteDetailBody extends StatefulWidget {
   const _NoteDetailBody({
     required this.note,
     required this.cryptoService,
+    required this.clipboardController,
     this.searchQuery,
     this.searchSource,
     this.searchContext,
@@ -79,6 +82,7 @@ class _NoteDetailBody extends StatefulWidget {
 
   final NoteItem note;
   final CryptoService cryptoService;
+  final SecureClipboardController clipboardController;
   final String? searchQuery;
   final String? searchSource;
   final String? searchContext;
@@ -245,7 +249,9 @@ class _NoteDetailBodyState extends State<_NoteDetailBody> {
                       ? null
                       : () async {
                           final messenger = ScaffoldMessenger.of(context);
-                          await Clipboard.setData(ClipboardData(text: content));
+                          await widget.clipboardController.copySensitiveText(
+                            content,
+                          );
                           messenger.showSnackBar(
                             const SnackBar(content: Text('笔记正文已复制')),
                           );
