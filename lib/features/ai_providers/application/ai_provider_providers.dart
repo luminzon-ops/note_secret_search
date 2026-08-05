@@ -5,6 +5,7 @@ import 'package:note_secret_search/features/ai_providers/domain/external_provide
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent_store.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_endpoint_policy.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
 import 'package:note_secret_search/features/search/domain/search_configuration.dart';
@@ -100,6 +101,7 @@ final externalProviderSettingsControllerProvider =
         repository: ref.watch(externalProviderRepositoryProvider),
         confirmation: ref.watch(externalPrivacyConfirmationControllerProvider),
         gateway: ref.watch(externalChatGatewayProvider),
+        endpointPolicy: defaultExternalProviderEndpointPolicy,
         testConnection: (config) => ref
             .read(externalProviderClientRouterProvider)
             .testConnection(config),
@@ -117,6 +119,7 @@ final externalChatGatewayProvider = Provider<ExternalChatGateway>((ref) {
   final gateway = ExternalChatGateway(
     repository: ref.watch(externalProviderRepositoryProvider),
     clientFor: (_) => ref.read(externalProviderClientRouterProvider),
+    endpointPolicy: defaultExternalProviderEndpointPolicy,
     hasConsent: (config, scope) {
       return confirmation.hasAcknowledged(
         config,
@@ -225,22 +228,26 @@ class ExternalProviderSettingsController {
     required ExternalProviderRepository repository,
     required ExternalPrivacyConfirmationController confirmation,
     required ExternalChatGateway gateway,
+    required ExternalProviderEndpointPolicy endpointPolicy,
     required Future<void> Function(ExternalProviderConfig config)
     testConnection,
     required void Function() invalidateProviderState,
   }) : _repository = repository,
        _confirmation = confirmation,
        _gateway = gateway,
+       _endpointPolicy = endpointPolicy,
        _testConnection = testConnection,
        _invalidateProviderState = invalidateProviderState;
 
   final ExternalProviderRepository _repository;
   final ExternalPrivacyConfirmationController _confirmation;
   final ExternalChatGateway _gateway;
+  final ExternalProviderEndpointPolicy _endpointPolicy;
   final Future<void> Function(ExternalProviderConfig config) _testConnection;
   final void Function() _invalidateProviderState;
 
   Future<void> save(ExternalProviderConfig config) async {
+    _validateEndpoint(config);
     final existing = await _repository.loadById(config.id);
     if (existing != null) {
       await _invalidateChangedConsent(existing: existing, updated: config);
@@ -309,6 +316,17 @@ class ExternalProviderSettingsController {
   }
 
   Future<void> testConnection(ExternalProviderConfig config) async {
+    _validateEndpoint(config);
     await _testConnection(config);
+  }
+
+  void _validateEndpoint(ExternalProviderConfig config) {
+    final message = _endpointPolicy.validate(config);
+    if (message != null) {
+      throw ExternalChatGatewayException(
+        ExternalChatGatewayErrorCode.invalidConfiguration,
+        message,
+      );
+    }
   }
 }

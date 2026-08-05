@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_endpoint_policy.dart';
 
 class ExternalProviderSettingsPage extends ConsumerStatefulWidget {
   const ExternalProviderSettingsPage({super.key});
@@ -50,8 +51,8 @@ class _ExternalProviderSettingsPageState
     if (!mounted || configs.isEmpty) {
       return;
     }
-    final config = configs.where((item) => item.enabled).firstOrNull ??
-        configs.first;
+    final config =
+        configs.where((item) => item.enabled).firstOrNull ?? configs.first;
 
     _displayNameController.text = config.displayName;
     _baseUrlController.text = config.baseUrl;
@@ -212,6 +213,14 @@ class _ExternalProviderSettingsPageState
     return null;
   }
 
+  String? _baseUrlValidator(String? value) {
+    final requiredMessage = _requiredValidator(value);
+    if (requiredMessage != null) {
+      return requiredMessage;
+    }
+    return defaultExternalProviderEndpointPolicy.validateBaseUrl(value!.trim());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -255,7 +264,7 @@ class _ExternalProviderSettingsPageState
                 labelText: 'Base URL',
                 border: OutlineInputBorder(),
               ),
-              validator: _requiredValidator,
+              validator: _baseUrlValidator,
             ),
             if (_providerType != ExternalProviderType.ollama) ...[
               const SizedBox(height: 12),

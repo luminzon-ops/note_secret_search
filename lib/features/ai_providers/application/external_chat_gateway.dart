@@ -2,6 +2,7 @@ import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.da
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_endpoint_policy.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 
 typedef ExternalProviderClientResolver =
@@ -63,15 +64,19 @@ class ExternalChatGateway {
   ExternalChatGateway({
     required ExternalProviderRepository repository,
     required ExternalProviderClientResolver clientFor,
+    ExternalProviderEndpointPolicy endpointPolicy =
+        defaultExternalProviderEndpointPolicy,
     required ExternalProviderConsentCheck hasConsent,
     required ExternalProviderAccessCheck isExternalAccessAllowed,
   }) : _repository = repository,
        _clientFor = clientFor,
+       _endpointPolicy = endpointPolicy,
        _hasConsent = hasConsent,
        _isExternalAccessAllowed = isExternalAccessAllowed;
 
   final ExternalProviderRepository _repository;
   final ExternalProviderClientResolver _clientFor;
+  final ExternalProviderEndpointPolicy _endpointPolicy;
   final ExternalProviderConsentCheck _hasConsent;
   final ExternalProviderAccessCheck _isExternalAccessAllowed;
   final Map<String, _ActiveExternalRequest> _activeRequests =
@@ -329,13 +334,15 @@ class ExternalChatGateway {
   }
 
   void _validateConfiguration(ExternalProviderConfig config) {
-    final endpoint = normalizeExternalProviderEndpoint(config.baseUrl);
+    final endpoint = config.baseUrl.trim();
+    final endpointError = _endpointPolicy.validate(config);
     if (config.id.trim().isEmpty ||
         config.modelName.trim().isEmpty ||
-        endpoint.isEmpty) {
-      throw const ExternalChatGatewayException(
+        endpoint.isEmpty ||
+        endpointError != null) {
+      throw ExternalChatGatewayException(
         ExternalChatGatewayErrorCode.invalidConfiguration,
-        '外部模型配置无效。',
+        endpointError ?? '外部模型配置无效。',
       );
     }
   }

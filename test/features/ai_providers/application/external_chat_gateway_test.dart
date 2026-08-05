@@ -5,6 +5,7 @@ import 'package:note_secret_search/features/ai_providers/application/external_ch
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_consent.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_endpoint_policy.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_repository.dart';
 
 const _config = ExternalProviderConfig(
@@ -95,6 +96,38 @@ void main() {
     );
     expect(client.prompts, isEmpty);
   });
+
+  test(
+    'release gateway rejects HTTP endpoints before consent checks',
+    () async {
+      final httpConfig = _config.copyWith(baseUrl: 'http://localhost:11434');
+      final consent = _ConsentLedger()
+        ..ack(httpConfig, ExternalProviderConsentScope.standard);
+      final gateway = _gateway(
+        _MemoryRepository(httpConfig),
+        consent,
+        _ControllableClient(),
+        endpointPolicy: const ExternalProviderEndpointPolicy.release(),
+      );
+
+      await expectLater(
+        gateway.authorize(includesPrivateContext: false),
+        throwsA(
+          isA<ExternalChatGatewayException>()
+              .having(
+                (error) => error.code,
+                'code',
+                ExternalChatGatewayErrorCode.invalidConfiguration,
+              )
+              .having(
+                (error) => error.message,
+                'message',
+                'Release builds require HTTPS external provider endpoints.',
+              ),
+        ),
+      );
+    },
+  );
 
   test(
     'private sends require private scope and sensitive-field policy',
@@ -300,13 +333,15 @@ ExternalChatGateway _gateway(
   ExternalProviderClient client, {
   bool externalAccessAllowed = true,
   ExternalProviderAccessCheck? accessCheck,
+  ExternalProviderEndpointPolicy endpointPolicy =
+      defaultExternalProviderEndpointPolicy,
 }) {
   return ExternalChatGateway(
     repository: repository,
     clientFor: (_) => client,
+    endpointPolicy: endpointPolicy,
     hasConsent: consent.hasConsent,
-    isExternalAccessAllowed:
-        accessCheck ?? () async => externalAccessAllowed,
+    isExternalAccessAllowed: accessCheck ?? () async => externalAccessAllowed,
   );
 }
 
