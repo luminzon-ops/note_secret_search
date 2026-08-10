@@ -2,16 +2,54 @@ import 'package:dio/dio.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_client.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
 
-class OpenAiCompatibleProviderClient implements ExternalProviderClient {
+class OpenAiCompatibleProviderClient
+    implements ExternalProviderClient, CancellableExternalProviderClient {
   OpenAiCompatibleProviderClient({required Dio dio}) : _dio = dio;
 
   final Dio _dio;
+  final Map<String, CancelToken> _activeRequests = <String, CancelToken>{};
 
   @override
   Future<String> generateChatCompletion({
     required ExternalProviderConfig config,
     required String prompt,
     required bool usedPrivateContext,
+  }) {
+    return _generate(
+      config: config,
+      prompt: prompt,
+      usedPrivateContext: usedPrivateContext,
+    );
+  }
+
+  @override
+  Future<String> generateCancellableChatCompletion({
+    required String requestId,
+    required ExternalProviderConfig config,
+    required String prompt,
+    required bool usedPrivateContext,
+  }) async {
+    final cancelToken = CancelToken();
+    _activeRequests[requestId] = cancelToken;
+    try {
+      return await _generate(
+        config: config,
+        prompt: prompt,
+        usedPrivateContext: usedPrivateContext,
+        cancelToken: cancelToken,
+      );
+    } finally {
+      if (identical(_activeRequests[requestId], cancelToken)) {
+        _activeRequests.remove(requestId);
+      }
+    }
+  }
+
+  Future<String> _generate({
+    required ExternalProviderConfig config,
+    required String prompt,
+    required bool usedPrivateContext,
+    CancelToken? cancelToken,
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
       '${config.baseUrl}/chat/completions',
@@ -28,6 +66,7 @@ class OpenAiCompatibleProviderClient implements ExternalProviderClient {
           if (usedPrivateContext) 'X-Private-Context': 'true',
         },
       ),
+      cancelToken: cancelToken,
     );
 
     final data = response.data;
@@ -54,13 +93,16 @@ class OpenAiCompatibleProviderClient implements ExternalProviderClient {
   }
 
   @override
+  void cancelRequest(String requestId) {
+    _activeRequests[requestId]?.cancel('request_cancelled');
+  }
+
+  @override
   Future<void> testConnection(ExternalProviderConfig config) async {
     await _dio.get<void>(
       '${config.baseUrl}/models',
       options: Options(
-        headers: <String, String>{
-          'Authorization': 'Bearer ${config.apiKey}',
-        },
+        headers: <String, String>{'Authorization': 'Bearer ${config.apiKey}'},
       ),
     );
   }

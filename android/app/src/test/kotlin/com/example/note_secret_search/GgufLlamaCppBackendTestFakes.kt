@@ -1,0 +1,105 @@
+package com.example.note_secret_search
+
+import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
+
+internal class RecordingLlamaContextClient(
+    private val events: MutableSharedFlow<LlamaRuntimeEvent>,
+    private val predictionEvents: List<LlamaRuntimeEvent> = listOf(
+        LlamaRuntimeEvent.Done("stable result"),
+    ),
+) : LlamaContextClient {
+    var lastEmitPartialCompletion: Boolean = true
+    var lastContextLength: Int = 0
+    var lastRequestedMaxTokens: Int = 0
+    var lastPrompt: String = ""
+    var abortCalls: Int = 0
+    val loadThreadIds = mutableListOf<Long>()
+    val predictThreadIds = mutableListOf<Long>()
+    val releaseThreadIds = mutableListOf<Long>()
+
+    override fun load(file: File, contextLength: Int, onLoaded: (Long) -> Unit) {
+        loadThreadIds += Thread.currentThread().id
+        lastContextLength = contextLength
+        onLoaded(7L)
+    }
+
+    override fun predict(
+        prompt: String,
+        emitPartialCompletion: Boolean,
+        maxTokens: Int,
+        config: LocalLlmGenerationConfig,
+        generationId: Long,
+    ) {
+        predictThreadIds += Thread.currentThread().id
+        lastEmitPartialCompletion = emitPartialCompletion
+        lastRequestedMaxTokens = maxTokens
+        lastPrompt = prompt
+        predictionEvents.forEach { event ->
+            check(events.tryEmit(event.withGenerationId(generationId)))
+        }
+    }
+
+    override fun abort() {
+        abortCalls += 1
+    }
+
+    override fun release() {
+        releaseThreadIds += Thread.currentThread().id
+    }
+}
+
+private fun LlamaRuntimeEvent.withGenerationId(generationId: Long): LlamaRuntimeEvent {
+    return when (this) {
+        is LlamaRuntimeEvent.Ongoing -> copy(generationId = generationId)
+        is LlamaRuntimeEvent.Done -> copy(generationId = generationId)
+        is LlamaRuntimeEvent.Error -> copy(generationId = generationId)
+    }
+}
+
+internal class GgufBackendTestFixture(
+    val client: RecordingLlamaContextClient,
+    val backend: GgufLlamaCppBackend,
+    val session: LocalLlmBackendSession,
+    private val predictionScope: CoroutineScope,
+) {
+    fun close() {
+        predictionScope.cancel()
+    }
+}
+
+internal fun createGgufBackendTestFixture(
+    predictionEvents: List<LlamaRuntimeEvent>,
+): GgufBackendTestFixture {
+    val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    val events = MutableSharedFlow<LlamaRuntimeEvent>(
+        replay = 0,
+        extraBufferCapacity = predictionEvents.size,
+    )
+    val client = RecordingLlamaContextClient(
+        events = events,
+        predictionEvents = predictionEvents,
+    )
+    val backend = GgufLlamaCppBackend(
+        client = client,
+        predictionScope = predictionScope,
+        eventFlow = events,
+    )
+    val session = LocalLlmBackendSession(
+        modelId = "smollm-huawei",
+        modelPath = "/data/user/0/com.example.note_secret_search/files/models/smollm.gguf",
+        backendName = "gguf-llama-cpp",
+        handle = 7L,
+        backend = backend,
+    )
+    return GgufBackendTestFixture(
+        client = client,
+        backend = backend,
+        session = session,
+        predictionScope = predictionScope,
+    )
+}

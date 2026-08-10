@@ -248,7 +248,7 @@ class LocalLlmRuntimeTest {
                 usedPrivateContext = false,
             )
         } catch (error: IllegalStateException) {
-            assertEquals("No fake generate result configured.", error.message)
+            assertEquals("Local LLM generation failed.", error.message)
             assertFalse(backend.releasedSessions.isEmpty())
             return
         }
@@ -387,7 +387,7 @@ class LocalLlmRuntimeTest {
                 usedPrivateContext = false,
             )
         } catch (error: IllegalStateException) {
-            assertEquals("Timed out waiting for 120000 ms", error.message)
+            assertEquals("Local LLM generation failed.", error.message)
             assertEquals(listOf("你好"), staleBackend.prompts)
             assertTrue(freshBackend.prompts.isEmpty())
             assertEquals(1, staleBackend.loadCalls)
@@ -447,7 +447,7 @@ class LocalLlmRuntimeTest {
                 usedPrivateContext = false,
             )
         } catch (error: IllegalStateException) {
-            assertEquals("Timed out waiting for 120000 ms", error.message)
+            assertEquals("Local LLM generation failed.", error.message)
         }
 
         val result = runtime.generateText(

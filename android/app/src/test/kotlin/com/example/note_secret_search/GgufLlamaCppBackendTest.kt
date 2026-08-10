@@ -1,39 +1,58 @@
 package com.example.note_secret_search
 
-import org.nehuatl.llamacpp.LlamaHelper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
-import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 class GgufLlamaCppBackendTest {
     @Test
     fun `prediction release coordinator defers native release until in-flight prediction finishes`() {
-        val calls = mutableListOf<String>()
+        val calls = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val abortEntered = CountDownLatch(1)
+        val releaseReturned = CountDownLatch(1)
         val coordinator = PredictionReleaseCoordinator(
-            abortPrediction = { calls += "abort" },
+            abortPrediction = {
+                calls += "abort"
+                abortEntered.countDown()
+            },
             releaseResources = { calls += "release" },
         )
 
-        coordinator.onPredictionStarted()
-        coordinator.requestRelease()
+        assertTrue(coordinator.tryRegisterPrediction())
+        val releaseThread = thread(start = true) {
+            coordinator.requestRelease()
+            releaseReturned.countDown()
+        }
 
+        assertTrue(abortEntered.await(1, TimeUnit.SECONDS))
         assertEquals(listOf("abort"), calls)
+        assertFalse(releaseReturned.await(50, TimeUnit.MILLISECONDS))
 
         coordinator.onPredictionFinished()
 
+        assertTrue(releaseReturned.await(1, TimeUnit.SECONDS))
+        releaseThread.join(1_000)
+        assertFalse(releaseThread.isAlive)
         assertEquals(listOf("abort", "release"), calls)
     }
 
@@ -51,39 +70,189 @@ class GgufLlamaCppBackendTest {
     }
 
     @Test
-    fun `normalizeModelPathForLlama converts absolute file path into file uri string`() {
-        val modelFile = File("/data/user/0/com.example.note_secret_search/files/models/qwen.gguf")
-
-        val normalized = normalizeModelPathForLlama(modelFile)
-        val uri = URI(normalized)
-
-        assertTrue("must serialize as a file URI", normalized.startsWith("file:"))
-        assertEquals("file", uri.scheme)
-        assertTrue(
-            "must preserve the Android model path suffix",
-            uri.path.endsWith("/data/user/0/com.example.note_secret_search/files/models/qwen.gguf"),
+    fun `prediction release coordinator rejects registration after release begins`() {
+        val abortEntered = CountDownLatch(1)
+        val allowAbortReturn = CountDownLatch(1)
+        val released = CountDownLatch(1)
+        val coordinator = PredictionReleaseCoordinator(
+            abortPrediction = {
+                abortEntered.countDown()
+                allowAbortReturn.await(2, TimeUnit.SECONDS)
+            },
+            releaseResources = {
+                released.countDown()
+            },
         )
+
+        val releaseThread = thread(start = true) {
+            coordinator.requestRelease()
+        }
+
+        assertTrue(abortEntered.await(1, TimeUnit.SECONDS))
+        assertFalse(coordinator.tryRegisterPrediction())
+
+        allowAbortReturn.countDown()
+        releaseThread.join(1_000)
+
+        assertFalse(releaseThread.isAlive)
+        assertTrue(released.await(1, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `backend cancellation delegates directly to native abort`() {
+        val fixture = createGgufBackendTestFixture(
+            predictionEvents = listOf(LlamaRuntimeEvent.Done("unused")),
+        )
+        try {
+            fixture.backend.cancel(fixture.session)
+
+            assertEquals(1, fixture.client.abortCalls)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `load predict and release stay on the native caller thread`() {
+        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
+            replay = 0,
+            extraBufferCapacity = 1,
+        )
+        val client = RecordingLlamaContextClient(events)
+        val backend = GgufLlamaCppBackend(
+            client = client,
+            predictionScope = predictionScope,
+            eventFlow = events,
+        )
+        val executor = Executors.newSingleThreadExecutor(
+            ThreadFactory { runnable -> Thread(runnable, "fixture-native-worker") },
+        )
+        val model = File.createTempFile("thread-owner", ".gguf").apply {
+            deleteOnExit()
+        }
+
+        try {
+            val callerThreadId = executor.submit<Long> {
+                val threadId = Thread.currentThread().id
+                val session = backend.load("model-thread", model)
+                backend.generate(
+                    session = session,
+                    prompt = "thread ownership",
+                    maxTokens = 16,
+                )
+                backend.release(session)
+                threadId
+            }.get(2, TimeUnit.SECONDS)
+
+            assertEquals(listOf(callerThreadId), client.loadThreadIds)
+            assertEquals(listOf(callerThreadId), client.predictThreadIds)
+            assertEquals(listOf(callerThreadId), client.releaseThreadIds)
+        } finally {
+            predictionScope.cancel()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `backend enforces native prompt hard cap`() {
+        val fixture = createGgufBackendTestFixture(
+            predictionEvents = listOf(LlamaRuntimeEvent.Done("unused")),
+        )
+        try {
+            try {
+                fixture.backend.generate(
+                    session = fixture.session,
+                    prompt = "x".repeat(LOCAL_LLM_MAX_PROMPT_CHARS + 1),
+                    maxTokens = 16,
+                    config = LocalLlmGenerationConfig(maxPromptChars = 4_000),
+                )
+                fail("Expected native prompt hard cap to reject oversized input.")
+            } catch (error: IllegalArgumentException) {
+                assertEquals("Prompt exceeds maxPromptChars.", error.message)
+            }
+            assertEquals("", fixture.client.lastPrompt)
+        } finally {
+            fixture.close()
+        }
     }
 
     @Test
     fun `awaitLoadedContextId waits for asynchronous load callback`() = runBlocking {
-        val contextId = awaitLoadedContextId(timeoutMillis = 200) { onLoaded ->
-            thread {
-                Thread.sleep(25)
-                onLoaded(42L)
+        val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        try {
+            val contextId = awaitLoadedContextId(
+                timeoutMillis = 200,
+                loadScope = loadScope,
+                onLateLoaded = {},
+            ) { onLoaded ->
+                thread {
+                    Thread.sleep(25)
+                    onLoaded(42L)
+                }
             }
-        }
 
-        assertEquals(42L, contextId)
+            assertEquals(42L, contextId)
+        } finally {
+            loadScope.cancel()
+        }
     }
 
     @Test
     fun `awaitLoadedContextId times out when load callback never arrives`() = runBlocking {
+        val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         try {
-            awaitLoadedContextId(timeoutMillis = 25) { _ -> }
+            awaitLoadedContextId(
+                timeoutMillis = 25,
+                loadScope = loadScope,
+                onLateLoaded = {},
+            ) { _ -> }
             fail("Expected awaitLoadedContextId to time out when callback is never invoked.")
         } catch (_: TimeoutCancellationException) {
+        } finally {
+            loadScope.cancel()
         }
+    }
+
+    @Test
+    fun `awaitLoadedContextId times out while native load blocks and cleans late completion`() = runBlocking {
+        val loadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val loadEntered = CountDownLatch(1)
+        val allowLoadReturn = CountDownLatch(1)
+        val lateCleanup = CountDownLatch(1)
+        val outcome = async(Dispatchers.Default) {
+            try {
+                awaitLoadedContextId(
+                    timeoutMillis = 40,
+                    loadScope = loadScope,
+                    onLateLoaded = {
+                        lateCleanup.countDown()
+                    },
+                ) { onLoaded ->
+                    loadEntered.countDown()
+                    allowLoadReturn.await(2, TimeUnit.SECONDS)
+                    onLoaded(99L)
+                }
+                "loaded"
+            } catch (_: TimeoutCancellationException) {
+                "timed_out"
+            }
+        }
+
+        try {
+            assertTrue(loadEntered.await(1, TimeUnit.SECONDS))
+            assertEquals(
+                "timed_out",
+                withTimeoutOrNull(250) {
+                    outcome.await()
+                },
+            )
+        } finally {
+            allowLoadReturn.countDown()
+        }
+
+        assertTrue(lateCleanup.await(1, TimeUnit.SECONDS))
+        loadScope.cancel()
     }
 
     @Test
@@ -101,13 +270,42 @@ class GgufLlamaCppBackendTest {
             events = events,
             isTerminal = { it == "done" },
             onTimeout = {},
-            onPredictionStarted = {},
+            tryRegisterPrediction = { true },
             onPredictionFinished = {},
         ) {
             assertTrue(events.tryEmit("done"))
         }
 
         assertEquals("done", result)
+        predictionScope.cancel()
+    }
+
+    @Test
+    fun `awaitPredictionTerminalEvent ignores stale terminal event identity`() = runBlocking {
+        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
+            replay = 0,
+            extraBufferCapacity = 2,
+        )
+
+        val result = awaitPredictionTerminalEvent(
+            timeoutMillis = 200,
+            timeoutCleanupMillis = 50,
+            predictionScope = predictionScope,
+            events = events,
+            isTerminal = { event ->
+                event.generationId == 2L &&
+                    (event is LlamaRuntimeEvent.Done || event is LlamaRuntimeEvent.Error)
+            },
+            onTimeout = {},
+            tryRegisterPrediction = { true },
+            onPredictionFinished = {},
+        ) {
+            assertTrue(events.tryEmit(LlamaRuntimeEvent.Done("stale", generationId = 1L)))
+            assertTrue(events.tryEmit(LlamaRuntimeEvent.Done("current", generationId = 2L)))
+        }
+
+        assertEquals(LlamaRuntimeEvent.Done("current", generationId = 2L), result)
         predictionScope.cancel()
     }
 
@@ -122,7 +320,7 @@ class GgufLlamaCppBackendTest {
                 events = MutableSharedFlow<String>(replay = 0, extraBufferCapacity = 1),
                 isTerminal = { it == "done" },
                 onTimeout = {},
-                onPredictionStarted = {},
+                tryRegisterPrediction = { true },
                 onPredictionFinished = {},
             ) {
             }
@@ -149,7 +347,7 @@ class GgufLlamaCppBackendTest {
                 onTimeout = {
                     timedOut.set(true)
                 },
-                onPredictionStarted = {},
+                tryRegisterPrediction = { true },
                 onPredictionFinished = {},
             ) {
                 started.set(true)
@@ -172,95 +370,144 @@ class GgufLlamaCppBackendTest {
     }
 
     @Test
-    fun `generate disables partial completion for Huawei stability experiment`() = runBlocking {
+    fun `caller-thread prediction timeout aborts while native call is blocked`() = runBlocking {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val events = MutableSharedFlow<LlamaHelper.LLMEvent>(
-            replay = 0,
-            extraBufferCapacity = 2,
-        )
-        val helper = RecordingLlamaHelperClient(
-            events = events,
-            predictionEvents = listOf(
-                LlamaHelper.LLMEvent.Ongoing("stable result", 1),
-                LlamaHelper.LLMEvent.Done("", 1, 0L),
-            ),
-        )
-        val backend = GgufLlamaCppBackend(
-            helper = helper,
-            predictionScope = predictionScope,
-            eventFlow = events,
-        )
-        val session = LocalLlmBackendSession(
-            modelId = "phi-local",
-            modelPath = "/data/user/0/com.example.note_secret_search/files/models/smollm.gguf",
-            backendName = "gguf-llama-cpp",
-            handle = 7L,
-            backend = backend,
-        )
+        val predictionEntered = CountDownLatch(1)
+        val allowPredictionReturn = CountDownLatch(1)
+        val timeoutEntered = CountDownLatch(1)
+        val outcome = async(Dispatchers.Default) {
+            try {
+                awaitPredictionTerminalEvent<String>(
+                    timeoutMillis = 30,
+                    timeoutCleanupMillis = 100,
+                    predictionScope = predictionScope,
+                    events = MutableSharedFlow(replay = 0, extraBufferCapacity = 1),
+                    isTerminal = { it == "done" },
+                    onTimeout = {
+                        timeoutEntered.countDown()
+                    },
+                    tryRegisterPrediction = { true },
+                    onPredictionFinished = {},
+                    startOnCallerThread = true,
+                ) {
+                    predictionEntered.countDown()
+                    allowPredictionReturn.await(2, TimeUnit.SECONDS)
+                }
+                "completed"
+            } catch (_: TimeoutCancellationException) {
+                "timed_out"
+            }
+        }
 
-        val result = backend.generate(
-            session = session,
-            prompt = "hello-stability-check",
-            maxTokens = 256,
-        )
+        try {
+            assertTrue(predictionEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(
+                "timeout must invoke abort while the caller-thread native call is blocked",
+                timeoutEntered.await(250, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            allowPredictionReturn.countDown()
+        }
 
-        assertEquals("stable result", result.text)
-        assertEquals("stop", result.finishReason)
-        assertFalse(
-            "partial completion should be disabled for the single-variable Huawei stability experiment.",
-            helper.lastEmitPartialCompletion,
-        )
+        assertEquals("timed_out", outcome.await())
         predictionScope.cancel()
     }
 
     @Test
-    fun `generate returns latest ongoing text when done event is empty`() = runBlocking {
-        val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val events = MutableSharedFlow<LlamaHelper.LLMEvent>(
+    fun `awaitPredictionTerminalEvent registers before queued native work starts`() = runBlocking {
+        val executor = Executors.newSingleThreadExecutor()
+        val dispatcher = executor.asCoroutineDispatcher()
+        val predictionScope = CoroutineScope(dispatcher + SupervisorJob())
+        val blockerEntered = CountDownLatch(1)
+        val allowPredictionWorker = CountDownLatch(1)
+        val registered = CountDownLatch(1)
+        val events = MutableSharedFlow<String>(
             replay = 0,
-            extraBufferCapacity = 2,
+            extraBufferCapacity = 1,
         )
-        val helper = RecordingLlamaHelperClient(
-            events = events,
+        predictionScope.launch {
+            blockerEntered.countDown()
+            allowPredictionWorker.await(2, TimeUnit.SECONDS)
+        }
+
+        assertTrue(blockerEntered.await(1, TimeUnit.SECONDS))
+        val result = async(Dispatchers.Default) {
+            awaitPredictionTerminalEvent(
+                timeoutMillis = 1_000,
+                timeoutCleanupMillis = 100,
+                predictionScope = predictionScope,
+                events = events,
+                isTerminal = { it == "done" },
+                onTimeout = {},
+                tryRegisterPrediction = {
+                    registered.countDown()
+                    true
+                },
+                onPredictionFinished = {},
+            ) {
+                check(events.tryEmit("done"))
+            }
+        }
+
+        try {
+            assertTrue(
+                "prediction must register before native work is queued",
+                registered.await(200, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            allowPredictionWorker.countDown()
+        }
+
+        assertEquals("done", result.await())
+        predictionScope.cancel()
+        dispatcher.close()
+        executor.shutdownNow()
+        Unit
+    }
+
+    @Test
+    fun `generate disables partial completion and rejects empty final text`() = runBlocking {
+        val fixture = createGgufBackendTestFixture(
             predictionEvents = listOf(
-                LlamaHelper.LLMEvent.Ongoing("partial local reply", 1),
-                LlamaHelper.LLMEvent.Done("", 1, 0L),
+                LlamaRuntimeEvent.Ongoing("partial"),
+                LlamaRuntimeEvent.Done(""),
             ),
         )
-        val backend = GgufLlamaCppBackend(
-            helper = helper,
-            predictionScope = predictionScope,
-            eventFlow = events,
-        )
-        val session = LocalLlmBackendSession(
-            modelId = "smollm-huawei",
-            modelPath = "/data/user/0/com.example.note_secret_search/files/models/smollm.gguf",
-            backendName = "gguf-llama-cpp",
-            handle = 7L,
-            backend = backend,
-        )
 
-        val result = backend.generate(
-            session = session,
-            prompt = "hello",
-            maxTokens = 96,
-        )
+        try {
+            try {
+                fixture.backend.generate(
+                    session = fixture.session,
+                    prompt = "hello-stability-check",
+                    maxTokens = 256,
+                    config = LocalLlmGenerationConfig(
+                        emitPartialCompletion = true,
+                    ),
+                )
+                fail("Expected empty final text to be rejected.")
+            } catch (error: IllegalArgumentException) {
+                assertEquals("Backend returned empty text.", error.message)
+            }
 
-        assertEquals("partial local reply", result.text)
-        assertEquals("stop", result.finishReason)
-        predictionScope.cancel()
+            assertFalse(
+                "partial completion must stay disabled even when requested by config.",
+                fixture.client.lastEmitPartialCompletion,
+            )
+        } finally {
+            fixture.close()
+        }
     }
 
     @Test
     fun `load uses reduced context length for Huawei stability experiment`() {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val events = MutableSharedFlow<LlamaHelper.LLMEvent>(
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
             replay = 0,
             extraBufferCapacity = 1,
         )
-        val helper = RecordingLlamaHelperClient(events)
+        val client = RecordingLlamaContextClient(events)
         val backend = GgufLlamaCppBackend(
-            helper = helper,
+            client = client,
             predictionScope = predictionScope,
             eventFlow = events,
         )
@@ -273,7 +520,7 @@ class GgufLlamaCppBackendTest {
         assertEquals(
             "context length should be reduced to lower native KV-cache pressure on Huawei.",
             1024,
-            helper.lastContextLength,
+            client.lastContextLength,
         )
         predictionScope.cancel()
     }
@@ -281,13 +528,13 @@ class GgufLlamaCppBackendTest {
     @Test
     fun `huawei conservative generation config keeps context length and disables partial completion`() = runBlocking {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val events = MutableSharedFlow<LlamaHelper.LLMEvent>(
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
             replay = 0,
             extraBufferCapacity = 1,
         )
-        val helper = RecordingLlamaHelperClient(events)
+        val client = RecordingLlamaContextClient(events)
         val backend = GgufLlamaCppBackend(
-            helper = helper,
+            client = client,
             predictionScope = predictionScope,
             eventFlow = events,
         )
@@ -309,22 +556,22 @@ class GgufLlamaCppBackendTest {
             ),
         )
 
-        assertEquals(1024, helper.lastContextLength)
-        assertFalse(helper.lastEmitPartialCompletion)
-        assertEquals(96, helper.lastRequestedMaxTokens)
+        assertEquals(1024, client.lastContextLength)
+        assertFalse(client.lastEmitPartialCompletion)
+        assertEquals(96, client.lastRequestedMaxTokens)
         predictionScope.cancel()
     }
 
     @Test
-    fun `generate truncates prompt to conservative maxPromptChars before native predict`() = runBlocking {
+    fun `generate rejects prompt beyond maxPromptChars before native predict`() = runBlocking {
         val predictionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        val events = MutableSharedFlow<LlamaHelper.LLMEvent>(
+        val events = MutableSharedFlow<LlamaRuntimeEvent>(
             replay = 0,
             extraBufferCapacity = 1,
         )
-        val helper = RecordingLlamaHelperClient(events)
+        val client = RecordingLlamaContextClient(events)
         val backend = GgufLlamaCppBackend(
-            helper = helper,
+            client = client,
             predictionScope = predictionScope,
             eventFlow = events,
         )
@@ -336,57 +583,25 @@ class GgufLlamaCppBackendTest {
             backend = backend,
         )
 
-        backend.generate(
-            session = session,
-            prompt = "a".repeat(20),
-            maxTokens = 96,
-            config = LocalLlmGenerationConfig(
-                contextLength = 1024,
-                maxOutputTokens = 96,
-                maxPromptChars = 8,
-                conservativeMode = true,
-                emitPartialCompletion = false,
-            ),
-        )
-
-        assertEquals("aaaaaaaa", helper.lastPrompt)
-        predictionScope.cancel()
-    }
-}
-
-private class RecordingLlamaHelperClient(
-    private val events: MutableSharedFlow<LlamaHelper.LLMEvent>,
-    private val predictionEvents: List<LlamaHelper.LLMEvent> = listOf(
-        LlamaHelper.LLMEvent.Done("stable result", 1, 0L),
-    ),
-) : LlamaHelperClient {
-    var lastEmitPartialCompletion: Boolean = true
-    var lastContextLength: Int = 0
-    var lastRequestedMaxTokens: Int = 0
-    var lastPrompt: String = ""
-
-    override fun load(path: String, contextLength: Int, onLoaded: (Long) -> Unit) {
-        lastContextLength = contextLength
-        onLoaded(7L)
-    }
-
-    override fun predict(
-        prompt: String,
-        emitPartialCompletion: Boolean,
-        maxTokens: Int,
-        config: LocalLlmGenerationConfig,
-    ) {
-        lastEmitPartialCompletion = emitPartialCompletion
-        lastRequestedMaxTokens = maxTokens
-        lastPrompt = prompt
-        predictionEvents.forEach { event ->
-            check(events.tryEmit(event))
+        try {
+            backend.generate(
+                session = session,
+                prompt = "a".repeat(20),
+                maxTokens = 96,
+                config = LocalLlmGenerationConfig(
+                    contextLength = 1024,
+                    maxOutputTokens = 96,
+                    maxPromptChars = 8,
+                    conservativeMode = true,
+                    emitPartialCompletion = false,
+                ),
+            )
+            fail("Expected prompt budget validation to fail.")
+        } catch (error: IllegalArgumentException) {
+            assertEquals("Prompt exceeds maxPromptChars.", error.message)
         }
-    }
 
-    override fun abort() {
-    }
-
-    override fun release() {
+        assertEquals("", client.lastPrompt)
+        predictionScope.cancel()
     }
 }

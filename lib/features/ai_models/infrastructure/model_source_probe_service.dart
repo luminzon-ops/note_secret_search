@@ -3,77 +3,19 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:note_secret_search/core/logging/app_logger.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_source_probe.dart';
 
-class ModelSourceProbeResult {
-  const ModelSourceProbeResult({
-    required this.sourceId,
-    required this.reachable,
-    required this.statusCode,
-    required this.contentLength,
-    required this.rangeSupported,
-    required this.latencyMs,
-    required this.usedFallbackRangeProbe,
-  });
+export 'package:note_secret_search/features/ai_models/domain/model_source_probe.dart';
 
-  final String sourceId;
-  final bool reachable;
-  final int? statusCode;
-  final int? contentLength;
-  final bool rangeSupported;
-  final int? latencyMs;
-  final bool usedFallbackRangeProbe;
-}
-
-List<ModelSourceProbeResult> rankProbeResults(
-  List<ModelSourceProbeResult> results, {
-  int? expectedSizeBytes,
-}) {
-  final indexed = results.indexed.toList(growable: false);
-  indexed.sort((left, right) {
-    final reachableCompare = _boolPriority(right.$2.reachable) - _boolPriority(left.$2.reachable);
-    if (reachableCompare != 0) {
-      return reachableCompare;
-    }
-
-    final expectedSizeCompare = _boolPriority(right.$2.contentLength == expectedSizeBytes) -
-        _boolPriority(left.$2.contentLength == expectedSizeBytes);
-    if (expectedSizeCompare != 0) {
-      return expectedSizeCompare;
-    }
-
-    final contentLengthCompare = _boolPriority(right.$2.contentLength != null) - _boolPriority(left.$2.contentLength != null);
-    if (contentLengthCompare != 0) {
-      return contentLengthCompare;
-    }
-
-    final rangeCompare = _boolPriority(right.$2.rangeSupported) - _boolPriority(left.$2.rangeSupported);
-    if (rangeCompare != 0) {
-      return rangeCompare;
-    }
-
-    final leftLatency = left.$2.latencyMs ?? 1 << 30;
-    final rightLatency = right.$2.latencyMs ?? 1 << 30;
-    if (leftLatency != rightLatency) {
-      return leftLatency.compareTo(rightLatency);
-    }
-
-    return left.$1.compareTo(right.$1);
-  });
-  return indexed.map((item) => item.$2).toList(growable: false);
-}
-
-int _boolPriority(bool value) => value ? 1 : 0;
-
-class ModelSourceProbeService {
-  ModelSourceProbeService({
-    required Dio dio,
-    required AppLogger logger,
-  })  : _dio = dio,
-        _logger = logger;
+class ModelSourceProbeService implements ModelSourceProbe {
+  ModelSourceProbeService({required Dio dio, required AppLogger logger})
+    : _dio = dio,
+      _logger = logger;
 
   final Dio _dio;
   final AppLogger _logger;
 
+  @override
   Future<ModelSourceProbeResult> probeSource({
     required ModelSourceEntry source,
     int? expectedSizeBytes,
@@ -83,8 +25,12 @@ class ModelSourceProbeService {
       final headResponse = await _dio.head<void>(source.url);
       final latencyMs = DateTime.now().difference(startedAt).inMilliseconds;
       final headers = headResponse.headers;
-      final contentLength = int.tryParse(headers.value(HttpHeaders.contentLengthHeader) ?? '');
-      final acceptRanges = headers.value(HttpHeaders.acceptRangesHeader)?.toLowerCase();
+      final contentLength = int.tryParse(
+        headers.value(HttpHeaders.contentLengthHeader) ?? '',
+      );
+      final acceptRanges = headers
+          .value(HttpHeaders.acceptRangesHeader)
+          ?.toLowerCase();
 
       return ModelSourceProbeResult(
         sourceId: source.id,
@@ -95,8 +41,8 @@ class ModelSourceProbeService {
         latencyMs: latencyMs,
         usedFallbackRangeProbe: false,
       );
-    } catch (error) {
-      _logger.warning('HEAD probe failed for ${source.id}: $error');
+    } catch (_) {
+      _logger.warning('model_source_head_probe_failed');
     }
 
     final fallbackStartedAt = DateTime.now();
@@ -108,9 +54,14 @@ class ModelSourceProbeService {
           headers: const <String, Object>{HttpHeaders.rangeHeader: 'bytes=0-0'},
         ),
       );
-      final latencyMs = DateTime.now().difference(fallbackStartedAt).inMilliseconds;
-      final contentRange = response.headers.value(HttpHeaders.contentRangeHeader);
-      final contentLength = _contentLengthFromContentRange(contentRange) ?? expectedSizeBytes;
+      final latencyMs = DateTime.now()
+          .difference(fallbackStartedAt)
+          .inMilliseconds;
+      final contentRange = response.headers.value(
+        HttpHeaders.contentRangeHeader,
+      );
+      final contentLength =
+          _contentLengthFromContentRange(contentRange) ?? expectedSizeBytes;
 
       return ModelSourceProbeResult(
         sourceId: source.id,
@@ -121,8 +72,8 @@ class ModelSourceProbeService {
         latencyMs: latencyMs,
         usedFallbackRangeProbe: true,
       );
-    } catch (error) {
-      _logger.warning('Fallback probe failed for ${source.id}: $error');
+    } catch (_) {
+      _logger.warning('model_source_range_probe_failed');
       return ModelSourceProbeResult(
         sourceId: source.id,
         reachable: false,

@@ -21,7 +21,10 @@ void main() {
       expect(result.reason, 'Local LLM model is ready.');
       expect(result.status, LlmRuntimeStatus.ready);
       expect(result.modelPath, '/data/user/0/app/files/models/phi.gguf');
-      expect(result.checkedAt, DateTime.fromMillisecondsSinceEpoch(1714000000000));
+      expect(
+        result.checkedAt,
+        DateTime.fromMillisecondsSinceEpoch(1714000000000),
+      );
     });
 
     test('maps degraded runtime payload into non-ready state', () {
@@ -56,7 +59,10 @@ void main() {
       expect(result.status, LlmRuntimeStatus.installedUnverified);
       expect(result.reason, '检测到模型文件，但当前 backend 尚未完成真实校验。');
       expect(result.modelPath, '/data/user/0/app/files/models/phi.gguf');
-      expect(result.checkedAt, DateTime.fromMillisecondsSinceEpoch(1714100000000));
+      expect(
+        result.checkedAt,
+        DateTime.fromMillisecondsSinceEpoch(1714100000000),
+      );
     });
 
     test('maps probe-failed degraded payload into non-ready state', () {
@@ -73,69 +79,185 @@ void main() {
       expect(result.ready, isFalse);
       expect(result.status, LlmRuntimeStatus.degraded);
       expect(result.reason, contains('probe 失败'));
-      expect(result.checkedAt, DateTime.fromMillisecondsSinceEpoch(1714200000000));
+      expect(
+        result.checkedAt,
+        DateTime.fromMillisecondsSinceEpoch(1714200000000),
+      );
     });
   });
 
   group('MethodChannelLlmRuntimeBridge', () {
     TestWidgetsFlutterBinding.ensureInitialized();
 
-    test('maps generateText payload into LlmInferenceResponse-compatible map', () async {
-      const channelName = 'note_secret_search/llm_runtime';
-      final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      const methodChannel = MethodChannel(channelName);
+    test(
+      'maps generateText payload into LlmInferenceResponse-compatible map',
+      () async {
+        const channelName = 'note_secret_search/llm_runtime';
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const methodChannel = MethodChannel(channelName);
 
-      messenger.setMockMethodCallHandler(methodChannel, (call) async {
-        expect(call.method, 'generateText');
-        expect(call.arguments, <String, Object?>{
-          'modelId': 'phi-mini',
-          'modelPath': '/data/user/0/app/files/models/phi.gguf',
-          'prompt': '你好',
-          'usedPrivateContext': false,
-          'maxOutputTokens': 96,
-          'maxPromptChars': 1200,
-          'contextLength': 1024,
-          'conservativeMode': true,
-          'temperature': 0.7,
-          'topK': 40,
-          'topP': 0.9,
-          'seed': 42,
-          'stopSequences': <String>['</s>', '<|im_end|>', '<|endoftext|>'],
-          'emitPartialCompletion': false,
+        messenger.setMockMethodCallHandler(methodChannel, (call) async {
+          expect(call.method, 'generateText');
+          expect(call.arguments, <String, Object?>{
+            'modelId': 'phi-mini',
+            'modelPath': '/data/user/0/app/files/models/phi.gguf',
+            'prompt': '你好',
+            'usedPrivateContext': false,
+            'maxOutputTokens': 96,
+            'maxPromptChars': 1200,
+            'contextLength': 1024,
+            'conservativeMode': true,
+            'temperature': 0.7,
+            'topK': 40,
+            'topP': 0.9,
+            'seed': 42,
+            'stopSequences': <String>['</s>', '<|im_end|>', '<|endoftext|>'],
+            'emitPartialCompletion': false,
+          });
+
+          return <String, dynamic>{
+            'text': '这是本地模型回答。',
+            'finishReason': 'stop',
+            'usedPrivateContext': false,
+          };
         });
 
-        return <String, dynamic>{
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(methodChannel, null),
+        );
+
+        final bridge = MethodChannelLlmRuntimeBridge(channel: methodChannel);
+        final result = await bridge.generateText(
+          modelId: 'phi-mini',
+          modelPath: '/data/user/0/app/files/models/phi.gguf',
+          prompt: '你好',
+          usedPrivateContext: false,
+          maxOutputTokens: 96,
+          maxPromptChars: 1200,
+          contextLength: 1024,
+          conservativeMode: true,
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.9,
+          seed: 42,
+          stopSequences: const <String>['</s>', '<|im_end|>', '<|endoftext|>'],
+          emitPartialCompletion: false,
+        );
+
+        expect(result, <String, dynamic>{
           'text': '这是本地模型回答。',
           'finishReason': 'stop',
           'usedPrivateContext': false,
-        };
-      });
+        });
+      },
+    );
 
-      addTearDown(() => messenger.setMockMethodCallHandler(methodChannel, null));
+    test(
+      'forwards request identity, verified checksum, and cancellation',
+      () async {
+        const channelName = 'note_secret_search/llm_runtime';
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const methodChannel = MethodChannel(channelName);
+        final calls = <MethodCall>[];
 
-      final bridge = MethodChannelLlmRuntimeBridge(channel: methodChannel);
-      final result = await bridge.generateText(
-        modelId: 'phi-mini',
-        modelPath: '/data/user/0/app/files/models/phi.gguf',
-        prompt: '你好',
-        usedPrivateContext: false,
-        maxOutputTokens: 96,
-        maxPromptChars: 1200,
-        contextLength: 1024,
-        conservativeMode: true,
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.9,
-        seed: 42,
-        stopSequences: const <String>['</s>', '<|im_end|>', '<|endoftext|>'],
-        emitPartialCompletion: false,
-      );
+        messenger.setMockMethodCallHandler(methodChannel, (call) async {
+          calls.add(call);
+          return call.method == 'generateText'
+              ? <String, dynamic>{
+                  'text': 'identified response',
+                  'finishReason': 'stop',
+                  'usedPrivateContext': true,
+                }
+              : null;
+        });
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(methodChannel, null),
+        );
 
-      expect(result, <String, dynamic>{
-        'text': '这是本地模型回答。',
-        'finishReason': 'stop',
-        'usedPrivateContext': false,
-      });
-    });
+        final bridge = MethodChannelLlmRuntimeBridge(channel: methodChannel);
+        await bridge.generateIdentifiedText(
+          requestId: 'request-7',
+          modelId: 'phi-mini',
+          modelPath: '/models/phi.gguf',
+          verifiedChecksum: 'sha256:verified',
+          prompt: 'private prompt',
+          usedPrivateContext: true,
+          maxOutputTokens: 96,
+          maxPromptChars: 1200,
+          contextLength: 1024,
+          conservativeMode: true,
+          temperature: 0.7,
+          topK: 40,
+          topP: 0.9,
+          seed: 42,
+          stopSequences: const <String>['</s>'],
+          emitPartialCompletion: false,
+        );
+        await bridge.cancelGeneration(requestId: 'request-7');
+
+        expect(calls, hasLength(2));
+        expect(calls.first.method, 'generateText');
+        expect(calls.first.arguments, containsPair('requestId', 'request-7'));
+        expect(
+          calls.first.arguments,
+          containsPair('verifiedChecksum', 'sha256:verified'),
+        );
+        expect(calls.first.arguments, isNot(contains('modelChecksum')));
+        expect(calls.last.method, 'cancelGeneration');
+        expect(calls.last.arguments, <String, Object?>{
+          'requestId': 'request-7',
+        });
+      },
+    );
+
+    test(
+      'maps native cancellation without exposing platform message',
+      () async {
+        const channelName = 'note_secret_search/llm_runtime';
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        const methodChannel = MethodChannel(channelName);
+
+        messenger.setMockMethodCallHandler(methodChannel, (call) async {
+          throw PlatformException(
+            code: 'CANCELLED',
+            message: '/private/models/phi.gguf prompt sentinel',
+            details: <String, Object?>{
+              'stage': 'generation',
+              'modelId': 'phi-mini',
+              'requestId': 'request-8',
+            },
+          );
+        });
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(methodChannel, null),
+        );
+
+        final bridge = MethodChannelLlmRuntimeBridge(channel: methodChannel);
+
+        await expectLater(
+          bridge.cancelGeneration(requestId: 'request-8'),
+          throwsA(
+            isA<LlmRuntimeCancelledException>()
+                .having((error) => error.code, 'code', 'CANCELLED')
+                .having((error) => error.stage, 'stage', 'generation')
+                .having((error) => error.modelId, 'modelId', 'phi-mini')
+                .having((error) => error.requestId, 'requestId', 'request-8')
+                .having(
+                  (error) => error.toString(),
+                  'safe string',
+                  isNot(contains('/private/models/phi.gguf')),
+                )
+                .having(
+                  (error) => error.toString(),
+                  'prompt omitted',
+                  isNot(contains('prompt sentinel')),
+                ),
+          ),
+        );
+      },
+    );
   });
 }

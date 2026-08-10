@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:note_secret_search/features/ai_models/infrastructure/device_profiler_bridge.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_capability_assessment.dart';
 
 class DeviceTierCard extends StatelessWidget {
-  const DeviceTierCard({super.key, required this.profile});
+  const DeviceTierCard({
+    super.key,
+    required this.profile,
+    required this.capabilityReport,
+  });
 
   final DeviceProfile? profile;
+  final DeviceCapabilityReport? capabilityReport;
 
   @override
   Widget build(BuildContext context) {
@@ -14,6 +19,12 @@ class DeviceTierCard extends StatelessWidget {
       'mid' => '省电档',
       _ => '最小档',
     };
+    final recommendations =
+        capabilityReport?.assessments
+            .where((assessment) => assessment.isDefaultRecommendation)
+            .map((assessment) => assessment.model.displayName)
+            .toList(growable: false) ??
+        const <String>[];
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -37,8 +48,16 @@ class DeviceTierCard extends StatelessWidget {
               _ProfileRow('型号', profile!.model),
               _ProfileRow('系统', profile!.osDisplay),
               _ProfileRow('CPU', profile!.cpuDisplay),
-              _ProfileRow('内存', '${profile!.ramDisplay} (可用 ${(profile!.availableRamMb / 1024).toStringAsFixed(1)} GB)'),
-              _ProfileRow('存储', '${profile!.storageDisplay} (可用 ${(profile!.availableStorageMb / 1024).toStringAsFixed(0)} GB)'),
+              _ProfileRow(
+                '内存',
+                '${profile!.ramDisplay} '
+                    '(可用 ${(profile!.availableRamMb / 1024).toStringAsFixed(1)} GB)',
+              ),
+              _ProfileRow(
+                '存储',
+                '${profile!.storageDisplay} '
+                    '(可用 ${(profile!.availableStorageMb / 1024).toStringAsFixed(0)} GB)',
+              ),
               const SizedBox(height: 8),
               Text(
                 '推荐模型档位：$tierLabel',
@@ -46,6 +65,13 @@ class DeviceTierCard extends StatelessWidget {
                   color: Theme.of(context).colorScheme.primary,
                 ),
               ),
+              if (recommendations.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '设备默认推荐：${recommendations.join('、')}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ],
           ],
         ),
@@ -65,8 +91,13 @@ class _ProfileRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          SizedBox(width: 80, child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
-          Expanded(child: Text(value, style: Theme.of(context).textTheme.bodyMedium)),
+          SizedBox(
+            width: 80,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Expanded(
+            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
+          ),
         ],
       ),
     );

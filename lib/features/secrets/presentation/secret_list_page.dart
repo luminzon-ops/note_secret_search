@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/auth_security/presentation/security_status_card.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
+import 'package:note_secret_search/features/vault/application/vault_providers.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class SecretListPage extends ConsumerWidget {
   const SecretListPage({super.key});
@@ -29,7 +32,7 @@ class SecretListPage extends ConsumerWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/vault/secret/new'),
+        onPressed: () => context.push(AppDestination.newSecret()),
         icon: const Icon(Icons.add),
         label: const Text('新增密码'),
       ),
@@ -73,7 +76,7 @@ class _SecretListSection extends StatelessWidget {
   });
 
   final AsyncValue<List> secretListAsync;
-  final dynamic cryptoService;
+  final CryptoService cryptoService;
 
   @override
   Widget build(BuildContext context) {
@@ -100,13 +103,21 @@ class _SecretListSection extends StatelessWidget {
                 ListTile(
                   title: Text(item.title as String),
                   subtitle: Text(
-                    cryptoService.decryptNullable(item.usernameCiphertext as List<int>?) as String,
+                    cryptoService.decryptField(
+                      item.usernameCiphertext as List<int>?,
+                      field: EncryptedDatabaseField.secretUsername,
+                      rowId: item.id as String,
+                    ),
                   ),
                   leading: Icon(
-                    (item.favorite as bool) ? Icons.star_rounded : Icons.lock_outline,
+                    (item.favorite as bool)
+                        ? Icons.star_rounded
+                        : Icons.lock_outline,
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/vault/secret/${item.id}'),
+                  onTap: () => context.push(
+                    AppDestination.secretDetail(item.id as String),
+                  ),
                 ),
             ],
           );

@@ -1,3 +1,4 @@
+import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 
 enum ChatStoredMessageRole { user, assistant, system }
@@ -60,6 +61,7 @@ class ChatStoredMessage {
     this.autoRetrievedContextSummary,
     this.manualContextItemIds = const <String>[],
     this.relatedSourceIds = const <String>[],
+    this.backendUsage,
     required this.createdAt,
   });
 
@@ -72,6 +74,7 @@ class ChatStoredMessage {
   final String? autoRetrievedContextSummary;
   final List<String> manualContextItemIds;
   final List<String> relatedSourceIds;
+  final ChatBackendUsage? backendUsage;
   final DateTime createdAt;
 
   ChatStoredMessage copyWith({
@@ -85,6 +88,8 @@ class ChatStoredMessage {
     bool clearAutoRetrievedContextSummary = false,
     List<String>? manualContextItemIds,
     List<String>? relatedSourceIds,
+    ChatBackendUsage? backendUsage,
+    bool clearBackendUsage = false,
     DateTime? createdAt,
   }) {
     return ChatStoredMessage(
@@ -99,6 +104,9 @@ class ChatStoredMessage {
           : (autoRetrievedContextSummary ?? this.autoRetrievedContextSummary),
       manualContextItemIds: manualContextItemIds ?? this.manualContextItemIds,
       relatedSourceIds: relatedSourceIds ?? this.relatedSourceIds,
+      backendUsage: clearBackendUsage
+          ? null
+          : (backendUsage ?? this.backendUsage),
       createdAt: createdAt ?? this.createdAt,
     );
   }

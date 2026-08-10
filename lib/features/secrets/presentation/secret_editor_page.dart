@@ -1,20 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/ai_models/application/model_selection_providers.dart';
-import 'package:note_secret_search/features/search/application/search_index_settings_providers.dart';
-import 'package:note_secret_search/features/search/application/search_providers.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/features/secrets/application/secret_form_mapper.dart';
 import 'package:note_secret_search/features/secrets/application/secret_providers.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_draft.dart';
 import 'package:note_secret_search/features/secrets/domain/secret_item.dart';
 
 class SecretEditorPage extends ConsumerStatefulWidget {
-  const SecretEditorPage({
-    this.secretId,
-    super.key,
-  });
+  const SecretEditorPage({this.secretId, super.key});
 
   final String? secretId;
 
@@ -53,9 +47,7 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
         : ref.watch(secretDetailProvider(widget.secretId!));
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isEditing ? '编辑密码' : '新增密码'),
-      ),
+      appBar: AppBar(title: Text(widget.isEditing ? '编辑密码' : '新增密码')),
       body: secretAsync.when(
         data: (secret) {
           _hydrate(secret);
@@ -67,7 +59,8 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
                 TextFormField(
                   controller: _titleController,
                   decoration: const InputDecoration(labelText: '标题 *'),
-                  validator: (value) => (value == null || value.trim().isEmpty) ? '请输入标题' : null,
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty) ? '请输入标题' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -126,7 +119,10 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
     if (secret == null) {
       return;
     }
-    final draft = SecretFormMapper.toDraft(secret, ref.read(cryptoServiceProvider));
+    final draft = SecretFormMapper.toDraft(
+      secret,
+      ref.read(cryptoServiceProvider),
+    );
     _titleController.text = draft.title;
     _usernameController.text = draft.username;
     _passwordController.text = draft.password;
@@ -138,11 +134,6 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
 
   Future<void> _submit(SecretItem? existing) async {
     if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    final vault = await ref.read(defaultVaultProvider.future);
-    if (vault == null || !mounted) {
       return;
     }
 
@@ -161,38 +152,11 @@ class _SecretEditorPageState extends ConsumerState<SecretEditorPage> {
       favorite: _favorite,
     );
 
-    final item = existing == null
-        ? SecretFormMapper.create(
-            vaultId: vault.id,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          )
-        : SecretFormMapper.update(
-            previous: existing,
-            draft: draft,
-            cryptoService: ref.read(cryptoServiceProvider),
-          );
-
-    await ref.read(secretRepositoryProvider).save(item);
-    ref.invalidate(secretListProvider);
-    ref.invalidate(secretDetailProvider(item.id));
-    ref.invalidate(searchIndexStatusProvider);
-    ref.invalidate(semanticSearchResultsProvider);
-    ref.invalidate(unifiedSearchResultsProvider);
-    final activeModel = await ref.read(activeEmbeddingModelProvider.future);
-    final indexSettings = await ref.read(searchIndexSettingsProvider.future);
-    if (activeModel != null && indexSettings.autoIndexEnabled) {
-      await ref.read(searchIndexControllerProvider).indexPending();
-      ref.invalidate(searchIndexStatusProvider);
-      ref.invalidate(semanticSearchResultsProvider);
-      ref.invalidate(unifiedSearchResultsProvider);
-    }
-    if (mounted) {
+    final item = await ref
+        .read(saveSecretUseCaseProvider)
+        .execute(existing: existing, draft: draft);
+    if (item != null && mounted) {
       context.pop();
     }
   }
 }
-
-final secretDetailProvider = FutureProvider.family<SecretItem?, String>((ref, id) async {
-  return ref.watch(secretRepositoryProvider).getById(id);
-});

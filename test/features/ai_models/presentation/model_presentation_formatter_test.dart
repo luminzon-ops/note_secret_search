@@ -1,7 +1,50 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:note_secret_search/features/ai_models/domain/model_artifact_path.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
 import 'package:note_secret_search/features/ai_models/presentation/model_presentation_formatter.dart';
+
+const _installedModelDigest =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _installedModel = ModelRegistryEntry(
+  id: 'embed-1',
+  type: 'embedding',
+  provider: 'builtin',
+  name: 'MiniLM Embedding',
+  version: '1.0.2',
+  sizeBytes: 10485760,
+  quantization: 'Q8',
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  localPath: '/data/models/minilm.onnx',
+  checksum: _installedModelDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest:
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/minilm.onnx',
+      relativePath: 'runtime/model.onnx',
+      expectedChecksum: _installedModelDigest,
+      verifiedChecksum: _installedModelDigest,
+      expectedSizeBytes: 10485760,
+      verifiedSizeBytes: 10485760,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
 
 void main() {
   test('formatModelCapabilitySummary shows all supported metadata in the approved order', () {
@@ -50,25 +93,8 @@ void main() {
   });
 
   test('formatSearchSettingsDeploymentStatus returns ready wording for installed model', () {
-    const model = ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin',
-      name: 'MiniLM Embedding',
-      version: '1.0.2',
-      sizeBytes: 10485760,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/data/models/minilm.onnx',
-      checksum: 'abc',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-    );
-
     expect(
-      formatSearchSettingsDeploymentStatus(model),
+      formatSearchSettingsDeploymentStatus(_installedModel),
       '部署状态：本地文件已就绪，可用于当前语义检索。',
     );
   });
@@ -98,24 +124,10 @@ void main() {
   });
 
   test('formatInstalledModelDeploymentStatus returns ready wording for installed model', () {
-    const model = ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin',
-      name: 'MiniLM Embedding',
-      version: '1.0.2',
-      sizeBytes: 10485760,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/data/models/minilm.onnx',
-      checksum: 'abc',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
+    expect(
+      formatInstalledModelDeploymentStatus(_installedModel),
+      '部署状态：本地已就绪。',
     );
-
-    expect(formatInstalledModelDeploymentStatus(model), '部署状态：本地已就绪。');
   });
 
   test('formatInstalledModelDeploymentStatus returns degraded wording for missing-file model', () {
@@ -147,25 +159,8 @@ void main() {
   });
 
   test('formatCatalogDeploymentStatus returns ready wording for installed entry', () {
-    const model = ModelRegistryEntry(
-      id: 'embed-1',
-      type: 'embedding',
-      provider: 'builtin',
-      name: 'MiniLM Embedding',
-      version: '1.0.2',
-      sizeBytes: 10485760,
-      quantization: 'Q8',
-      minRamMb: 512,
-      recommendedTier: 'mvp',
-      localPath: '/data/models/minilm.onnx',
-      checksum: 'abc',
-      enabled: true,
-      installedAt: null,
-      filePresent: true,
-    );
-
     expect(
-      formatCatalogDeploymentStatus(model),
+      formatCatalogDeploymentStatus(_installedModel),
       '部署状态：本地已就绪，可用于后续启用或检索配置。',
     );
   });
@@ -194,7 +189,7 @@ void main() {
     );
   });
 
-  test('formatCatalogRuntimeSupportStatus explains deployable multimodal entries', () {
+  test('formatCatalogRuntimeSupportStatus rejects unavailable multimodal entries', () {
     const entry = ModelCatalogEntry(
       id: 'minicpm_v_4_6_q4_k_m',
       type: 'multimodal_llm',
@@ -207,63 +202,44 @@ void main() {
       sources: <ModelSourceEntry>[],
     );
 
-    expect(isCatalogEntryDownloadSupported(entry), isTrue);
+    expect(isCatalogEntryDownloadSupported(entry), isFalse);
     expect(
       formatCatalogRuntimeSupportStatus(entry),
-      '运行时支持：需要下载主模型和视觉投影文件，部署后可进行本地多模态推理。',
+      '运行时支持：当前版本尚不支持 multimodal_llm；需要专用 runtime 后才能下载部署。',
     );
   });
 
-  group('shouldShowGenericTrustExplainer', () {
-    test('returns false for a single signed source entry', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'signed-only',
-          label: 'Signed Only Source',
-          url: 'https://example.com/signed.onnx',
-          checksum: 'sha256:signed',
-          signature: 'base64:sig',
-          signatureAlgorithm: 'RSA-SHA256',
-          keyId: 'key-1',
-        ),
-      ];
+  group('signature metadata trust UI suppression', () {
+    const signedSource = ModelSourceEntry(
+      id: 'signed-src',
+      label: 'Signed Source',
+      url: 'https://example.com/signed.onnx',
+      checksum: 'sha256:signed',
+      signature: 'base64:sig',
+      signatureAlgorithm: 'RSA-SHA256',
+      keyId: 'key-1',
+    );
+    const unsignedSource = ModelSourceEntry(
+      id: 'unsigned-src',
+      label: 'Unsigned Source',
+      url: 'https://example.com/unsigned.onnx',
+      checksum: 'sha256:unsigned',
+    );
 
-      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    test('keeps source labels plain', () {
+      expect(formatSourceLabelWithTrust(signedSource), 'Signed Source');
     });
 
-    test('returns true for a mixed-source entry with signed metadata', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'signed-src',
-          label: 'Signed Source',
-          url: 'https://example.com/signed.onnx',
-          checksum: 'sha256:signed',
-          signature: 'base64:sig',
-          signatureAlgorithm: 'RSA-SHA256',
-          keyId: 'key-1',
-        ),
-        ModelSourceEntry(
-          id: 'unsigned-src',
-          label: 'Unsigned Source',
-          url: 'https://example.com/unsigned.onnx',
-          checksum: 'sha256:unsigned',
-        ),
-      ];
-
-      expect(shouldShowGenericTrustExplainer(sources), isTrue);
-    });
-
-    test('returns false when no source declares artifact trust', () {
-      const sources = [
-        ModelSourceEntry(
-          id: 'unsigned-src',
-          label: 'Unsigned Source',
-          url: 'https://example.com/unsigned.onnx',
-          checksum: 'sha256:unsigned',
-        ),
-      ];
-
-      expect(shouldShowGenericTrustExplainer(sources), isFalse);
+    test('omits local and generic trust captions', () {
+      expect(formatEffectiveSourceTrustCaption(signedSource), isNull);
+      expect(
+        formatGenericTrustExplainer(const <ModelSourceEntry>[signedSource, unsignedSource]),
+        isNull,
+      );
+      expect(
+        shouldShowGenericTrustExplainer(const <ModelSourceEntry>[signedSource, unsignedSource]),
+        isFalse,
+      );
     });
   });
 }

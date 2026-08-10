@@ -1,27 +1,13 @@
 import 'package:flutter/services.dart';
+import 'package:note_secret_search/features/ai_chat/domain/multimodal_llm_runtime_bridge.dart';
 
-abstract interface class MultimodalLlmRuntimeBridge {
-  Future<Map<String, dynamic>> ensureModelReady({
-    required String modelId,
-    required String modelPath,
-    required String mmprojPath,
-  });
+export 'package:note_secret_search/features/ai_chat/domain/multimodal_llm_runtime_bridge.dart';
 
-  Future<Map<String, dynamic>> generateMultimodalText({
-    required String modelId,
-    required String modelPath,
-    required String mmprojPath,
-    required String imagePath,
-    required String prompt,
-    required int maxOutputTokens,
-    required int contextLength,
-    required bool reasoningEnabled,
-  });
-}
-
-class MethodChannelMultimodalLlmRuntimeBridge implements MultimodalLlmRuntimeBridge {
+class MethodChannelMultimodalLlmRuntimeBridge
+    implements MultimodalLlmRuntimeBridge {
   MethodChannelMultimodalLlmRuntimeBridge({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel('note_secret_search/llm_runtime');
+    : _channel =
+          channel ?? const MethodChannel('note_secret_search/llm_runtime');
 
   final MethodChannel _channel;
 

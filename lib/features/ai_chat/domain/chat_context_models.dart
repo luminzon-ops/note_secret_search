@@ -1,6 +1,9 @@
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
+import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.dart';
 
 enum ChatMode { privateQa, freeChat }
+
+enum ChatBackendPreference { local, external }
 
 enum ChatContextSource { none, autoRetrieved, manuallySelected, mixed }
 
@@ -28,12 +31,16 @@ class AiChatRequest {
   const AiChatRequest({
     required this.mode,
     required this.userInput,
+    this.requestId,
+    this.backendPreference = ChatBackendPreference.local,
     this.allowPrivateContext = false,
     this.manualItems = const <ChatContextItem>[],
   });
 
   final ChatMode mode;
   final String userInput;
+  final String? requestId;
+  final ChatBackendPreference backendPreference;
   final bool allowPrivateContext;
   final List<ChatContextItem> manualItems;
 }
@@ -41,6 +48,7 @@ class AiChatRequest {
 class AiChatResponse {
   const AiChatResponse({
     required this.text,
+    required this.usage,
     required this.contextSummary,
     required this.usedPrivateContext,
     required this.sourceType,
@@ -48,6 +56,7 @@ class AiChatResponse {
   });
 
   final String text;
+  final ChatBackendUsage usage;
   final List<String> contextSummary;
   final bool usedPrivateContext;
   final ChatContextSource sourceType;

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/core/security/crypto_service.dart';
 import 'package:note_secret_search/features/notes/application/note_providers.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class NoteListPage extends ConsumerWidget {
   const NoteListPage({super.key});
@@ -23,7 +25,7 @@ class NoteListPage extends ConsumerWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/notes/item/new'),
+        onPressed: () => context.push(AppDestination.newNote()),
         icon: const Icon(Icons.note_add_outlined),
         label: const Text('新增笔记'),
       ),
@@ -38,7 +40,7 @@ class _NoteListSection extends StatelessWidget {
   });
 
   final AsyncValue<List> noteListAsync;
-  final dynamic cryptoService;
+  final CryptoService cryptoService;
 
   @override
   Widget build(BuildContext context) {
@@ -65,13 +67,21 @@ class _NoteListSection extends StatelessWidget {
                 ListTile(
                   title: Text(item.title as String),
                   subtitle: Text(
-                    cryptoService.decryptNullable(item.summaryCacheCiphertext as List<int>?) as String,
+                    cryptoService.decryptField(
+                      item.summaryCacheCiphertext as List<int>?,
+                      field: EncryptedDatabaseField.noteSummary,
+                      rowId: item.id as String,
+                    ),
                   ),
                   leading: Icon(
-                    (item.favorite as bool) ? Icons.star_rounded : Icons.note_outlined,
+                    (item.favorite as bool)
+                        ? Icons.star_rounded
+                        : Icons.note_outlined,
                   ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => context.push('/notes/item/${item.id}'),
+                  onTap: () => context.push(
+                    AppDestination.noteDetail(item.id as String),
+                  ),
                 ),
             ],
           );

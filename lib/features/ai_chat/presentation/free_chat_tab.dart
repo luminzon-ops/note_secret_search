@@ -2,27 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/ai_chat/application/ai_chat_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
+import 'package:note_secret_search/features/ai_chat/presentation/chat_backend_selector.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/chat_input_bar.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/external_privacy_confirmation.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/chat_message_list.dart';
 import 'package:note_secret_search/features/ai_chat/presentation/manual_context_picker_sheet.dart';
-import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 
 class FreeChatTab extends ConsumerWidget {
   const FreeChatTab({super.key});
 
-  Future<void> _handleSend(BuildContext context, WidgetRef ref, String value) async {
+  Future<void> _handleSend(
+    BuildContext context,
+    WidgetRef ref,
+    String value,
+  ) async {
     final state = ref.read(freeChatControllerProvider);
-    final externalStatus = await ref.read(externalProviderStatusProvider.future);
-    if (!context.mounted) {
-      return;
-    }
-    final shouldConfirm = externalStatus.available &&
-        externalStatus.config != null &&
-        state.allowPrivateContext;
-
-    if (shouldConfirm) {
-      final confirmed = await confirmExternalPrivateContextSend(context: context, ref: ref);
+    if (state.backendPreference == ChatBackendPreference.external) {
+      final confirmed = await confirmExternalProviderSend(
+        context: context,
+        ref: ref,
+        includesPrivateContext: state.allowPrivateContext,
+      );
       if (!confirmed) {
         return;
       }
@@ -41,6 +41,17 @@ class FreeChatTab extends ConsumerWidget {
 
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ChatBackendSelector(
+              key: const ValueKey('free-chat-backend-selector'),
+              value: state.backendPreference,
+              onChanged: state.sending ? null : controller.setBackendPreference,
+            ),
+          ),
+        ),
         SwitchListTile(
           title: const Text('允许参考私密内容'),
           value: state.allowPrivateContext,
@@ -64,13 +75,19 @@ class FreeChatTab extends ConsumerWidget {
                         onPressed: state.sending
                             ? null
                             : () async {
-                                final selected = await showModalBottomSheet<List<ChatContextItem>>(
-                                  context: context,
-                                  isScrollControlled: true,
-                                  builder: (context) => ManualContextPickerSheet(
-                                    initialIds: state.manualItems.map((item) => item.id).toSet(),
-                                  ),
-                                );
+                                final selected =
+                                    await showModalBottomSheet<
+                                      List<ChatContextItem>
+                                    >(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      builder: (context) =>
+                                          ManualContextPickerSheet(
+                                            initialIds: state.manualItems
+                                                .map((item) => item.id)
+                                                .toSet(),
+                                          ),
+                                    );
                                 if (selected != null) {
                                   controller.setManualItems(selected);
                                 }
@@ -101,6 +118,7 @@ class FreeChatTab extends ConsumerWidget {
         ChatInputBar(
           enabled: !state.sending,
           sending: state.sending,
+          onStop: controller.stopGeneration,
           hintText: '输入你的问题或消息',
           onSend: (value) => _handleSend(context, ref, value),
         ),

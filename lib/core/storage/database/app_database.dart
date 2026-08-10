@@ -1,28 +1,55 @@
-import 'package:note_secret_search/core/storage/database/database_schema.dart';
+import 'package:note_secret_search/core/security/database_session_keys.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
-abstract interface class AppDatabase {
-  Future<void> initialize();
+enum DatabaseLifecycleStatus { locked, opening, open, closing, error }
 
-  Future<void> executeBatch(List<String> statements);
+class DatabaseLifecycleState {
+  const DatabaseLifecycleState({
+    required this.status,
+    this.openingStage,
+    this.errorCode,
+  });
 
-  Future<Database> get database;
+  const DatabaseLifecycleState.locked()
+    : status = DatabaseLifecycleStatus.locked,
+      openingStage = null,
+      errorCode = null;
 
-  Future<void> ensureDefaultVault();
-
-  Future<void> close();
+  final DatabaseLifecycleStatus status;
+  final String? openingStage;
+  final String? errorCode;
 }
 
-abstract final class DatabaseMigrations {
-  static List<String> initial() => DatabaseSchema.createStatements;
+class DatabaseAccessRevokedException implements Exception {
+  const DatabaseAccessRevokedException();
 
-  static List<String> forVersion(int version) {
-    return switch (version) {
-      2 => DatabaseSchema.chatPersistenceStatements,
-      3 => const <String>[
-          'ALTER TABLE model_registry ADD COLUMN artifact_paths_json TEXT',
-        ],
-      _ => const <String>[],
-    };
-  }
+  String get code => 'database_access_revoked';
+
+  @override
+  String toString() => code;
+}
+
+class DatabaseLifecycleException implements Exception {
+  const DatabaseLifecycleException(this.code);
+
+  final String code;
+
+  @override
+  String toString() => code;
+}
+
+abstract interface class AppDatabase {
+  DatabaseLifecycleState get state;
+
+  Stream<DatabaseLifecycleState> get states;
+
+  Future<void> open(DatabaseSessionKeys sessionKeys);
+
+  Future<T> run<T>(Future<T> Function(Database database) operation);
+
+  Future<T> transaction<T>(
+    Future<T> Function(DatabaseExecutor executor) operation,
+  );
+
+  Future<void> close();
 }

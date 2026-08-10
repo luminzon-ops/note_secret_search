@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "buildId": "nss-llamacpp-b576a1ff-a63e57a6-lc1-arm64-v8a",
+  "source": {
+    "repository": "https://github.com/ljcamargo/kotlinllamacpp.git",
+    "commit": "b576a1ff0a4dc013893c9aee69b1df70b3cc9794",
+    "archiveUrl": "https://github.com/ljcamargo/kotlinllamacpp/archive/b576a1ff0a4dc013893c9aee69b1df70b3cc9794.zip",
+    "archiveSha256": "38a63c75ed6329f9e89eb9cb5475dc782eb0839912a99307a6d6e0a9a0ad4d22",
+    "vendoredLlamaCppTree": "a63e57a601701e87446c988bb344d8c9e660afe1",
+    "manifestSha256": "0926aa75bcbc164243f83048559e4e58ae85d3d59925189c440b5df250aac482",
+    "sourceDateEpoch": 1764830941,
+    "patches": [
+      {
+        "path": "android/third_party/llamacpp/patches/0001-pin-reproducible-arm64-build.patch",
+        "sha256": "9d963b34f2ec39ae48f982a516bb885ac8bed0b9de124741912d8a2126097a66"
+      },
+      {
+        "path": "android/third_party/llamacpp/patches/0002-add-app-compatible-baseline-context.patch",
+        "sha256": "08a9ac678e148f638ef2842756e207d3f0d39795c1b3f76f95e5887c96d919ba"
+      },
+      {
+        "path": "android/third_party/llamacpp/patches/0003-disable-sensitive-runtime-logging.patch",
+        "sha256": "a7e1948e349fd21658385b12c70dd04203af58fe2178c7321fb05cb7f6b7d277"
+      },
+      {
+        "path": "android/third_party/llamacpp/patches/0004-harden-native-lifecycle.patch",
+        "sha256": "f5de41334cead8ab1b5b33e1b3096416f1998488a6d40b3e714ea1070fa14c7b"
+      }
+    ]
+  },
+  "toolchain": {
+    "jdk": "17",
+    "jdkVendor": "Oracle",
+    "jdkRuntime": "17.0.3.1+2-LTS-6",
+    "gradle": "8.11.1",
+    "gradleDistributionSha256": "f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6",
+    "agp": "8.9.1",
+    "kotlin": "2.2.20",
+    "ndk": "28.2.13676358",
+    "ndkRelease": "r28c",
+    "ndkSourcePropertiesSha256": "c00aa236fdb205e9be9edd9e2169763e48aca52735efff4e16f34205d49783b5",
+    "clang": "19.0.1",
+    "clangRevision": "97a699bf4812a18fb657c2779f5296a4ab2694d2",
+    "cmake": "3.22.1",
+    "cmakeBuild": "3.22.1-g37088a8-dirty",
+    "ninja": "1.10.2",
+    "compileSdk": "36",
+    "minSdk": "24",
+    "abi": "arm64-v8a",
+    "architecture": "armv8-a"
+  },
+  "build": {
+    "gradleTask": ":llamaCpp:assembleRelease",
+    "cmakeArguments": [
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DNSS_LLM_BASELINE_ARCH=armv8-a",
+      "-DNSS_LLM_DISABLE_NETWORK=ON",
+      "-DNSS_LLM_DISABLE_RUNTIME_LOGS=ON"
+    ],
+    "compileFlags": [
+      "-O3",
+      "-pthread",
+      "-march=armv8-a",
+      "-mno-outline-atomics",
+      "-fvisibility=hidden",
+      "-fvisibility-inlines-hidden",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-ffile-prefix-map=SOURCE=/usr/src/nss-llamacpp",
+      "-fdebug-prefix-map=BUILD=/usr/build/nss-llamacpp"
+    ],
+    "linkFlags": [
+      "-Wl,--build-id=sha1",
+      "-Wl,--gc-sections",
+      "-Wl,--exclude-libs,ALL",
+      "-Wl,--wrap=getauxval",
+      "-Wl,--wrap=printf",
+      "-Wl,--wrap=stderr",
+      "-Wl,--wrap=stdout",
+      "-Wl,--wrap=syslog"
+    ],
+    "disabledFeatures": [
+      "dotprod variant",
+      "fp16 variant",
+      "i8mm variant",
+      "x86_64",
+      "native CPU tuning",
+      "runtime CPU capability dispatch",
+      "runtime prompt logging",
+      "runtime model path logging",
+      "native network download"
+    ]
+  },
+  "reproducibility": {
+    "verified": true,
+    "rebuildCount": 2,
+    "artifactSha256": "9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41",
+    "artifactSize": 2075798
+  },
+  "artifact": {
+    "path": "android/third_party/llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar",
+    "sha256": "9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41",
+    "size": 2075798,
+    "abis": [
+      "arm64-v8a"
+    ],
+    "nativeLibraries": [
+      "jni/arm64-v8a/librnllama_v8.so"
+    ],
+    "entryManifestPath": "android/third_party/llamacpp/aar-entry-hashes.sha256",
+    "entryManifestSha256": "249b1ec70a33c90357678ff4ba8a3d0ca8cfc600a23f89f8bb1a71b614944f81",
+    "elfAuditPath": "android/third_party/llamacpp/elf-audit.json",
+    "elfAuditSha256": "5140f4fad4419e045d8e0c3d931366b42e14ea09ade00356173fabb4ac978b6c",
+    "classes": [
+      "com/example/nssllama/NssLlamaBuildInfo.class",
+      "com/example/nssllama/SilentLlamaContext.class",
+      "org/nehuatl/llamacpp/LlamaContext.class",
+      "org/nehuatl/llamacpp/LlamaContext$Companion.class",
+      "org/nehuatl/llamacpp/LlamaContext$PartialCompletionCallback.class"
+    ]
+  },
+  "audit": {
+    "requiredClasses": [
+      "com/example/nssllama/SilentLlamaContext.class",
+      "org/nehuatl/llamacpp/LlamaContext.class"
+    ],
+    "forbiddenClasses": [
+      "org/nehuatl/llamacpp/LlamaAndroid.class",
+      "org/nehuatl/llamacpp/LlamaHelper.class"
+    ],
+    "requiredJniExports": [
+      "Java_org_nehuatl_llamacpp_LlamaContext_doCompletion",
+      "Java_org_nehuatl_llamacpp_LlamaContext_freeContext",
+      "Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd",
+      "Java_org_nehuatl_llamacpp_LlamaContext_loadModelDetails",
+      "Java_org_nehuatl_llamacpp_LlamaContext_stopCompletion"
+    ],
+    "allowedNativeDependencies": [
+      "libandroid.so",
+      "libc.so",
+      "libdl.so",
+      "libm.so"
+    ],
+    "forbiddenUndefinedSymbols": [
+      "__android_log_print",
+      "__android_log_vprint",
+      "__android_log_write",
+      "connect",
+      "curl_easy_perform",
+      "getaddrinfo",
+      "getauxval",
+      "perror",
+      "printf",
+      "puts",
+      "socket",
+      "stderr",
+      "stdout",
+      "syslog"
+    ],
+    "forbiddenInstructions": [
+      "bfmmla",
+      "sdot",
+      "smmla",
+      "udot",
+      "ummla",
+      "usdot",
+      "usmmla"
+    ],
+    "forbiddenClassConstantsFound": []
+  }
+}

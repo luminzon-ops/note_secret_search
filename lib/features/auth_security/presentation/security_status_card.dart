@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 
 class SecurityStatusCard extends ConsumerWidget {
   const SecurityStatusCard({super.key});
@@ -22,7 +22,7 @@ class SecurityStatusCard extends ConsumerWidget {
             const SizedBox(height: 4),
             Text(session.pinEnabled ? '已启用应用 PIN 备用入口' : '尚未启用应用 PIN'),
             const SizedBox(height: 4),
-            Text(pinState.hasPinMaterial ? 'PIN 材料已准备' : 'PIN 材料未初始化'),
+            Text(pinState.hasPinMaterial ? 'PIN 已配置' : 'PIN 尚未配置'),
           ],
         ),
       ),

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_controller.dart';
-import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
+import 'package:note_secret_search/core/storage/database/app_database.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
+import 'package:note_secret_search/features/auth_security/domain/pin_policy.dart';
+import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
 class PinUnlockPage extends ConsumerStatefulWidget {
-  const PinUnlockPage({super.key});
+  const PinUnlockPage({this.onUnlocked, super.key});
+
+  final VoidCallback? onUnlocked;
 
   @override
   ConsumerState<PinUnlockPage> createState() => _PinUnlockPageState();
@@ -28,7 +30,8 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
   Widget build(BuildContext context) {
     final pinState = ref.watch(pinStateControllerProvider);
     final coolDownUntil = pinState.coolDownUntil;
-    final inCoolDown = coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
+    final inCoolDown =
+        coolDownUntil != null && coolDownUntil.isAfter(DateTime.now());
 
     return Scaffold(
       appBar: AppBar(title: const Text('PIN 解锁')),
@@ -45,13 +48,17 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                   children: [
                     const Text('输入应用 PIN 作为备用解锁方式。'),
                     const SizedBox(height: 8),
-                    Text('当前失败次数：${pinState.failedAttempts}/${SecuritySettingsController.maxPinFailures}'),
+                    Text(
+                      '当前失败次数：${pinState.failedAttempts}/${AppPinPolicy.maxFailures}',
+                    ),
                     if (inCoolDown)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           '冷却中，结束时间：${coolDownUntil.toLocal()}',
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       ),
                   ],
@@ -68,11 +75,11 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
                 errorText: _errorText,
               ),
               validator: (value) {
-                final raw = value?.trim() ?? '';
-                if (raw.isEmpty) {
-                  return '请输入 PIN';
-                }
-                return null;
+                return switch (AppPinPolicy.validate(value ?? '')) {
+                  PinValidationFailure.invalidLength => 'PIN 长度需为 4-8 位',
+                  PinValidationFailure.nonNumeric => 'PIN 仅支持数字',
+                  null => null,
+                };
               },
             ),
             const SizedBox(height: 24),
@@ -97,35 +104,64 @@ class _PinUnlockPageState extends ConsumerState<PinUnlockPage> {
       _errorText = null;
     });
 
+    final pin = _pinController.text;
+    _pinController.clear();
     try {
-      final matched = await ref.read(securitySettingsControllerProvider.notifier).verifyPin(
-            _pinController.text.trim(),
-          );
-
-      if (matched) {
-        ref.read(securityOrchestratorProvider).unlockWithPin();
+      final expectedLockEpoch = ref
+          .read(lockSessionControllerProvider)
+          .lockEpoch;
+      final unlocked = await ref
+          .read(securityOrchestratorProvider)
+          .unlockWithPin(pin: pin, expectedLockEpoch: expectedLockEpoch);
+      if (!unlocked) {
         if (mounted) {
-          final router = GoRouter.maybeOf(context);
-          final navigator = Navigator.of(context);
-          if (navigator.canPop()) {
-            navigator.pop(true);
-          } else if (router != null && router.canPop()) {
-            router.pop(true);
-          } else if (router != null) {
-            router.go('/vault');
-          }
+          setState(() {
+            _errorText = '安全解锁失败，请重试';
+          });
         }
         return;
       }
 
-      ref.read(securityOrchestratorProvider).registerPinFailure(
-            maxFailures: SecuritySettingsController.maxPinFailures,
-            coolDown: SecuritySettingsController.pinCoolDown,
-          );
-
+      if (mounted) {
+        final onUnlocked = widget.onUnlocked;
+        if (onUnlocked != null) {
+          onUnlocked();
+          return;
+        }
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop(true);
+        }
+      }
+    } on NativeSecurityException catch (error) {
+      if (error.code == 'PIN_INCORRECT') {
+        ref
+            .read(securityOrchestratorProvider)
+            .registerPinFailure(
+              maxFailures: AppPinPolicy.maxFailures,
+              coolDown: AppPinPolicy.coolDown,
+            );
+      } else if (error.code == 'PIN_COOLDOWN') {
+        ref
+            .read(securityOrchestratorProvider)
+            .registerPinFailure(
+              maxFailures: 1,
+              coolDown: AppPinPolicy.coolDown,
+            );
+      }
       if (mounted) {
         setState(() {
-          _errorText = 'PIN 错误';
+          _errorText = switch (error.code) {
+            'PIN_INCORRECT' => 'PIN 错误',
+            'PIN_COOLDOWN' => 'PIN 已进入冷却，请稍后重试',
+            _ => 'PIN 解锁失败，请重试',
+          };
+        });
+      }
+    } on DatabaseLifecycleException {
+      if (mounted) {
+        setState(() {
+          _errorText = '安全数据库暂不可用，请重试';
         });
       }
     } finally {

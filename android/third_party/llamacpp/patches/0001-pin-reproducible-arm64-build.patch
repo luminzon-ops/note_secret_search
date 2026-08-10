@@ -1,0 +1,371 @@
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 8eb182c163f9e9f7482e9d92e10bd3e59289a3a0..5935ba0d53d4859c3ff109cbbba1f4511c57b161 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -1,10 +1,4 @@
+-// Top-level build file where you can add configuration options common to all sub-projects/modules.
+ plugins {
+-    alias(libs.plugins.android.application) apply false
+     alias(libs.plugins.kotlin.android) apply false
+     alias(libs.plugins.android.library) apply false
+-    alias(libs.plugins.maven.publish)
+-    alias(libs.plugins.gradleup.nmcp)
+-    alias(libs.plugins.kotlin.compose) apply false
+-    id("signing")
+-}
+\ No newline at end of file
++}
+diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
+index 2942afe566de1fbcfd4632daf65632b1ca99d712..a5c7deff95c21830f85cc3f50d2e539d8ca16340 100644
+--- a/gradle/libs.versions.toml
++++ b/gradle/libs.versions.toml
+@@ -1,5 +1,5 @@
+ [versions]
+-agp = "8.12.3"
++agp = "8.9.1"
+ kotlin = "2.2.20"
+ coreKtx = "1.17.0"
+ junit = "4.13.2"
+@@ -41,4 +41,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+ android-library = { id = "com.android.library", version.ref = "agp" }
+ maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
+ gradleup-nmcp = { id = "com.gradleup.nmcp", version.ref = "nmcp" }
+-kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "composePlugin" }
+\ No newline at end of file
++kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "composePlugin" }
+diff --git a/gradle/wrapper/gradle-wrapper.properties b/gradle/wrapper/gradle-wrapper.properties
+index 698844dfcc727bb5754dfc8c818e637b002047a9..ad33ecc2c642dfd087b8a91f63bdaa1ef637ac5b 100644
+--- a/gradle/wrapper/gradle-wrapper.properties
++++ b/gradle/wrapper/gradle-wrapper.properties
+@@ -1,6 +1,6 @@
+ #Fri Nov 01 03:08:15 GMT-06:00 2024
+ distributionBase=GRADLE_USER_HOME
+ distributionPath=wrapper/dists
+-distributionUrl=https\://services.gradle.org/distributions/gradle-8.14.3-bin.zip
++distributionUrl=https\://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+ zipStoreBase=GRADLE_USER_HOME
+ zipStorePath=wrapper/dists
+diff --git a/llamaCpp/build.gradle.kts b/llamaCpp/build.gradle.kts
+index 5f4edd137e659767e8035b900a1ed8db49ff9745..f162b0e5dd4f3351051b5f03e833cad04dec37f8 100644
+--- a/llamaCpp/build.gradle.kts
++++ b/llamaCpp/build.gradle.kts
+@@ -1,126 +1,53 @@
+-import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+-
+ plugins {
+     alias(libs.plugins.kotlin.android)
+     alias(libs.plugins.android.library)
+-    alias(libs.plugins.maven.publish) apply true
+-    alias(libs.plugins.gradleup.nmcp) apply true
+-}
+-
+-mavenPublishing {
+-    configure(
+-        AndroidSingleVariantLibrary(
+-            variant = "release",
+-            sourcesJar = true,
+-            publishJavadocJar = true,
+-        )
+-    )
+-}
+-
+-signing {
+-    useGpgCmd()
+-}
+-
+-// Hook signing into publications
+-publishing {
+-    publications {
+-        withType<MavenPublication> {
+-            signing.sign(this)
+-        }
+-    }
+-}
+-
+-fun nativeArchitectures(): List<String> {
+-    val value = project.properties["nativeArchitectures"]
+-    val archs = value?.toString()?.split(",") ?: listOf("x86_64", "arm64-v8a")
+-    return archs.filter { it != "armeabi-v7a" && it != "x86" } // Not building for 32-bit architectures
+-}
+-
+-fun detectTargetPlatform(): String? {
+-    val taskName = gradle.startParameter.taskRequests
+-        .flatMap { it.args }
+-        .find { it.contains("buildCMake") }
+-
+-    return when {
+-        taskName?.contains("x86_64", ignoreCase = true) == true -> "x86_64"
+-        taskName?.contains("arm64", ignoreCase = true) == true -> "arm64"
+-        else -> null // Default or unknown platform
+-    }
+-}
+-val libsForPlatform = when (detectTargetPlatform()) {
+-    "arm64" -> listOf("rnllama_v8", "rnllama_v8_2_fp16", "rnllama_v8_4_fp16_dotprod_i8mm")
+-    "x86_64" -> listOf("rnllama_x86_64", "rnllama")
+-    else -> listOf("rnllama", "rnllama_v8") // Default or fallback libraries
+ }
+ 
+ android {
+-    namespace = "org.nehuatl.llamacpp"
++    namespace = "com.example.nssllama"
+     compileSdk = 36
+-    ndkVersion = "29.0.13846066"
++    ndkVersion = "28.2.13676358"
+ 
+     defaultConfig {
+         minSdk = 24
+ 
+-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+-        consumerProguardFiles("consumer-rules.pro")
++        ndk {
++            abiFilters += "arm64-v8a"
++        }
++
+         externalNativeBuild {
+             cmake {
+-                abiFilters.add("arm64-v8a")
+-                //abiFilters(*nativeArchitectures().toTypedArray())
++                abiFilters += "arm64-v8a"
+                 arguments += listOf(
+-                    "-DLLAMA_BUILD_COMMON=ON",
+-                    "-DCMAKE_BUILD_TYPE=Release"
++                    "-DCMAKE_BUILD_TYPE=Release",
++                    "-DNSS_LLM_BASELINE_ARCH=armv8-a",
++                    "-DNSS_LLM_DISABLE_NETWORK=ON",
++                    "-DNSS_LLM_DISABLE_RUNTIME_LOGS=ON",
+                 )
+-                cppFlags("")
+             }
+         }
+-        ndk {
+-            //noinspection ChromeOsAbiSupport
+-            abiFilters.add("arm64-v8a")
+-        }
+-    }
+-    /*buildFeatures {
+-        prefabPublishing = true
+     }
+ 
+-    prefab {
+-        libsForPlatform.forEach { libName ->
+-            create(libName) {
+-                headers = "src/main/cpp/lib" // Common header path
+-            }
+-        }
+-    }*/
+-
+     buildTypes {
+         release {
+             isMinifyEnabled = false
+-            proguardFiles(
+-                getDefaultProguardFile("proguard-android-optimize.txt"),
+-                "proguard-rules.pro"
+-            )
++            consumerProguardFiles("consumer-rules.pro")
+         }
+     }
++
+     externalNativeBuild {
+         cmake {
+-            path("src/main/cpp/CMakeLists.txt")
++            path = file("src/main/cpp/CMakeLists.txt")
+             version = "3.22.1"
+         }
+     }
++
+     compileOptions {
+-        sourceCompatibility = JavaVersion.VERSION_11
+-        targetCompatibility = JavaVersion.VERSION_11
++        sourceCompatibility = JavaVersion.VERSION_17
++        targetCompatibility = JavaVersion.VERSION_17
+     }
++
+     kotlinOptions {
+-        jvmTarget = "11"
++        jvmTarget = "17"
+     }
+ }
+-
+-dependencies {
+-
+-    implementation(libs.androidx.core.ktx)
+-    implementation(libs.androidx.appcompat)
+-    implementation(libs.material)
+-    testImplementation(libs.junit)
+-    androidTestImplementation(libs.androidx.junit)
+-    androidTestImplementation(libs.androidx.espresso.core)
+-}
+\ No newline at end of file
+diff --git a/llamaCpp/src/main/cpp/CMakeLists.txt b/llamaCpp/src/main/cpp/CMakeLists.txt
+index 07c3652a5f9940ccd09eb83541f095e4217bc5f7..d3255edafbc10be336537fb6641ca4cd4712d2b4 100644
+--- a/llamaCpp/src/main/cpp/CMakeLists.txt
++++ b/llamaCpp/src/main/cpp/CMakeLists.txt
+@@ -1,86 +1,77 @@
+-cmake_minimum_required(VERSION 3.10)
+-
+-project("llamacppkt")
+-
+-set(CMAKE_CXX_STANDARD 11)
+-set(RNLLAMA_LIB_DIR ${CMAKE_SOURCE_DIR}/lib)
+-
+-include_directories(${RNLLAMA_LIB_DIR})
+-
+-set(
+-        SOURCE_FILES
+-        ${RNLLAMA_LIB_DIR}/llama-grammar.cpp
+-        ${RNLLAMA_LIB_DIR}/llama-sampling.cpp
+-        ${RNLLAMA_LIB_DIR}/llama-vocab.cpp
+-        ${RNLLAMA_LIB_DIR}/log.cpp
+-
+-        ${RNLLAMA_LIB_DIR}/ggml-aarch64.c
+-        ${RNLLAMA_LIB_DIR}/ggml-alloc.c
+-        ${RNLLAMA_LIB_DIR}/ggml-backend.cpp
+-        ${RNLLAMA_LIB_DIR}/ggml.c
+-        ${RNLLAMA_LIB_DIR}/ggml-quants.c
+-        ${RNLLAMA_LIB_DIR}/common.cpp
+-        ${RNLLAMA_LIB_DIR}/json.hpp
+-        ${RNLLAMA_LIB_DIR}/json-schema-to-grammar.cpp
+-        ${RNLLAMA_LIB_DIR}/sampling.cpp
+-        ${RNLLAMA_LIB_DIR}/unicode-data.cpp
+-        ${RNLLAMA_LIB_DIR}/unicode.cpp
+-        ${RNLLAMA_LIB_DIR}/llama.cpp
+-        ${RNLLAMA_LIB_DIR}/llama-vocab.cpp
+-        ${RNLLAMA_LIB_DIR}/llama-sampling.cpp
+-        ${RNLLAMA_LIB_DIR}/llama-grammar.cpp
+-        ${RNLLAMA_LIB_DIR}/sgemm.cpp
+-        ${RNLLAMA_LIB_DIR}/ggml-aarch64.c
+-        ${RNLLAMA_LIB_DIR}/rn-llama.hpp
+-        ${CMAKE_SOURCE_DIR}/jni.cpp
++cmake_minimum_required(VERSION 3.22.1)
++
++project(nss_pinned_llamacpp LANGUAGES C CXX)
++
++if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
++    message(FATAL_ERROR "Only the pinned arm64-v8a baseline is supported")
++endif()
++
++if(NOT NSS_LLM_BASELINE_ARCH STREQUAL "armv8-a")
++    message(FATAL_ERROR "NSS_LLM_BASELINE_ARCH must be armv8-a")
++endif()
++
++if(NOT NSS_LLM_DISABLE_NETWORK)
++    message(FATAL_ERROR "Network-enabled native builds are not allowed")
++endif()
++
++if(NOT NSS_LLM_DISABLE_RUNTIME_LOGS)
++    message(FATAL_ERROR "Runtime native logging must remain disabled")
++endif()
++
++set(CMAKE_C_STANDARD 11)
++set(CMAKE_CXX_STANDARD 17)
++set(CMAKE_C_EXTENSIONS OFF)
++set(CMAKE_CXX_EXTENSIONS OFF)
++
++set(RNLLAMA_LIB_DIR "${CMAKE_SOURCE_DIR}/lib")
++
++set(SOURCE_FILES
++    "${RNLLAMA_LIB_DIR}/llama-grammar.cpp"
++    "${RNLLAMA_LIB_DIR}/llama-sampling.cpp"
++    "${RNLLAMA_LIB_DIR}/llama-vocab.cpp"
++    "${RNLLAMA_LIB_DIR}/ggml-aarch64.c"
++    "${RNLLAMA_LIB_DIR}/ggml-alloc.c"
++    "${RNLLAMA_LIB_DIR}/ggml-backend.cpp"
++    "${RNLLAMA_LIB_DIR}/ggml.c"
++    "${RNLLAMA_LIB_DIR}/ggml-quants.c"
++    "${RNLLAMA_LIB_DIR}/common.cpp"
++    "${RNLLAMA_LIB_DIR}/json-schema-to-grammar.cpp"
++    "${RNLLAMA_LIB_DIR}/sampling.cpp"
++    "${RNLLAMA_LIB_DIR}/unicode-data.cpp"
++    "${RNLLAMA_LIB_DIR}/unicode.cpp"
++    "${RNLLAMA_LIB_DIR}/llama.cpp"
++    "${RNLLAMA_LIB_DIR}/sgemm.cpp"
++    "${CMAKE_SOURCE_DIR}/jni.cpp"
+ )
+ 
+-find_library(LOG_LIB log)
+-
+-function(build_library target_name cpu_flags)
+-    add_library(
+-            ${target_name}
+-            SHARED
+-            ${SOURCE_FILES}
+-    )
++add_library(rnllama_v8 SHARED ${SOURCE_FILES})
+ 
+-    target_link_libraries(${target_name} ${LOG_LIB} android)
++target_include_directories(rnllama_v8 PRIVATE "${RNLLAMA_LIB_DIR}")
+ 
+-    target_compile_options(${target_name} PRIVATE -pthread ${cpu_flags})
+-
+-    if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+-        target_compile_options(${target_name} PRIVATE -DRNLLAMA_ANDROID_ENABLE_LOGGING)
+-    endif ()
+-
+-    target_compile_options(${target_name} PRIVATE -O3 -DNDEBUG -DRNLLAMA_USE_FD_FILE)
+-    target_compile_options(${target_name} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+-    target_compile_options(${target_name} PRIVATE -ffunction-sections -fdata-sections)
+-
+-    # NOTE: If you want to debug the native code, you can uncomment if and endif
+-    # Note that it will be extremely slow
+-    # if (NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+-    target_compile_options(${target_name} PRIVATE -O3 -DNDEBUG -DRNLLAMA_USE_FD_FILE)
+-    target_compile_options(${target_name} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+-    target_compile_options(${target_name} PRIVATE -ffunction-sections -fdata-sections)
++target_compile_definitions(rnllama_v8 PRIVATE
++    NDEBUG
++    RNLLAMA_USE_FD_FILE
++    NSS_LLM_DISABLE_RUNTIME_LOGS=1
++)
+ 
+-    target_link_options(${target_name} PRIVATE -Wl,--gc-sections)
+-    target_link_options(${target_name} PRIVATE -Wl,--exclude-libs,ALL)
+-    target_link_options(${target_name} PRIVATE -flto)
+-    # endif ()
+-endfunction()
++target_compile_options(rnllama_v8 PRIVATE
++    -O3
++    -pthread
++    -march=armv8-a
++    -fvisibility=hidden
++    -fvisibility-inlines-hidden
++    -ffunction-sections
++    -fdata-sections
++    "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=/usr/src/nss-llamacpp"
++    "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=/usr/build/nss-llamacpp"
++)
+ 
++find_library(ANDROID_LIBRARY android REQUIRED)
+ 
+-# Default target (no specific CPU features)
+-build_library("rnllama" "")
++target_link_libraries(rnllama_v8 PRIVATE ${ANDROID_LIBRARY})
+ 
+-if (${ANDROID_ABI} STREQUAL "arm64-v8a")
+-    # ARM64 targets
+-    build_library("rnllama_v8_4_fp16_dotprod_i8mm" "-march=armv8.4-a+fp16+dotprod+i8mm")
+-    build_library("rnllama_v8_4_fp16_dotprod" "-march=armv8.4-a+fp16+dotprod")
+-    build_library("rnllama_v8_2_fp16_dotprod" "-march=armv8.2-a+fp16+dotprod")
+-    build_library("rnllama_v8_2_fp16" "-march=armv8.2-a+fp16")
+-    build_library("rnllama_v8" "-march=armv8-a")
+-elseif (${ANDROID_ABI} STREQUAL "x86_64")
+-    # x86_64 target
+-    build_library("rnllama_x86_64" "-march=x86-64" "-mtune=intel" "-msse4.2" "-mpopcnt")
+-endif ()
+\ No newline at end of file
++target_link_options(rnllama_v8 PRIVATE
++    -Wl,--build-id=sha1
++    -Wl,--gc-sections
++    -Wl,--exclude-libs,ALL
++)
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index fed25bd19ce016accbafa5fddba765c783c986cf..e6eb3a8154d010625d9bb51ae4ba8b874e60c796 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -19,6 +19,5 @@ dependencyResolutionManagement {
+     }
+ }
+ 
+-rootProject.name = "KotlinLlamaCpp"
+-include(":app")
++rootProject.name = "NssPinnedKotlinLlamaCpp"
+ include(":llamaCpp")

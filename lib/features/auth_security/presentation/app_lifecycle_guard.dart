@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 
 class AppLifecycleGuard extends ConsumerStatefulWidget {
   const AppLifecycleGuard({required this.child, super.key});

@@ -1,0 +1,52 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:9583871b-4179-5e48-8ce3-c57796fad215",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2025-12-04T06:49:01Z",
+    "component": {
+      "type": "library",
+      "group": "com.example.note-secret-search",
+      "name": "llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar",
+      "version": "nss-llamacpp-b576a1ff-a63e57a6-lc1-arm64-v8a",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41"
+        }
+      ],
+      "purl": "pkg:generic/llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar@9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "group": "github.com/ljcamargo",
+      "name": "kotlinllamacpp",
+      "version": "b576a1ff0a4dc013893c9aee69b1df70b3cc9794",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "38a63c75ed6329f9e89eb9cb5475dc782eb0839912a99307a6d6e0a9a0ad4d22"
+        }
+      ],
+      "purl": "pkg:github/ljcamargo/kotlinllamacpp@b576a1ff0a4dc013893c9aee69b1df70b3cc9794"
+    },
+    {
+      "type": "library",
+      "name": "llama.cpp",
+      "version": "a63e57a601701e87446c988bb344d8c9e660afe1",
+      "purl": "pkg:generic/llama.cpp@a63e57a601701e87446c988bb344d8c9e660afe1"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/llamacpp-kotlin-0.2.0-nss-arm64-baseline.aar@9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41",
+      "dependsOn": [
+        "pkg:github/ljcamargo/kotlinllamacpp@b576a1ff0a4dc013893c9aee69b1df70b3cc9794",
+        "pkg:generic/llama.cpp@a63e57a601701e87446c988bb344d8c9e660afe1"
+      ]
+    }
+  ]
+}

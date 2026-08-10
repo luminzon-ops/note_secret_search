@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "artifactSha256": "9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41",
+  "libraryPath": "jni/arm64-v8a/librnllama_v8.so",
+  "librarySha256": "8f6856a5e4b9e42a41ae1a3faf931d9f4ee01626e5e035ae4264c0bf46afdafc",
+  "librarySize": 2062136,
+  "elfClass": "ELF64",
+  "machine": "AArch64",
+  "type": "DYN",
+  "soname": "librnllama_v8.so",
+  "needed": [
+    "libandroid.so",
+    "libc.so",
+    "libdl.so",
+    "libm.so"
+  ],
+  "buildId": "4a60e3fce664a41efcbae463a153084f5e872000",
+  "jniExports": [
+    "Java_org_nehuatl_llamacpp_LlamaContext_bench",
+    "Java_org_nehuatl_llamacpp_LlamaContext_detokenize",
+    "Java_org_nehuatl_llamacpp_LlamaContext_doCompletion",
+    "Java_org_nehuatl_llamacpp_LlamaContext_embedding",
+    "Java_org_nehuatl_llamacpp_LlamaContext_freeContext",
+    "Java_org_nehuatl_llamacpp_LlamaContext_getFormattedChat",
+    "Java_org_nehuatl_llamacpp_LlamaContext_initContext",
+    "Java_org_nehuatl_llamacpp_LlamaContext_initContextWithFd",
+    "Java_org_nehuatl_llamacpp_LlamaContext_isEmbeddingEnabled",
+    "Java_org_nehuatl_llamacpp_LlamaContext_isPredicting",
+    "Java_org_nehuatl_llamacpp_LlamaContext_loadModelDetails",
+    "Java_org_nehuatl_llamacpp_LlamaContext_loadSession",
+    "Java_org_nehuatl_llamacpp_LlamaContext_saveSession",
+    "Java_org_nehuatl_llamacpp_LlamaContext_stopCompletion",
+    "Java_org_nehuatl_llamacpp_LlamaContext_tokenize"
+  ],
+  "forbiddenUndefinedSymbols": [],
+  "forbiddenInstructions": [],
+  "hostPathStrings": [],
+  "forbiddenRuntimeMarkers": []
+}

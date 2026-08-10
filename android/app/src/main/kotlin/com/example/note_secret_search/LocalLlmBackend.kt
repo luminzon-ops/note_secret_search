@@ -2,6 +2,8 @@ package com.example.note_secret_search
 
 import java.io.File
 
+internal const val LOCAL_LLM_MAX_PROMPT_CHARS = 1200
+
 data class LocalLlmInspectResult(
     val supported: Boolean,
     val reason: String,
@@ -15,7 +17,7 @@ data class LocalLlmGenerateResult(
 data class LocalLlmGenerationConfig(
     val contextLength: Int = HUAWEI_SAFE_CONTEXT_LENGTH,
     val maxOutputTokens: Int = 96,
-    val maxPromptChars: Int = 1200,
+    val maxPromptChars: Int = LOCAL_LLM_MAX_PROMPT_CHARS,
     val conservativeMode: Boolean = true,
     val emitPartialCompletion: Boolean = false,
     val temperature: Double = 0.7,
@@ -28,12 +30,23 @@ data class LocalLlmGenerationConfig(
 interface LocalLlmBackend {
     fun inspect(file: File): LocalLlmInspectResult
     fun load(modelId: String, file: File): LocalLlmBackendSession
+    fun load(
+        modelId: String,
+        file: File,
+        config: LocalLlmGenerationConfig,
+    ): LocalLlmBackendSession {
+        return load(modelId, file)
+    }
+
     fun generate(
         session: LocalLlmBackendSession,
         prompt: String,
         maxTokens: Int,
         config: LocalLlmGenerationConfig = LocalLlmGenerationConfig(maxOutputTokens = maxTokens),
     ): LocalLlmGenerateResult
+
+    fun cancel(session: LocalLlmBackendSession) {
+    }
 
     fun release(session: LocalLlmBackendSession)
 }

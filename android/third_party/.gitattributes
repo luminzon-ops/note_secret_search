@@ -1,0 +1,4 @@
+*.aar binary
+llamacpp/*.json text eol=lf
+llamacpp/*.sha256 text eol=lf
+llamacpp/patches/*.patch text eol=lf -whitespace

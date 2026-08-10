@@ -1,0 +1,270 @@
+package com.example.note_secret_search.security
+
+import java.security.Key
+import java.security.MessageDigest
+import java.util.ArrayDeque
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+internal class FakeSecurityEnvelopeStore(
+    var bytes: ByteArray? = null,
+    var failWrites: Boolean = false,
+    var failOnWrite: Int? = null,
+    var failReads: Boolean = false,
+) : SecurityEnvelopeStore {
+    var writes = 0
+
+    override fun read(): ByteArray? {
+        if (failReads) {
+            throw NativeSecurityException(
+                NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            )
+        }
+        return bytes?.clone()
+    }
+
+    override fun write(value: ByteArray) {
+        writes += 1
+        if (failWrites || failOnWrite == writes) {
+            throw NativeSecurityException(
+                NativeSecurityErrorCode.SECURE_STORAGE_UNAVAILABLE,
+            )
+        }
+        bytes = value.clone()
+    }
+}
+
+internal class FakeLegacySecurityDetector(
+    var legacyPasswordPresent: Boolean = false,
+) : LegacySecurityDetector {
+    var clearSucceeds = true
+    var legacyPassword = "legacy-password"
+    var stateFailure: Throwable? = null
+
+    override fun hasLegacyPassword(): Boolean {
+        stateFailure?.let { throw it }
+        return legacyPasswordPresent
+    }
+
+    override fun readLegacyPassword(): String? {
+        stateFailure?.let { throw it }
+        return if (legacyPasswordPresent) legacyPassword else null
+    }
+
+    override fun clearLegacyPassword(): Boolean {
+        if (!clearSucceeds) {
+            return false
+        }
+        legacyPasswordPresent = false
+        return true
+    }
+}
+
+internal class FakeWrappingKeyRepository(
+    private val generatedLevel: KeySecurityLevel = KeySecurityLevel.TEE,
+    private val loadedLevel: KeySecurityLevel = generatedLevel,
+) : WrappingKeyRepository {
+    val keys = linkedMapOf<String, Key>()
+    var createCalls = 0
+    var deleteCalls = 0
+    var decryptionCipherCalls = 0
+    var invalidated = false
+    var authenticationRequired = false
+    var failPolicy: WrappingKeyPolicy? = null
+    var failAfterCreatePolicy: WrappingKeyPolicy? = null
+
+    override fun create(alias: String, policy: WrappingKeyPolicy): WrappingKeyHandle {
+        createCalls += 1
+        if (policy == failPolicy) {
+            throw KeystoreOperationFailure()
+        }
+        val key = SecretKeySpec(ByteArray(32) { (it + createCalls).toByte() }, "AES")
+        keys[alias] = key
+        if (policy == failAfterCreatePolicy) {
+            throw KeystoreOperationFailure()
+        }
+        return TestWrappingKeyHandle(
+            alias = alias,
+            securityLevel = generatedLevel,
+            key = key,
+            beforeDecryption = ::beforeDecryption,
+        )
+    }
+
+    override fun load(alias: String): WrappingKeyHandle? {
+        val key = keys[alias] ?: return null
+        return TestWrappingKeyHandle(
+            alias = alias,
+            securityLevel = loadedLevel,
+            key = key,
+            beforeDecryption = ::beforeDecryption,
+        )
+    }
+
+    override fun delete(alias: String) {
+        deleteCalls += 1
+        keys.remove(alias)
+    }
+
+    private fun beforeDecryption() {
+        decryptionCipherCalls += 1
+        if (invalidated) {
+            throw WrappingKeyInvalidatedException()
+        }
+        if (authenticationRequired) {
+            throw WrappingKeyAuthenticationRequiredException()
+        }
+    }
+}
+
+internal class TestWrappingKeyHandle(
+    override val alias: String,
+    override val securityLevel: KeySecurityLevel,
+    private val key: Key,
+    private val beforeDecryption: () -> Unit = {},
+) : WrappingKeyHandle {
+    override fun encryptionCipher(): Cipher {
+        return Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.ENCRYPT_MODE, key)
+        }
+    }
+
+    override fun decryptionCipher(nonce: ByteArray): Cipher {
+        beforeDecryption()
+        return Cipher.getInstance("AES/GCM/NoPadding").apply {
+            init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce))
+        }
+    }
+}
+
+internal class FakeSystemAuthenticator : SystemAuthenticator {
+    private val outcomes = ArrayDeque<AuthOutcome>()
+    val requests = mutableListOf<SystemAuthRequest>()
+
+    fun enqueue(outcome: AuthOutcome) {
+        outcomes.addLast(outcome)
+    }
+
+    override fun authenticate(
+        request: SystemAuthRequest,
+        terminal: AuthenticationTerminal,
+    ) {
+        requests += request
+        val outcome = if (outcomes.isEmpty()) AuthOutcome.Success else outcomes.removeFirst()
+        when (outcome) {
+            AuthOutcome.Success -> terminal.succeeded(request.cipher)
+            is AuthOutcome.Error -> terminal.failed(
+                NativeSecurityException(outcome.code),
+            )
+            AuthOutcome.MismatchThenSuccess -> {
+                AuthenticationResultDispatcher(terminal).onAuthenticationFailed()
+                terminal.succeeded(request.cipher)
+            }
+        }
+    }
+
+    override fun cancel(operationId: Long) {
+    }
+}
+
+internal sealed interface AuthOutcome {
+    data object Success : AuthOutcome
+    data object MismatchThenSuccess : AuthOutcome
+    data class Error(val code: NativeSecurityErrorCode) : AuthOutcome
+}
+
+internal class FixedRandomSource(
+    private val values: ArrayDeque<ByteArray> = ArrayDeque(),
+) : RandomSource {
+    fun enqueue(value: ByteArray) {
+        values.addLast(value.clone())
+    }
+
+    override fun bytes(size: Int): ByteArray {
+        val value = if (values.isEmpty()) {
+            ByteArray(size) { (it + 1).toByte() }
+        } else {
+            values.removeFirst()
+        }
+        require(value.size == size)
+        return value.clone()
+    }
+}
+
+internal class DeterministicPinKdfEngine : PinKdfEngine {
+    override fun derive(
+        password: ByteArray,
+        salt: ByteArray,
+        iterations: Int,
+        memoryKiB: Int,
+        parallelism: Int,
+        outputBytes: Int,
+    ): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(password)
+        digest.update(salt)
+        return digest.digest().copyOf(outputBytes)
+    }
+}
+
+internal class ImmediatePinWorkScheduler : PinWorkScheduler {
+    override fun execute(task: () -> Unit): PinWorkHandle {
+        task()
+        return PinWorkHandle {}
+    }
+
+    override fun close() = Unit
+}
+
+internal class FakePinThrottleStore : PinThrottleStore {
+    var state: PinThrottleState? = null
+    var writes = 0
+    var clears = 0
+
+    override fun read(): PinThrottleState? = state?.copy()
+
+    override fun write(state: PinThrottleState) {
+        writes += 1
+        this.state = state.copy()
+    }
+
+    override fun clear() {
+        clears += 1
+        state = null
+    }
+}
+
+internal class FakePinThrottleClock(
+    var elapsedRealtimeMs: Long = 10_000,
+    var bootCount: Int = 1,
+    var wallClockMs: Long = 1_000_000,
+) : PinThrottleClock {
+    override fun now(): PinThrottleTime {
+        return PinThrottleTime(
+            elapsedRealtimeMs = elapsedRealtimeMs,
+            bootCount = bootCount,
+            wallClockMs = wallClockMs,
+        )
+    }
+}
+
+internal fun testPinAttemptThrottle(
+    store: PinThrottleStore = FakePinThrottleStore(),
+    clock: PinThrottleClock = FakePinThrottleClock(),
+): PinAttemptThrottle {
+    return PersistentPinAttemptThrottle(store, clock)
+}
+
+internal class RecordingNativeResult<T> : NativeResult<T> {
+    var value: T? = null
+    var error: NativeSecurityException? = null
+
+    override fun success(value: T) {
+        this.value = value
+    }
+
+    override fun error(error: NativeSecurityException) {
+        this.error = error
+    }
+}

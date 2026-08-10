@@ -9,6 +9,7 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class LlmRuntimePluginTest {
     @Test
@@ -199,8 +200,160 @@ class LlmRuntimePluginTest {
             )
 
             assertTrue("result.error should be invoked from async worker failures.", result.errorLatch.await(1, TimeUnit.SECONDS))
-            assertEquals("RUNTIME_NOT_READY", result.errorCode)
-            assertEquals("runtime degraded", result.errorMessage)
+            assertEquals("GENERATION_FAILED", result.errorCode)
+            assertEquals("GENERATION_FAILED", result.errorMessage)
+            val details = result.errorDetails as Map<*, *>
+            assertEquals("generation", details["stage"])
+            assertEquals("qwen2_5_0_5b_instruct_q4_k_m", details["modelId"])
+            assertTrue((details["requestId"] as String).startsWith("native-"))
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `invalid arguments return sanitized errors without details`() {
+        val result = RecordingResult()
+        val plugin = LlmRuntimePlugin(
+            runtime = throwingTextRuntime(),
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to " ",
+                ),
+            ),
+            result,
+        )
+
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
+    }
+
+    @Test
+    fun `prompt beyond declared budget is rejected before runtime invocation`() {
+        val result = RecordingResult()
+        val runtimeCalls = AtomicInteger(0)
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun generateText(
+                modelId: String,
+                modelPath: String,
+                prompt: String,
+                usedPrivateContext: Boolean,
+                config: LocalLlmGenerationConfig,
+            ): Map<String, Any?> {
+                runtimeCalls.incrementAndGet()
+                return emptyMap()
+            }
+        }
+        val plugin = LlmRuntimePlugin(
+            runtime = runtime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to "PROMPT_SENTINEL_TOO_LONG",
+                    "maxPromptChars" to 8,
+                ),
+            ),
+            result,
+        )
+
+        assertEquals(0, runtimeCalls.get())
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
+    }
+
+    @Test
+    fun `prompt cannot bypass native hard cap with a larger declared budget`() {
+        val result = RecordingResult()
+        val runtimeCalls = AtomicInteger(0)
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun generateText(
+                modelId: String,
+                modelPath: String,
+                prompt: String,
+                usedPrivateContext: Boolean,
+                config: LocalLlmGenerationConfig,
+            ): Map<String, Any?> {
+                runtimeCalls.incrementAndGet()
+                return emptyMap()
+            }
+        }
+        val plugin = LlmRuntimePlugin(
+            runtime = runtime,
+            resultDispatcher = ImmediateResultDispatcher(),
+        )
+
+        plugin.onMethodCall(
+            MethodCall(
+                "generateText",
+                mapOf(
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                    "modelPath" to "/private/models/smollm.gguf",
+                    "prompt" to "x".repeat(LOCAL_LLM_MAX_PROMPT_CHARS + 1),
+                    "maxPromptChars" to 4_000,
+                ),
+            ),
+            result,
+        )
+
+        assertEquals(0, runtimeCalls.get())
+        assertEquals("INVALID_ARGUMENT", result.errorCode)
+        assertEquals("INVALID_ARGUMENT", result.errorMessage)
+        assertEquals(mapOf("stage" to "argument"), result.errorDetails)
+    }
+
+    @Test
+    fun `unexpected worker failures return sanitized errors without details`() {
+        val result = RecordingResult()
+        val executor = Executors.newSingleThreadExecutor()
+        val runtime = object : LocalLlmRuntimeContract by throwingTextRuntime() {
+            override fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
+                throw AssertionError("MODEL_PATH_SENTINEL=$modelPath")
+            }
+        }
+
+        try {
+            val plugin = LlmRuntimePlugin(
+                runtime = runtime,
+                workerExecutor = executor,
+                resultDispatcher = ImmediateResultDispatcher(),
+            )
+
+            plugin.onMethodCall(
+                MethodCall(
+                    "inspectModel",
+                    mapOf(
+                        "modelId" to "smollm2_360m_instruct_q4_k_m",
+                        "modelPath" to "/private/models/MODEL_PATH_SENTINEL.gguf",
+                    ),
+                ),
+                result,
+            )
+
+            assertTrue(result.errorLatch.await(1, TimeUnit.SECONDS))
+            assertEquals("LOAD_FAILED", result.errorCode)
+            assertEquals("LOAD_FAILED", result.errorMessage)
+            assertEquals(
+                mapOf(
+                    "stage" to "model_lookup",
+                    "modelId" to "smollm2_360m_instruct_q4_k_m",
+                ),
+                result.errorDetails,
+            )
         } finally {
             executor.shutdownNow()
         }
@@ -280,75 +433,9 @@ class LlmRuntimePluginTest {
         }
     }
 
-    @Test
-    fun `generateMultimodalText forwards model projector image and reasoning flag`() {
-        val result = RecordingResult()
-        val executor = Executors.newSingleThreadExecutor()
-        var capturedModelPath: String? = null
-        var capturedMmprojPath: String? = null
-        var capturedImagePath: String? = null
-        var capturedReasoningEnabled: Boolean? = null
-        val multimodalRuntime = object : MultimodalLlmRuntimeContract {
-            override fun ensureModelReady(modelId: String, modelPath: String, mmprojPath: String): Map<String, Any?> {
-                throw UnsupportedOperationException("ensureModelReady should not be called in this test.")
-            }
-
-            override fun generateMultimodalText(
-                modelId: String,
-                modelPath: String,
-                mmprojPath: String,
-                imagePath: String,
-                prompt: String,
-                config: LocalLlmGenerationConfig,
-                reasoningEnabled: Boolean,
-            ): Map<String, Any?> {
-                capturedModelPath = modelPath
-                capturedMmprojPath = mmprojPath
-                capturedImagePath = imagePath
-                capturedReasoningEnabled = reasoningEnabled
-                return mapOf(
-                    "status" to "ready",
-                    "ready" to true,
-                    "text" to "A cat",
-                )
-            }
-        }
-
-        try {
-            val plugin = LlmRuntimePlugin(
-                runtime = throwingTextRuntime(),
-                multimodalRuntime = multimodalRuntime,
-                workerExecutor = executor,
-                resultDispatcher = ImmediateResultDispatcher(),
-            )
-
-            plugin.onMethodCall(
-                MethodCall(
-                    "generateMultimodalText",
-                    mapOf(
-                        "modelId" to "minicpm_v_4_6_q4_k_m",
-                        "modelPath" to "/models/model.gguf",
-                        "mmprojPath" to "/models/mmproj-model-f16.gguf",
-                        "imagePath" to "/cache/input.jpg",
-                        "prompt" to "Describe it",
-                        "reasoningEnabled" to false,
-                    ),
-                ),
-                result,
-            )
-
-            assertTrue("result.success should be invoked after multimodal generation.", result.successLatch.await(1, TimeUnit.SECONDS))
-            assertEquals("/models/model.gguf", capturedModelPath)
-            assertEquals("/models/mmproj-model-f16.gguf", capturedMmprojPath)
-            assertEquals("/cache/input.jpg", capturedImagePath)
-            assertEquals(false, capturedReasoningEnabled)
-        } finally {
-            executor.shutdownNow()
-        }
-    }
 }
 
-private fun throwingTextRuntime(): LocalLlmRuntimeContract {
+internal fun throwingTextRuntime(): LocalLlmRuntimeContract {
     return object : LocalLlmRuntimeContract {
         override fun inspectModel(modelId: String, modelPath: String): Map<String, Any?> {
             throw UnsupportedOperationException("text runtime should not be called in this test.")
@@ -373,15 +460,16 @@ private fun throwingTextRuntime(): LocalLlmRuntimeContract {
     }
 }
 
-private class ImmediateResultDispatcher : ResultDispatcher {
+internal class ImmediateResultDispatcher : ResultDispatcher {
     override fun dispatch(block: () -> Unit) {
         block()
     }
 }
 
-private class RecordingResult : MethodChannel.Result {
+internal class RecordingResult : MethodChannel.Result {
     val successLatch = CountDownLatch(1)
     val errorLatch = CountDownLatch(1)
+    val callbackCount = AtomicInteger(0)
 
     @Volatile
     var successValue: Any? = null
@@ -392,18 +480,25 @@ private class RecordingResult : MethodChannel.Result {
     @Volatile
     var errorMessage: String? = null
 
+    @Volatile
+    var errorDetails: Any? = null
+
     override fun success(result: Any?) {
+        callbackCount.incrementAndGet()
         successValue = result
         successLatch.countDown()
     }
 
     override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+        callbackCount.incrementAndGet()
         this.errorCode = errorCode
         this.errorMessage = errorMessage
+        this.errorDetails = errorDetails
         errorLatch.countDown()
     }
 
     override fun notImplemented() {
+        callbackCount.incrementAndGet()
         errorCode = "NOT_IMPLEMENTED"
         errorLatch.countDown()
     }

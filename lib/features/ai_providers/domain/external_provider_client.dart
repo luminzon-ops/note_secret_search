@@ -9,3 +9,18 @@ abstract interface class ExternalProviderClient {
     required bool usedPrivateContext,
   });
 }
+
+/// Optional extension used by the gateway to bind cancellation to a request.
+///
+/// Legacy clients can still implement [ExternalProviderClient]; the gateway
+/// treats them as non-cancellable and discards stale results at the boundary.
+abstract interface class CancellableExternalProviderClient {
+  Future<String> generateCancellableChatCompletion({
+    required String requestId,
+    required ExternalProviderConfig config,
+    required String prompt,
+    required bool usedPrivateContext,
+  });
+
+  void cancelRequest(String requestId);
+}

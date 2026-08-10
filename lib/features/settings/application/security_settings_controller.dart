@@ -1,66 +1,96 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/auth_security/application/pin_state_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/settings/domain/security_settings.dart';
-import 'package:note_secret_search/features/settings/infrastructure/security_settings_repository.dart';
+import 'package:note_secret_search/features/settings/domain/security_settings_repository.dart';
 
-class SecuritySettingsController extends StateNotifier<AsyncValue<SecuritySettings>> {
-  static const int maxPinFailures = 5;
-  static const Duration pinCoolDown = Duration(minutes: 1);
-
+class SecuritySettingsController
+    extends StateNotifier<AsyncValue<SecuritySettings>> {
   SecuritySettingsController({
     required SecuritySettingsRepository repository,
     required SecurityOrchestrator securityOrchestrator,
     required PinStateController pinStateController,
-  })  : _repository = repository,
-        _securityOrchestrator = securityOrchestrator,
-        _pinStateController = pinStateController,
-        super(const AsyncLoading()) {
-    load();
+  }) : _repository = repository,
+       _securityOrchestrator = securityOrchestrator,
+       _pinStateController = pinStateController,
+       super(const AsyncLoading()) {
+    unawaited(load());
   }
 
   final SecuritySettingsRepository _repository;
   final SecurityOrchestrator _securityOrchestrator;
   final PinStateController _pinStateController;
+  var _loadGeneration = 0;
+  var _disposed = false;
 
   Future<void> load() async {
+    final generation = ++_loadGeneration;
+    if (_disposed) {
+      return;
+    }
     state = const AsyncLoading();
-    state = await AsyncValue.guard(() async {
+    final next = await AsyncValue.guard(() async {
       final settings = await _repository.load();
-      final hasPinMaterial = await _repository.hasPinMaterial();
-      _pinStateController.configureEnabled(settings.pinEnabled);
-      if (hasPinMaterial) {
-        _pinStateController.markPinMaterialReady();
-      }
-      return settings;
+      final nativeState = await _securityOrchestrator.refreshSecurityState();
+      _pinStateController.syncConfigured(nativeState.pinConfigured);
+      return settings.copyWith(pinEnabled: nativeState.pinConfigured);
     });
+    if (_disposed || generation != _loadGeneration) {
+      return;
+    }
+    state = next;
   }
 
   Future<void> updatePinEnabled(bool enabled) async {
-    final current = state.valueOrNull ?? const SecuritySettings.defaults();
+    final current = _requireLoadedSettings();
+    if (enabled) {
+      final nativeState = await _securityOrchestrator.refreshSecurityState();
+      if (!nativeState.pinConfigured) {
+        throw StateError('A PIN must be configured before it can be enabled.');
+      }
+    } else {
+      await _securityOrchestrator.removePin();
+    }
     final next = current.copyWith(pinEnabled: enabled);
     await _repository.save(next);
-    _securityOrchestrator.enablePinFallback(enabled);
-    state = AsyncData(next);
+    _publish(next);
   }
 
   Future<void> setPin(String pin) async {
-    final current = state.valueOrNull ?? const SecuritySettings.defaults();
-    await _repository.savePinMaterial(pin);
-    await _repository.save(current.copyWith(pinEnabled: true));
-    _securityOrchestrator.enablePinFallback(true);
-    _pinStateController.markPinMaterialReady();
-    state = AsyncData(current.copyWith(pinEnabled: true));
-  }
-
-  Future<bool> verifyPin(String pin) async {
-    return _repository.verifyPin(pin);
+    final current = _requireLoadedSettings();
+    final next = current.copyWith(pinEnabled: true);
+    await _securityOrchestrator.configurePin(pin);
+    await _repository.save(next);
+    _publish(next);
   }
 
   Future<void> updateAutoLockSeconds(int seconds) async {
-    final current = state.valueOrNull ?? const SecuritySettings.defaults();
+    final current = _requireLoadedSettings();
     final next = current.copyWith(autoLockSeconds: seconds);
     await _repository.save(next);
-    state = AsyncData(next);
+    _publish(next);
+  }
+
+  SecuritySettings _requireLoadedSettings() {
+    final current = state.valueOrNull;
+    if (current == null || state.isLoading || state.hasError) {
+      throw StateError('Security settings are not loaded.');
+    }
+    return current;
+  }
+
+  void _publish(SecuritySettings settings) {
+    if (!_disposed) {
+      state = AsyncData(settings);
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _loadGeneration += 1;
+    super.dispose();
   }
 }

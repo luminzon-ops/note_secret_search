@@ -12,12 +12,23 @@ abstract final class NoteFormMapper {
     required CryptoService cryptoService,
   }) {
     final now = DateTime.now();
+    final id = _uuid.v4();
     return NoteItem(
-      id: _uuid.v4(),
+      id: id,
       vaultId: vaultId,
       title: draft.title.trim(),
-      contentCiphertext: cryptoService.encryptNullable(draft.content) ?? <int>[],
-      summaryCacheCiphertext: cryptoService.encryptNullable(draft.summary),
+      contentCiphertext:
+          cryptoService.encryptField(
+            draft.content,
+            field: EncryptedDatabaseField.noteContent,
+            rowId: id,
+          ) ??
+          <int>[],
+      summaryCacheCiphertext: cryptoService.encryptField(
+        draft.summary,
+        field: EncryptedDatabaseField.noteSummary,
+        rowId: id,
+      ),
       tags: draft.tags,
       categoryId: draft.categoryId,
       favorite: draft.favorite,
@@ -36,8 +47,22 @@ abstract final class NoteFormMapper {
       id: previous.id,
       vaultId: previous.vaultId,
       title: draft.title.trim(),
-      contentCiphertext: cryptoService.encryptNullable(draft.content) ?? <int>[],
-      summaryCacheCiphertext: cryptoService.encryptNullable(draft.summary),
+      contentCiphertext:
+          _updatedCiphertext(
+            previousCiphertext: previous.contentCiphertext,
+            plaintext: draft.content,
+            field: EncryptedDatabaseField.noteContent,
+            rowId: previous.id,
+            cryptoService: cryptoService,
+          ) ??
+          <int>[],
+      summaryCacheCiphertext: _updatedCiphertext(
+        previousCiphertext: previous.summaryCacheCiphertext,
+        plaintext: draft.summary,
+        field: EncryptedDatabaseField.noteSummary,
+        rowId: previous.id,
+        cryptoService: cryptoService,
+      ),
       tags: draft.tags,
       categoryId: draft.categoryId,
       favorite: draft.favorite,
@@ -50,11 +75,36 @@ abstract final class NoteFormMapper {
   static NoteDraft toDraft(NoteItem item, CryptoService cryptoService) {
     return NoteDraft(
       title: item.title,
-      content: cryptoService.decryptNullable(item.contentCiphertext),
-      summary: cryptoService.decryptNullable(item.summaryCacheCiphertext),
+      content: cryptoService.decryptField(
+        item.contentCiphertext,
+        field: EncryptedDatabaseField.noteContent,
+        rowId: item.id,
+      ),
+      summary: cryptoService.decryptField(
+        item.summaryCacheCiphertext,
+        field: EncryptedDatabaseField.noteSummary,
+        rowId: item.id,
+      ),
       tags: item.tags,
       categoryId: item.categoryId,
       favorite: item.favorite,
     );
+  }
+
+  static List<int>? _updatedCiphertext({
+    required List<int>? previousCiphertext,
+    required String plaintext,
+    required EncryptedDatabaseField field,
+    required String rowId,
+    required CryptoService cryptoService,
+  }) {
+    final previousPlaintext = cryptoService.decryptField(
+      previousCiphertext,
+      field: field,
+      rowId: rowId,
+    );
+    return previousPlaintext == plaintext
+        ? previousCiphertext
+        : cryptoService.encryptField(plaintext, field: field, rowId: rowId);
   }
 }

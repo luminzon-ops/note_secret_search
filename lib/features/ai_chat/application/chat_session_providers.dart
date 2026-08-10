@@ -1,83 +1,139 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/core/security/core_security_providers.dart';
+import 'package:note_secret_search/features/ai_chat/application/chat_session_coordinator.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_session_repository.dart';
-import 'package:note_secret_search/features/ai_chat/infrastructure/sqlite_chat_session_repository.dart';
+
+export 'package:note_secret_search/features/ai_chat/application/chat_session_coordinator.dart';
 
 final chatSessionRepositoryProvider = Provider<ChatSessionRepository>((ref) {
-  return SqliteChatSessionRepository(database: ref.watch(appDatabaseProvider));
+  throw StateError(
+    'chatSessionRepositoryProvider must be overridden by app composition',
+  );
 });
 
-final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) async {
-  final repository = ref.watch(chatSessionRepositoryProvider);
-  return repository.listSessions();
+final chatSessionsProvider = FutureProvider<List<ChatSession>>((ref) {
+  return guardSensitiveFuture<List<ChatSession>>(
+    ref,
+    lockedValue: const <ChatSession>[],
+    load: () => ref.watch(chatSessionRepositoryProvider).listSessions(),
+  );
 });
 
-final restoredChatSessionIdProvider = FutureProvider<String?>((ref) async {
-  final sessions = await ref.watch(chatSessionsProvider.future);
-  if (sessions.isEmpty) {
-    return null;
-  }
-  return sessions.first.id;
+final restoredChatSessionIdProvider = FutureProvider<String?>((ref) {
+  return guardSensitiveFuture<String?>(
+    ref,
+    lockedValue: null,
+    load: () async {
+      final sessions = await ref.watch(chatSessionsProvider.future);
+      if (sessions.isEmpty) {
+        return null;
+      }
+      return sessions.first.id;
+    },
+  );
 });
 
-final currentChatSessionIdProvider = StateProvider<String?>((ref) => null);
+final StateNotifierProvider<
+  ChatSessionCoordinator,
+  ChatSessionCoordinationState
+>
+chatSessionCoordinatorProvider =
+    StateNotifierProvider<ChatSessionCoordinator, ChatSessionCoordinationState>(
+      (ref) {
+        return ChatSessionCoordinator(
+          invalidateSessions: () {
+            ref.invalidate(chatSessionsProvider);
+            ref.invalidate(restoredChatSessionIdProvider);
+          },
+        );
+      },
+    );
 
-final suppressRestoredChatSessionProvider = StateProvider<bool>((ref) => false);
-
-final currentChatSessionProvider = FutureProvider<ChatSession?>((ref) async {
-  final sessionId = ref.watch(currentChatSessionIdProvider);
-  if (sessionId == null || sessionId.isEmpty) {
-    if (ref.watch(suppressRestoredChatSessionProvider)) {
-      return null;
-    }
-    final restoredId = await ref.watch(restoredChatSessionIdProvider.future);
-    if (restoredId == null || restoredId.isEmpty) {
-      return null;
-    }
-    return ref.watch(chatSessionRepositoryProvider).getSession(restoredId);
-  }
-
-  return ref.watch(chatSessionRepositoryProvider).getSession(sessionId);
+final Provider<String?> currentChatSessionIdProvider = Provider<String?>((ref) {
+  return ref.watch(
+    chatSessionCoordinatorProvider.select((state) => state.currentSessionId),
+  );
 });
 
-final currentChatMessagesProvider = FutureProvider<List<ChatStoredMessage>>((ref) async {
-  var sessionId = ref.watch(currentChatSessionIdProvider);
-  if (sessionId == null || sessionId.isEmpty) {
-    if (ref.watch(suppressRestoredChatSessionProvider)) {
-      return const <ChatStoredMessage>[];
-    }
-    sessionId = await ref.watch(restoredChatSessionIdProvider.future);
-  }
-
-  if (sessionId == null || sessionId.isEmpty) {
-    return const <ChatStoredMessage>[];
-  }
-
-  final repository = ref.watch(chatSessionRepositoryProvider);
-  return repository.listMessages(sessionId);
+final Provider<bool> suppressRestoredChatSessionProvider = Provider<bool>((
+  ref,
+) {
+  return ref.watch(
+    chatSessionCoordinatorProvider.select((state) => state.suppressRestore),
+  );
 });
 
-final chatSessionControllerProvider = Provider<ChatSessionController>((ref) {
-  return ChatSessionController(ref: ref);
+final Provider<ChatSessionSelectionIntent> chatSessionSelectionIntentProvider =
+    Provider<ChatSessionSelectionIntent>((ref) {
+      return ref.watch(
+        chatSessionCoordinatorProvider.select((state) => state.selectionIntent),
+      );
+    });
+
+final Provider<int> chatSessionSelectionAttemptProvider = Provider<int>((ref) {
+  return ref.watch(
+    chatSessionCoordinatorProvider.select((state) => state.selectionAttempt),
+  );
 });
 
-class ChatSessionController {
-  ChatSessionController({required Ref ref}) : _ref = ref;
+final Provider<int?> chatSessionSelectionPendingAttemptProvider =
+    Provider<int?>((ref) {
+      return ref.watch(
+        chatSessionCoordinatorProvider.select(
+          (state) => state.pendingSelectionAttempt,
+        ),
+      );
+    });
 
-  final Ref _ref;
+final FutureProvider<ChatSession?> currentChatSessionProvider =
+    FutureProvider<ChatSession?>((ref) {
+      return guardSensitiveFuture<ChatSession?>(
+        ref,
+        lockedValue: null,
+        load: () async {
+          final sessionId = ref.watch(currentChatSessionIdProvider);
+          if (sessionId == null || sessionId.isEmpty) {
+            if (ref.watch(suppressRestoredChatSessionProvider)) {
+              return null;
+            }
+            final restoredId = await ref.watch(
+              restoredChatSessionIdProvider.future,
+            );
+            if (restoredId == null || restoredId.isEmpty) {
+              return null;
+            }
+            return ref
+                .watch(chatSessionRepositoryProvider)
+                .getSession(restoredId);
+          }
 
-  Future<void> selectSession(String? sessionId) async {
-    _ref.read(suppressRestoredChatSessionProvider.notifier).state = false;
-    _ref.read(currentChatSessionIdProvider.notifier).state = sessionId;
-    _ref.invalidate(currentChatSessionProvider);
-    _ref.invalidate(currentChatMessagesProvider);
-  }
+          return ref.watch(chatSessionRepositoryProvider).getSession(sessionId);
+        },
+      );
+    });
 
-  Future<void> refreshSessions() async {
-    _ref.invalidate(chatSessionsProvider);
-    _ref.invalidate(restoredChatSessionIdProvider);
-    _ref.invalidate(currentChatSessionProvider);
-    _ref.invalidate(currentChatMessagesProvider);
-  }
-}
+final FutureProvider<List<ChatStoredMessage>> currentChatMessagesProvider =
+    FutureProvider<List<ChatStoredMessage>>((ref) {
+      return guardSensitiveFuture<List<ChatStoredMessage>>(
+        ref,
+        lockedValue: const <ChatStoredMessage>[],
+        load: () async {
+          var sessionId = ref.watch(currentChatSessionIdProvider);
+          if (sessionId == null || sessionId.isEmpty) {
+            if (ref.watch(suppressRestoredChatSessionProvider)) {
+              return const <ChatStoredMessage>[];
+            }
+            sessionId = await ref.watch(restoredChatSessionIdProvider.future);
+          }
+
+          if (sessionId == null || sessionId.isEmpty) {
+            return const <ChatStoredMessage>[];
+          }
+
+          return ref
+              .watch(chatSessionRepositoryProvider)
+              .listMessages(sessionId);
+        },
+      );
+    });

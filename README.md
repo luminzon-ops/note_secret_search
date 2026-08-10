@@ -1,6 +1,6 @@
 # Note Secret Search
 
-**移动端密码管理 / 私密备忘录应用**，支持本地 AI 语义检索与问答。
+**移动端密码管理 / 私密备忘录应用**，当前发布版本为 `0.2.0+2`，支持本地 AI 语义检索与本地/外部问答。
 
 ## 技术栈
 
@@ -11,7 +11,7 @@
 | Android 原生 | Kotlin |
 | 数据库加密 | SQLCipher |
 | Embedding 推理 | ONNX Runtime Mobile |
-| LLM 推理 | llama.cpp / GGUF |
+| LLM 推理 | llama.cpp / GGUF（Android arm64 本地 runtime） |
 | 路由 | go_router |
 | 网络 | Dio |
 
@@ -22,17 +22,21 @@
 - **安全存储** — SQLCipher 全库加密，敏感字段二次加密，截屏保护
 - **关键词搜索** — 标题/标签/内容全文检索
 - **本地 AI 语义检索** — ONNX Runtime 驱动的 embedding 语义搜索
-- **本地 LLM 问答** — llama.cpp GGUF 模型本地推理，支持自由聊天
+- **本地 LLM 问答** — llama.cpp GGUF 模型本地推理；v0.2.0 本地 runtime 仅覆盖 arm64
 - **模型管理** — 内置模型目录、下载、断点续传、自动切源、校验
-- **外部模型接入** — OpenAI 兼容 API 接口（Ollama/Anthropic/自定义 Endpoint 扩展预留）
+- **外部模型接入** — OpenAI 兼容 API / Ollama；Release 仅允许 HTTPS，Debug 仅允许 loopback HTTP
+- **明确边界** — MiniCPM / 多模态未实现，不声明硬件级防护或远程同步能力
 
 ## 快速开始
 
 ### 环境要求
 
-- Flutter SDK 3.x
-- Android SDK 34+
+- Flutter 3.41.5
+- Dart 3.11.3（随 Flutter 3.41.5）
+- Android SDK 36
+- Android target SDK 34
 - JDK 17
+- Gradle wrapper 8.11.1
 
 ### 依赖安装
 
@@ -46,9 +50,28 @@ flutter pub get
 # Debug 模式（开发用）
 flutter run --debug
 
-# 构建 debug APK
-flutter build apk --debug
+# 构建 Android debug / androidTest / release APK / release AAB（单次 Gradle DAG）
+flutter build apk --config-only --no-pub
+cd android
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
 ```
+
+### 质量检查
+
+```powershell
+.\scripts\quality\Invoke-QualityChecks.ps1
+```
+
+CI 使用同一 release contract、Dart/JVM/static gates，并通过 `package-once` job 产出 debug APK、androidTest APK、unsigned release APK/AAB。后续 artifact audit、API 24/API 34 smoke 消费同一批 artifacts；tag 发布由独立 release workflow 管理，默认只创建源码说明草稿。
+
+### 发布文档
+
+- [CHANGELOG](CHANGELOG.md)
+- [v0.2.0 Release Notes](docs/release/v0.2.0-release-notes.md)
+- [Supported Devices](docs/release/supported-devices.md)
+- [Threat Model](docs/release/threat-model.md)
+- [Known Limitations](docs/release/known-limitations.md)
+- [Release Ledger](docs/release/v0.2.0-release-ledger.md)
 
 ### 下载安装包
 

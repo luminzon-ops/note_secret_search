@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_catalog_entry.dart';
 import 'package:note_secret_search/features/ai_models/domain/model_registry_entry.dart';
@@ -16,7 +18,8 @@ const _model = ModelRegistryEntry(
   minRamMb: 512,
   recommendedTier: 'tier_1',
   localPath: '/data/user/0/app/models/embed-1.onnx',
-  checksum: 'abc',
+  checksum:
+      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   enabled: true,
   installedAt: null,
   filePresent: true,
@@ -42,24 +45,38 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   _FakeEmbeddingRuntimeBridge({
     required Map<String, dynamic> inspectResult,
     required Map<String, dynamic> embedResult,
-  })  : _inspectResult = inspectResult,
-        _embedResult = embedResult;
+  }) : _inspectResult = inspectResult,
+       _embedResult = embedResult;
 
   final Map<String, dynamic> _inspectResult;
   final Map<String, dynamic> _embedResult;
   EmbeddingTokenizerSpec? lastTokenizer;
   EmbeddingRuntimeSpec? lastRuntime;
+  String? lastVerifiedChecksum;
+  String? lastRequestId;
+  String? cancelledRequestId;
+  int embedCalls = 0;
+  Future<Map<String, dynamic>> Function()? onEmbed;
 
   @override
   Future<Map<String, dynamic>> embedText({
     required String modelId,
     required String modelPath,
     required String text,
+    String? verifiedChecksum,
+    String? requestId,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
   }) async {
+    embedCalls += 1;
     lastTokenizer = tokenizer;
     lastRuntime = runtime;
+    lastVerifiedChecksum = verifiedChecksum;
+    lastRequestId = requestId;
+    final callback = onEmbed;
+    if (callback != null) {
+      return callback();
+    }
     return _embedResult;
   }
 
@@ -67,6 +84,7 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   Future<Map<String, dynamic>> ensureModelReady({
     required String modelId,
     required String modelPath,
+    String? verifiedChecksum,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
   }) async {
@@ -79,6 +97,7 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
   Future<Map<String, dynamic>> inspectModel({
     required String modelId,
     required String modelPath,
+    String? verifiedChecksum,
     EmbeddingTokenizerSpec? tokenizer,
     EmbeddingRuntimeSpec? runtime,
   }) async {
@@ -89,6 +108,11 @@ class _FakeEmbeddingRuntimeBridge implements EmbeddingRuntimeBridge {
 
   @override
   Future<void> releaseModel({required String modelId}) async {}
+
+  @override
+  Future<void> cancelRequest({required String requestId}) async {
+    cancelledRequestId = requestId;
+  }
 }
 
 void main() {
@@ -146,10 +170,7 @@ void main() {
 
   test('maps embedText response into EmbeddingVector', () async {
     final bridge = _FakeEmbeddingRuntimeBridge(
-      inspectResult: <String, dynamic>{
-        'status': 'ready',
-        'reason': 'ok',
-      },
+      inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
       embedResult: <String, dynamic>{
         'values': <double>[0.1, 0.2, 0.3],
         'tokenCount': 7,
@@ -169,12 +190,116 @@ void main() {
     expect(vector.tokenCount, 7);
   });
 
+  test(
+    'embed rejects empty non-finite and mismatched runtime vectors',
+    () async {
+      final invalidPayloads = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'values': <double>[],
+          'tokenCount': 0,
+          'vectorDimension': 0,
+        },
+        <String, dynamic>{
+          'values': <double>[double.nan, 1],
+          'tokenCount': 2,
+          'vectorDimension': 2,
+        },
+        <String, dynamic>{
+          'values': <double>[0.1, 0.2],
+          'tokenCount': 2,
+          'vectorDimension': 3,
+        },
+      ];
+
+      for (final payload in invalidPayloads) {
+        final engine = OnnxEmbeddingEngine(
+          bridge: _FakeEmbeddingRuntimeBridge(
+            inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
+            embedResult: payload,
+          ),
+          resolveMetadata: (modelId) async => _metadata,
+        );
+
+        await expectLater(
+          engine.embed(
+            const EmbeddingRequest(model: _model, text: 'hello runtime'),
+          ),
+          throwsA(
+            isA<EmbeddingRuntimeException>()
+                .having((error) => error.code, 'code', 'INVALID_OUTPUT')
+                .having((error) => error.stage, 'stage', 'output'),
+          ),
+        );
+      }
+    },
+  );
+
+  test('cancellation during registration prevents native submission', () async {
+    final bridge = _FakeEmbeddingRuntimeBridge(
+      inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
+      embedResult: <String, dynamic>{
+        'values': <double>[0.1, 0.2],
+        'tokenCount': 2,
+        'vectorDimension': 2,
+      },
+    );
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      requestIdFactory: () => 'request-pre-submit',
+      resolveMetadata: (modelId) async => _metadata,
+    );
+
+    await expectLater(
+      engine.embed(
+        EmbeddingRequest(
+          model: _model,
+          text: 'hello runtime',
+          cancellationToken: _CancelOnRegisterToken(),
+        ),
+      ),
+      throwsA(isA<EmbeddingRuntimeCancelledException>()),
+    );
+
+    expect(bridge.cancelledRequestId, 'request-pre-submit');
+    expect(bridge.embedCalls, 0);
+  });
+
+  test('embed requires a verified checksum before native submission', () async {
+    final bridge = _FakeEmbeddingRuntimeBridge(
+      inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
+      embedResult: <String, dynamic>{
+        'values': <double>[0.1, 0.2],
+        'tokenCount': 2,
+        'vectorDimension': 2,
+      },
+    );
+    final engine = OnnxEmbeddingEngine(
+      bridge: bridge,
+      resolveMetadata: (modelId) async => _metadata,
+    );
+
+    await expectLater(
+      engine.embed(
+        EmbeddingRequest(
+          model: _model.copyWith(clearChecksum: true),
+          text: 'hello runtime',
+        ),
+      ),
+      throwsA(
+        isA<EmbeddingRuntimeException>().having(
+          (error) => error.code,
+          'code',
+          'INVALID_ARGUMENT',
+        ),
+      ),
+    );
+
+    expect(bridge.embedCalls, 0);
+  });
+
   test('embed forwards tokenizer and runtime metadata to bridge', () async {
     final bridge = _FakeEmbeddingRuntimeBridge(
-      inspectResult: <String, dynamic>{
-        'status': 'ready',
-        'reason': 'ok',
-      },
+      inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
       embedResult: <String, dynamic>{
         'values': <double>[0.1, 0.2, 0.3],
         'tokenCount': 3,
@@ -195,14 +320,60 @@ void main() {
     expect(bridge.lastRuntime, isNotNull);
     expect(bridge.lastRuntime?.outputName, 'last_hidden_state');
     expect(bridge.lastRuntime?.pooling, 'mean');
+    expect(bridge.lastVerifiedChecksum, _model.checksum);
+    expect(bridge.lastRequestId, isNotEmpty);
   });
+
+  test(
+    'embed cancellation forwards request id and surfaces typed cancellation',
+    () async {
+      final bridge = _FakeEmbeddingRuntimeBridge(
+        inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
+        embedResult: <String, dynamic>{
+          'values': <double>[0.1, 0.2],
+          'tokenCount': 2,
+        },
+      );
+      final embedStarted = Completer<void>();
+      final nativeResult = Completer<Map<String, dynamic>>();
+      bridge.onEmbed = () {
+        embedStarted.complete();
+        return nativeResult.future;
+      };
+      final cancellation = EmbeddingCancellationController();
+      final engine = OnnxEmbeddingEngine(
+        bridge: bridge,
+        requestIdFactory: () => 'request-cancel',
+        resolveMetadata: (modelId) async => _metadata,
+      );
+
+      final future = engine.embed(
+        EmbeddingRequest(
+          model: _model,
+          text: 'hello runtime',
+          cancellationToken: cancellation,
+        ),
+      );
+      await embedStarted.future;
+      cancellation.cancel();
+      nativeResult.completeError(
+        const EmbeddingRuntimeCancelledException(
+          stage: 'inference',
+          modelId: 'embed-1',
+        ),
+      );
+
+      await expectLater(
+        future,
+        throwsA(isA<EmbeddingRuntimeCancelledException>()),
+      );
+      expect(bridge.cancelledRequestId, 'request-cancel');
+    },
+  );
 
   test('getState degrades when embedding metadata is missing', () async {
     final bridge = _FakeEmbeddingRuntimeBridge(
-      inspectResult: <String, dynamic>{
-        'status': 'ready',
-        'reason': 'ok',
-      },
+      inspectResult: <String, dynamic>{'status': 'ready', 'reason': 'ok'},
       embedResult: <String, dynamic>{
         'values': <double>[0.1, 0.2, 0.3],
         'tokenCount': 3,
@@ -220,4 +391,18 @@ void main() {
     expect(state.status, EmbeddingRuntimeStatus.degraded);
     expect(state.reason, contains('metadata'));
   });
+}
+
+class _CancelOnRegisterToken implements EmbeddingCancellationToken {
+  bool _isCancelled = false;
+
+  @override
+  bool get isCancelled => _isCancelled;
+
+  @override
+  EmbeddingCancellationRegistration register(void Function() listener) {
+    _isCancelled = true;
+    listener();
+    return EmbeddingCancellationToken.none.register(() {});
+  }
 }

@@ -1,3 +1,4 @@
+import 'package:note_secret_search/features/ai_chat/domain/chat_backend_usage.dart';
 import 'package:note_secret_search/features/ai_chat/domain/chat_context_models.dart';
 
 enum ChatMessageRole { user, assistant, system }
@@ -14,6 +15,7 @@ class ChatMessage {
     this.usedPrivateContext = false,
     this.contextSummary = const <String>[],
     this.sourceType = ChatContextSource.none,
+    this.backendUsage,
   });
 
   final String id;
@@ -24,6 +26,7 @@ class ChatMessage {
   final bool usedPrivateContext;
   final List<String> contextSummary;
   final ChatContextSource sourceType;
+  final ChatBackendUsage? backendUsage;
 
   ChatMessage copyWith({
     String? id,
@@ -34,6 +37,8 @@ class ChatMessage {
     bool? usedPrivateContext,
     List<String>? contextSummary,
     ChatContextSource? sourceType,
+    ChatBackendUsage? backendUsage,
+    bool clearBackendUsage = false,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -44,6 +49,9 @@ class ChatMessage {
       usedPrivateContext: usedPrivateContext ?? this.usedPrivateContext,
       contextSummary: contextSummary ?? this.contextSummary,
       sourceType: sourceType ?? this.sourceType,
+      backendUsage: clearBackendUsage
+          ? null
+          : (backendUsage ?? this.backendUsage),
     );
   }
 }

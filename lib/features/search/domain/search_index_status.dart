@@ -1,20 +1,39 @@
+import 'dart:typed_data';
+
 import 'package:note_secret_search/features/search/domain/embedding_chunk.dart';
+import 'package:note_secret_search/features/search/domain/search_index_document.dart';
+
+const int searchIndexPendingPreviewLimit = 20;
 
 class SearchIndexPendingItem {
-  const SearchIndexPendingItem({
+  SearchIndexPendingItem({
     required this.sourceId,
     required this.sourceType,
     required this.title,
     required this.updatedAt,
-    required this.plainTextHash,
-    required this.indexPlainText,
-  });
+    this.document,
+    List<int>? sourceFingerprint,
+    this.configurationEpoch,
+    this.modelRevisionHash,
+    this.plainTextHash = '',
+    this.indexPlainText = '',
+  }) : sourceFingerprint = sourceFingerprint == null
+           ? null
+           : Uint8List.fromList(sourceFingerprint);
 
   final String sourceId;
   final SearchSourceType sourceType;
   final String title;
   final DateTime updatedAt;
+  final SearchIndexDocument? document;
+  final Uint8List? sourceFingerprint;
+  final int? configurationEpoch;
+  final String? modelRevisionHash;
+
+  @Deprecated('Legacy Phase 3 test fixture field.')
   final String plainTextHash;
+
+  @Deprecated('Legacy Phase 3 test fixture field.')
   final String indexPlainText;
 }
 
@@ -24,16 +43,33 @@ class SearchIndexStatus {
     required this.engineReason,
     required this.hasActiveEmbeddingModel,
     required this.pendingItems,
+    int? pendingCount,
     this.taskState = const SearchIndexTaskState.idle(),
-  });
+  }) : _pendingCount = pendingCount;
 
   final bool engineReady;
   final String engineReason;
   final bool hasActiveEmbeddingModel;
   final List<SearchIndexPendingItem> pendingItems;
+  final int? _pendingCount;
   final SearchIndexTaskState taskState;
 
   bool get readyForIndexing => engineReady && hasActiveEmbeddingModel;
+
+  int get pendingCount => _pendingCount ?? pendingItems.length;
+
+  bool get hasPending => pendingCount > 0;
+
+  SearchIndexStatus copyWith({SearchIndexTaskState? taskState}) {
+    return SearchIndexStatus(
+      engineReady: engineReady,
+      engineReason: engineReason,
+      hasActiveEmbeddingModel: hasActiveEmbeddingModel,
+      pendingItems: pendingItems,
+      pendingCount: pendingCount,
+      taskState: taskState ?? this.taskState,
+    );
+  }
 }
 
 class SearchIndexTaskState {
@@ -45,10 +81,10 @@ class SearchIndexTaskState {
   });
 
   const SearchIndexTaskState.idle()
-      : running = false,
-        lastCompletedAt = null,
-        lastIndexedCount = 0,
-        lastError = null;
+    : running = false,
+      lastCompletedAt = null,
+      lastIndexedCount = 0,
+      lastError = null;
 
   final bool running;
   final DateTime? lastCompletedAt;
@@ -65,7 +101,9 @@ class SearchIndexTaskState {
   }) {
     return SearchIndexTaskState(
       running: running ?? this.running,
-      lastCompletedAt: clearLastCompletedAt ? null : (lastCompletedAt ?? this.lastCompletedAt),
+      lastCompletedAt: clearLastCompletedAt
+          ? null
+          : (lastCompletedAt ?? this.lastCompletedAt),
       lastIndexedCount: lastIndexedCount ?? this.lastIndexedCount,
       lastError: clearLastError ? null : (lastError ?? this.lastError),
     );

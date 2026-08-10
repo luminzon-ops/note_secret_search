@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
-import 'package:note_secret_search/app/router/app_router.dart';
-import 'package:note_secret_search/app/di/bootstrap_provider.dart';
+import 'package:note_secret_search/features/auth_security/domain/pin_policy.dart';
 import 'package:note_secret_search/features/settings/application/security_settings_providers.dart';
 
 class PinSetupPage extends ConsumerStatefulWidget {
-  const PinSetupPage({this.unlockOnSuccess = false, super.key});
+  const PinSetupPage({this.onPinSaved, super.key});
 
-  final bool unlockOnSuccess;
+  final bool Function()? onPinSaved;
 
   @override
   ConsumerState<PinSetupPage> createState() => _PinSetupPageState();
@@ -29,6 +27,9 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final settingsState = ref.watch(securitySettingsControllerProvider);
+    final settingsReady = settingsState.hasValue;
+
     return Scaffold(
       appBar: AppBar(title: const Text('设置应用 PIN')),
       body: Form(
@@ -39,9 +40,7 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(16),
-                child: Text(
-                  '当前版本仅完成 PIN 备用入口的 MVP 骨架。后续会切换到 Argon2id + KeyStore 包裹设计，避免将 PIN 以当前方式长期存储。',
-                ),
+                child: Text('PIN 仅作为系统认证之外的备用解锁方式。设置或更新 PIN 时需要再次完成系统认证。'),
               ),
             ),
             const SizedBox(height: 16),
@@ -51,14 +50,11 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               keyboardType: TextInputType.number,
               obscureText: true,
               validator: (value) {
-                final raw = value?.trim() ?? '';
-                if (raw.length < 4 || raw.length > 8) {
-                  return 'PIN 长度需为 4-8 位';
-                }
-                if (!RegExp(r'^\d+$').hasMatch(raw)) {
-                  return 'PIN 仅支持数字';
-                }
-                return null;
+                return switch (AppPinPolicy.validate(value ?? '')) {
+                  PinValidationFailure.invalidLength => 'PIN 长度需为 4-8 位',
+                  PinValidationFailure.nonNumeric => 'PIN 仅支持数字',
+                  null => null,
+                };
               },
             ),
             const SizedBox(height: 12),
@@ -68,15 +64,40 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
               keyboardType: TextInputType.number,
               obscureText: true,
               validator: (value) {
-                if ((value?.trim() ?? '') != _pinController.text.trim()) {
+                if ((value ?? '') != _pinController.text) {
                   return '两次输入的 PIN 不一致';
                 }
                 return null;
               },
             ),
             const SizedBox(height: 24),
+            if (settingsState.isLoading)
+              const LinearProgressIndicator()
+            else if (settingsState.hasError)
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '安全设置加载失败，请重试。',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '重试',
+                    onPressed: () {
+                      ref
+                          .read(securitySettingsControllerProvider.notifier)
+                          .load();
+                    },
+                    icon: const Icon(Icons.refresh),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 12),
             FilledButton.icon(
-              onPressed: _submitting ? null : _submit,
+              onPressed: (_submitting || !settingsReady) ? null : _submit,
               icon: const Icon(Icons.lock_open_outlined),
               label: Text(_submitting ? '保存中...' : '保存 PIN'),
             ),
@@ -93,33 +114,21 @@ class _PinSetupPageState extends ConsumerState<PinSetupPage> {
 
     setState(() => _submitting = true);
     try {
-      final repository = await ref.read(securitySettingsRepositoryProvider.future);
-      final currentSettings = await repository.load();
-      final nextSettings = currentSettings.copyWith(pinEnabled: true);
-      await repository.savePinMaterial(_pinController.text.trim());
-      await repository.save(nextSettings);
-      ref.read(securityOrchestratorProvider).enablePinFallback(true);
-      ref.read(pinStateControllerProvider.notifier).markPinMaterialReady();
-      ref.read(pinStateControllerProvider.notifier).configureEnabled(true);
+      await ref
+          .read(securitySettingsControllerProvider.notifier)
+          .setPin(_pinController.text);
       if (mounted) {
-        if (widget.unlockOnSuccess) {
-          ref.read(securityOrchestratorProvider).unlockWithPin();
-          final router = GoRouter.maybeOf(context);
-          if (router != null) {
-            ref.read(appRouterProvider).go('/vault');
-          } else {
-            Navigator.of(context).pop(true);
-          }
-        } else {
-          ref.invalidate(securitySettingsRepositoryProvider);
-          ref.invalidate(securitySettingsControllerProvider);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PIN 已保存并启用')),
-          );
-          context.pop();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('PIN 已保存并启用')));
+        final navigationHandled = widget.onPinSaved?.call() ?? false;
+        if (!navigationHandled) {
+          Navigator.of(context).pop();
         }
       }
     } finally {
+      _pinController.clear();
+      _confirmController.clear();
       if (mounted) {
         setState(() => _submitting = false);
       }

@@ -2,24 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_providers/domain/external_provider_config.dart';
+import 'package:note_secret_search/features/ai_providers/domain/external_provider_endpoint_policy.dart';
 
 class ExternalProviderSettingsPage extends ConsumerStatefulWidget {
   const ExternalProviderSettingsPage({super.key});
 
   @override
-  ConsumerState<ExternalProviderSettingsPage> createState() => _ExternalProviderSettingsPageState();
+  ConsumerState<ExternalProviderSettingsPage> createState() =>
+      _ExternalProviderSettingsPageState();
 }
 
-class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderSettingsPage> {
+class _ExternalProviderSettingsPageState
+    extends ConsumerState<ExternalProviderSettingsPage> {
   final _formKey = GlobalKey<FormState>();
   final _displayNameController = TextEditingController();
-  final _baseUrlController = TextEditingController(text: 'https://api.openai.com/v1');
+  final _baseUrlController = TextEditingController(
+    text: 'https://api.openai.com/v1',
+  );
   final _apiKeyController = TextEditingController();
   final _modelNameController = TextEditingController();
   final _embeddingModelNameController = TextEditingController();
   bool _allowSensitiveFields = false;
+  bool _enabled = false;
   bool _saving = false;
   bool _testing = false;
+  bool _updatingPrivacy = false;
+  ExternalProviderConfig? _loadedConfig;
   ExternalProviderType _providerType = ExternalProviderType.openAiCompatible;
 
   @override
@@ -39,10 +47,12 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
   }
 
   Future<void> _loadExistingConfig() async {
-    final config = await ref.read(enabledExternalProviderProvider.future);
-    if (!mounted || config == null) {
+    final configs = await ref.read(externalProviderConfigsProvider.future);
+    if (!mounted || configs.isEmpty) {
       return;
     }
+    final config =
+        configs.where((item) => item.enabled).firstOrNull ?? configs.first;
 
     _displayNameController.text = config.displayName;
     _baseUrlController.text = config.baseUrl;
@@ -51,6 +61,8 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
     _embeddingModelNameController.text = config.embeddingModelName ?? '';
 
     setState(() {
+      _loadedConfig = config;
+      _enabled = config.enabled;
       _allowSensitiveFields = config.allowSensitiveFields;
       _providerType = config.providerType;
     });
@@ -81,16 +93,72 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
     setState(() => _saving = true);
     try {
       final controller = ref.read(externalProviderSettingsControllerProvider);
-      await controller.save(_buildConfig());
+      final config = _buildConfig();
+      await controller.save(config);
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('外部模型配置已保存')),
-      );
+      setState(() => _loadedConfig = config);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('外部模型配置已保存')));
     } finally {
       if (mounted) {
         setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _disable() async {
+    final persisted = _loadedConfig;
+    if (persisted == null) {
+      return;
+    }
+    setState(() => _updatingPrivacy = true);
+    try {
+      final config = persisted.copyWith(
+        enabled: false,
+        updatedAt: DateTime.now(),
+      );
+      await ref
+          .read(externalProviderSettingsControllerProvider)
+          .setEnabled(config, enabled: false);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _enabled = false;
+        _loadedConfig = config;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('外部 AI 已停用')));
+    } finally {
+      if (mounted) {
+        setState(() => _updatingPrivacy = false);
+      }
+    }
+  }
+
+  Future<void> _revokeConsent() async {
+    final persisted = _loadedConfig;
+    if (persisted == null) {
+      return;
+    }
+    setState(() => _updatingPrivacy = true);
+    try {
+      await ref
+          .read(externalProviderSettingsControllerProvider)
+          .revokeConsent(persisted);
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('外部发送确认已撤销')));
+    } finally {
+      if (mounted) {
+        setState(() => _updatingPrivacy = false);
       }
     }
   }
@@ -106,9 +174,9 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('连接测试成功')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('连接测试成功')));
     } finally {
       if (mounted) {
         setState(() => _testing = false);
@@ -118,7 +186,11 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
 
   ExternalProviderConfig _buildConfig() {
     return ExternalProviderConfig(
-      id: _providerType == ExternalProviderType.ollama ? 'ollama-default' : 'openai-compatible-default',
+      id:
+          _loadedConfig?.id ??
+          (_providerType == ExternalProviderType.ollama
+              ? 'ollama-default'
+              : 'openai-compatible-default'),
       providerType: _providerType,
       displayName: _displayNameController.text.trim(),
       baseUrl: _baseUrlController.text.trim(),
@@ -127,9 +199,9 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
       embeddingModelName: _embeddingModelNameController.text.trim().isEmpty
           ? null
           : _embeddingModelNameController.text.trim(),
-      enabled: true,
+      enabled: _enabled,
       allowSensitiveFields: _allowSensitiveFields,
-      createdAt: DateTime.now(),
+      createdAt: _loadedConfig?.createdAt,
       updatedAt: DateTime.now(),
     );
   }
@@ -139,6 +211,14 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
       return '此项不能为空';
     }
     return null;
+  }
+
+  String? _baseUrlValidator(String? value) {
+    final requiredMessage = _requiredValidator(value);
+    if (requiredMessage != null) {
+      return requiredMessage;
+    }
+    return defaultExternalProviderEndpointPolicy.validateBaseUrl(value!.trim());
   }
 
   @override
@@ -184,17 +264,20 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
                 labelText: 'Base URL',
                 border: OutlineInputBorder(),
               ),
-              validator: _requiredValidator,
+              validator: _baseUrlValidator,
             ),
             if (_providerType != ExternalProviderType.ollama) ...[
               const SizedBox(height: 12),
               TextFormField(
                 controller: _apiKeyController,
+                obscureText: true,
                 decoration: const InputDecoration(
                   labelText: 'API Key',
                   border: OutlineInputBorder(),
                 ),
-                validator: _providerType == ExternalProviderType.ollama ? null : _requiredValidator,
+                validator: _providerType == ExternalProviderType.ollama
+                    ? null
+                    : _requiredValidator,
               ),
             ],
             const SizedBox(height: 12),
@@ -216,8 +299,17 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
             ),
             const SizedBox(height: 12),
             SwitchListTile(
+              value: _enabled,
+              onChanged: _saving || _updatingPrivacy
+                  ? null
+                  : (value) => setState(() => _enabled = value),
+              title: const Text('启用外部 AI'),
+              subtitle: const Text('默认关闭；启用后发送前仍需按配置确认。'),
+            ),
+            SwitchListTile(
               value: _allowSensitiveFields,
-              onChanged: (value) => setState(() => _allowSensitiveFields = value),
+              onChanged: (value) =>
+                  setState(() => _allowSensitiveFields = value),
               title: const Text('允许外部模型接收私密上下文'),
               subtitle: const Text('默认关闭，首次发送时仍会二次确认。'),
             ),
@@ -239,6 +331,25 @@ class _ExternalProviderSettingsPageState extends ConsumerState<ExternalProviderS
                 ),
               ],
             ),
+            if (_loadedConfig != null) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _updatingPrivacy ? null : _disable,
+                    icon: const Icon(Icons.block_outlined),
+                    label: const Text('停用外部 AI'),
+                  ),
+                  TextButton.icon(
+                    onPressed: _updatingPrivacy ? null : _revokeConsent,
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    label: const Text('撤销发送确认'),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

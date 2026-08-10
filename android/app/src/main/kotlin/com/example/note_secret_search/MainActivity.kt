@@ -56,4 +56,17 @@ class MainActivity : FlutterFragmentActivity() {
         )
         deviceProfilerChannel.setMethodCallHandler(deviceProfilerPlugin)
     }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        if (this::llmRuntimePlugin.isInitialized) {
+            llmRuntimePlugin.detachFromEngine()
+        }
+        if (this::embeddingRuntimePlugin.isInitialized) {
+            embeddingRuntimePlugin.detachFromEngine()
+        }
+        if (this::nativeSecurityPlugin.isInitialized) {
+            nativeSecurityPlugin.detachFromEngine()
+        }
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
 }

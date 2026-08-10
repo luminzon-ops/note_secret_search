@@ -1,0 +1,153 @@
+part of 'model_management_page_test.dart';
+
+const _bgeEmbeddingCatalogEntry = ModelCatalogEntry(
+  id: 'bge-small-zh',
+  type: 'embedding',
+  tier: 'mvp',
+  displayName: 'BGE Small 中文 Embedding',
+  description: '用于本地中文语义检索的 BGE 小型 embedding 模型。',
+  sizeBytes: 10485760,
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  sources: <ModelSourceEntry>[
+    ModelSourceEntry(
+      id: 'hf-xenova-pinned',
+      label: 'HuggingFace Xenova（revision pinned）',
+      url:
+          'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model.onnx',
+      checksum: 'sha256:abc',
+      signature: 'signed',
+      signatureAlgorithm: 'RSA-SHA256',
+      keyId: 'key-1',
+    ),
+    ModelSourceEntry(
+      id: 'hf-xenova-main',
+      label: 'HuggingFace Xenova（main fallback）',
+      url:
+          'https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/onnx/model.onnx',
+      checksum: 'sha256:def',
+    ),
+  ],
+);
+
+const _testCatalogDigest =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _testArtifactDigest =
+    'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+const _installedEmbeddingRegistryEntry = ModelRegistryEntry(
+  id: 'embed-1',
+  type: 'embedding',
+  provider: 'builtin',
+  name: 'MiniLM Embedding',
+  version: '1.0.2',
+  sizeBytes: 10485760,
+  quantization: 'Q8',
+  minRamMb: 512,
+  recommendedTier: 'mvp',
+  localPath: '/data/models/minilm.onnx',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/minilm.onnx',
+      relativePath: 'runtime/model.onnx',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 10485760,
+      verifiedSizeBytes: 10485760,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
+
+const _installedPhiRegistryEntry = ModelRegistryEntry(
+  id: 'llm-1',
+  type: 'llm',
+  provider: 'builtin',
+  name: 'Phi Local',
+  version: '1.0.0',
+  sizeBytes: 104857600,
+  quantization: 'Q4_K_M',
+  minRamMb: 2048,
+  recommendedTier: 'local',
+  localPath: '/data/models/phi.gguf',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/phi.gguf',
+      relativePath: 'runtime/model.gguf',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 104857600,
+      verifiedSizeBytes: 104857600,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);
+
+const _installedQwenRegistryEntry = ModelRegistryEntry(
+  id: 'llm-1',
+  type: 'llm',
+  provider: 'builtin_catalog',
+  name: 'Qwen Local',
+  version: '1.0.0',
+  sizeBytes: 104857600,
+  quantization: 'Q4_K_M',
+  minRamMb: 2048,
+  recommendedTier: 'local',
+  localPath: '/data/models/qwen.gguf',
+  checksum: _testArtifactDigest,
+  enabled: true,
+  installedAt: null,
+  filePresent: true,
+  integrityStatus: ModelIntegrityStatus.valid,
+  releaseId: 'release-1',
+  catalogVersion: 1,
+  catalogDigest: _testCatalogDigest,
+  generation: 1,
+  revisionRoot: 'revisions/1',
+  artifacts: <ModelArtifactPath>[
+    ModelArtifactPath(
+      artifactId: 'model',
+      releaseId: 'release-1',
+      role: 'model',
+      sourceId: 'test-source',
+      localPath: '/data/models/qwen.gguf',
+      relativePath: 'runtime/model.gguf',
+      expectedChecksum: _testArtifactDigest,
+      verifiedChecksum: _testArtifactDigest,
+      expectedSizeBytes: 104857600,
+      verifiedSizeBytes: 104857600,
+      state: 'installed',
+      verifiedAt: 1,
+    ),
+  ],
+);

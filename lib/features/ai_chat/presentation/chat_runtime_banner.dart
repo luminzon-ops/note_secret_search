@@ -3,16 +3,22 @@ import 'package:go_router/go_router.dart';
 import 'package:note_secret_search/features/ai_providers/application/ai_provider_providers.dart';
 import 'package:note_secret_search/features/ai_chat/application/llm_runtime_providers.dart';
 import 'package:note_secret_search/features/ai_chat/domain/llm_runtime_status.dart';
+import 'package:note_secret_search/shared/navigation/app_destination.dart';
 
 class ChatRuntimeBanner extends StatelessWidget {
-  const ChatRuntimeBanner({required this.readiness, required this.externalStatus, super.key});
+  const ChatRuntimeBanner({
+    required this.readiness,
+    required this.externalStatus,
+    super.key,
+  });
 
   final LocalLlmReadiness readiness;
   final ExternalProviderStatus externalStatus;
 
   @override
   Widget build(BuildContext context) {
-    final localRuntimeDegraded = readiness.runtimeState?.status == LlmRuntimeStatus.degraded;
+    final localRuntimeDegraded =
+        readiness.runtimeState?.status == LlmRuntimeStatus.degraded;
 
     if (readiness.ready) {
       return Card(
@@ -45,7 +51,7 @@ class ChatRuntimeBanner extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               TextButton(
-                onPressed: () => context.push('/models'),
+                onPressed: () => context.push(AppDestination.models),
                 child: const Text('前往模型管理'),
               ),
             ],
@@ -84,7 +90,7 @@ class ChatRuntimeBanner extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             TextButton(
-              onPressed: () => context.push('/models'),
+              onPressed: () => context.push(AppDestination.models),
               child: const Text('前往模型管理'),
             ),
           ],

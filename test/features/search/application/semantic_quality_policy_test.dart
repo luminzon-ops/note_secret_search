@@ -3,16 +3,69 @@ import 'package:note_secret_search/features/search/application/semantic_quality_
 import 'package:note_secret_search/features/search/domain/search_result_item.dart';
 
 void main() {
-  test('SemanticQualityPolicy conservative MVP thresholds match denoise design', () {
-    const policy = SemanticQualityPolicy.conservativeMvp();
-    const precision = 0.000001;
+  test(
+    'SemanticQualityPolicy conservative MVP thresholds match denoise design',
+    () {
+      const policy = SemanticQualityPolicy.conservativeMvp();
+      const precision = 0.000001;
 
-    expect(policy.minimumThresholdFor(SemanticHitField.title), closeTo(0.82, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.username), closeTo(0.84, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.summary), closeTo(0.84, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.url), closeTo(0.87, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.secretNote), closeTo(0.87, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.tags), closeTo(0.90, precision));
-    expect(policy.minimumThresholdFor(SemanticHitField.noteBody), closeTo(0.90, precision));
-  });
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.title),
+        closeTo(0.82, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.username),
+        closeTo(0.84, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.summary),
+        closeTo(0.84, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.url),
+        closeTo(0.87, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.secretNote),
+        closeTo(0.87, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.tags),
+        closeTo(0.90, precision),
+      );
+      expect(
+        policy.minimumThresholdFor(SemanticHitField.noteBody),
+        closeTo(0.90, precision),
+      );
+    },
+  );
+
+  test(
+    'semantic-only admission uses field quality before assist ranking score',
+    () {
+      const policy = SemanticQualityPolicy.conservativeMvp();
+
+      expect(
+        policy.admitsSemanticOnly(
+          fieldQualityTier: 2,
+          aggregateRankingScore: 0.70,
+        ),
+        isTrue,
+      );
+      expect(
+        policy.admitsSemanticOnly(
+          fieldQualityTier: 1,
+          aggregateRankingScore: 0.8999,
+        ),
+        isFalse,
+      );
+      expect(
+        policy.admitsSemanticOnly(
+          fieldQualityTier: 1,
+          aggregateRankingScore: 0.90,
+        ),
+        isTrue,
+      );
+    },
+  );
 }

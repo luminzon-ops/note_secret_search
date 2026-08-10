@@ -1,0 +1,358 @@
+name: Quality
+
+on:
+  workflow_call:
+  push:
+    branches:
+      - master
+      - "codex/**"
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+env:
+  FLUTTER_VERSION: "3.41.5"
+  JAVA_VERSION: "17"
+  ANDROID_PACKAGE_NAME: com.example.note_secret_search
+
+jobs:
+  contracts:
+    name: Release contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Check release contracts
+        run: flutter test --no-pub test/release/release_readiness_contract_test.dart
+
+      - name: Upload contract diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-diagnostics
+          path: |
+            config/release/release_artifact_policy.json
+            .github/workflows/quality.yml
+          retention-days: 14
+
+  dart:
+    name: Dart analyze and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze
+        run: flutter analyze --no-pub
+
+      - name: Dart tests
+        run: flutter test --no-pub
+
+      - name: Upload Dart diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dart-diagnostics
+          path: build
+          retention-days: 14
+
+  android-jvm:
+    name: Android JVM tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Prepare Flutter Android version
+        shell: pwsh
+        run: ./scripts/quality/Prepare-FlutterAndroidVersion.ps1 -RepoRoot "$PWD"
+
+      - name: Run Android JVM tests
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload JVM diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-jvm-diagnostics
+          path: android/app/build/reports
+          retention-days: 14
+
+  native-static-gates:
+    name: Native and static gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Architecture gates
+        run: flutter test --no-pub test/architecture
+
+      - name: AAR provenance gate
+        shell: pwsh
+        run: ./scripts/quality/Invoke-LlmAarProvenanceGate.ps1 -SkipRebuild
+
+      - name: Upload static diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-gate-diagnostics
+          path: |
+            android/third_party/llamacpp/provenance.json
+            android/third_party/llamacpp/aar-entry-hashes.sha256
+          retention-days: 14
+
+  package-once:
+    name: Package Android artifacts once
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs:
+      - contracts
+      - dart
+      - android-jvm
+      - native-static-gates
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Prepare Flutter Android version
+        shell: pwsh
+        run: ./scripts/quality/Prepare-FlutterAndroidVersion.ps1 -RepoRoot "$PWD"
+
+      - name: Package Android DAG
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
+
+      - name: Collect package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/android/manifests artifacts/android/reports
+          cp build/app/outputs/flutter-apk/app-debug.apk artifacts/android/
+          cp build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk artifacts/android/
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-release.apk
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-release.aab
+          cp -R android/app/build/intermediates/merged_manifests artifacts/android/manifests || true
+          cp -R android/app/build/reports artifacts/android/reports || true
+          find artifacts/android -type f -print0 | xargs -0 sha256sum > artifacts/android/SHA256SUMS
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+          retention-days: 7
+
+      - name: Upload package diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-diagnostics
+          path: |
+            android/app/build/reports
+            android/app/build/outputs/logs
+          retention-days: 14
+
+  artifact-audit:
+    name: Artifact audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: package-once
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Audit provenance, version, ABI, assets, and manifest
+        shell: pwsh
+        run: |
+          ./scripts/quality/Invoke-AndroidArtifactAudit.ps1 `
+            -RepoRoot "$PWD" `
+            -DebugApkPath artifacts/android/app-debug.apk `
+            -AndroidTestApkPath artifacts/android/app-debug-androidTest.apk `
+            -ReleaseApkPath artifacts/android/app-release.apk `
+            -ReleaseAabPath artifacts/android/app-release.aab `
+            -OutputPath artifacts/android/android-artifact-audit.json
+
+      - name: Upload audit diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-audit
+          path: |
+            artifacts/android/android-artifact-audit.json
+            artifacts/android/SHA256SUMS
+          retention-days: 14
+
+  api24-smoke:
+    name: API 24 artifact smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: package-once
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Install debug tests and smoke release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          target: default
+          arch: x86_64
+          script: |
+            set -euo pipefail
+            adb install -r artifacts/android/app-debug.apk
+            adb install -r artifacts/android/app-debug-androidTest.apk
+            adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner
+            adb uninstall com.example.note_secret_search.test || true
+            adb uninstall com.example.note_secret_search || true
+            release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
+            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
+            adb install -r "$RUNNER_TEMP/release-signed.apk"
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb shell am force-stop com.example.note_secret_search
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb logcat -d > artifacts/android/api24-logcat.txt
+
+      - name: Upload API 24 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api24-smoke-diagnostics
+          path: artifacts/android/*logcat.txt
+          retention-days: 14
+  api34-smoke:
+    name: API 34 artifact smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: package-once
+    steps:
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: android-package-once
+          path: artifacts/android
+
+      - name: Install debug tests and smoke release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          script: |
+            set -euo pipefail
+            adb install -r artifacts/android/app-debug.apk
+            adb install -r artifacts/android/app-debug-androidTest.apk
+            adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner
+            adb uninstall com.example.note_secret_search.test || true
+            adb uninstall com.example.note_secret_search || true
+            release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
+            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
+            "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
+            adb install -r "$RUNNER_TEMP/release-signed.apk"
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb shell am force-stop com.example.note_secret_search
+            adb shell monkey -p com.example.note_secret_search -c android.intent.category.LAUNCHER 1
+            adb logcat -d > artifacts/android/api34-logcat.txt
+
+      - name: Upload API 34 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api34-smoke-diagnostics
+          path: artifacts/android/*logcat.txt
+          retention-days: 14
