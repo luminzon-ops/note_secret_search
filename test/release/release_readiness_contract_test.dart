@@ -210,7 +210,14 @@ void main() {
       expect(quality, isNot(contains('.\\gradlew.bat')));
 
       final aarGate = _read('scripts/quality/Invoke-LlmAarProvenanceGate.ps1');
+      final aarCommon = _read('scripts/llm/LlmAarCommon.psm1');
       expect(aarGate, contains('SkipRebuild'));
+      expect(aarGate, contains('Resolve-LlmNdkAuditTools'));
+      expect(aarCommon, contains('Resolve-LlmAndroidSdkRoot'));
+      expect(aarCommon, contains('Resolve-LlmNdkAuditTools'));
+      expect(aarCommon, contains('linux-x86_64'));
+      expect(aarCommon, contains('windows-x86_64'));
+      expect(aarCommon, contains('LOCALAPPDATA'));
 
       final deviceGate = _read(
         'scripts/quality/Invoke-EmbeddingRuntimeDeviceGate.ps1',

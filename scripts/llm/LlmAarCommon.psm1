@@ -24,6 +24,99 @@ function Get-LlmSha256 {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Resolve-LlmAndroidSdkRoot {
+  param(
+    [string]$ConfiguredRoot = ''
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($ConfiguredRoot)) {
+    Assert-LlmCondition `
+      -Condition (Test-Path -LiteralPath $ConfiguredRoot -PathType Container) `
+      -Message "Configured Android SDK root is missing: $ConfiguredRoot"
+    return (Resolve-Path -LiteralPath $ConfiguredRoot).Path
+  }
+
+  $candidates = @($env:ANDROID_SDK_ROOT, $env:ANDROID_HOME)
+  if ($IsWindows) {
+    $candidates += 'D:\Program\Android\SDK'
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+      $candidates += Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+    }
+  }
+  elseif ($IsLinux) {
+    $candidates += '/opt/android-sdk'
+    if (-not [string]::IsNullOrWhiteSpace($HOME)) {
+      $candidates += Join-Path $HOME 'Android/Sdk'
+    }
+  }
+  elseif ($IsMacOS -and -not [string]::IsNullOrWhiteSpace($HOME)) {
+    $candidates += Join-Path $HOME 'Library/Android/sdk'
+  }
+
+  $resolvedCandidate = $candidates |
+    Where-Object {
+      -not [string]::IsNullOrWhiteSpace($_) -and
+        (Test-Path -LiteralPath $_ -PathType Container)
+    } |
+    Select-Object -First 1
+  Assert-LlmCondition `
+    -Condition (-not [string]::IsNullOrWhiteSpace($resolvedCandidate)) `
+    -Message 'Pinned Android SDK was not found for ELF audit.'
+  return (Resolve-Path -LiteralPath $resolvedCandidate).Path
+}
+
+function Resolve-LlmNdkAuditTools {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AndroidSdkRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$NdkVersion
+  )
+
+  $hostCandidates = @(
+    if ($IsWindows) {
+      'windows-x86_64'
+    }
+    elseif ($IsLinux) {
+      'linux-x86_64'
+    }
+    elseif ($IsMacOS) {
+      'darwin-arm64'
+      'darwin-x86_64'
+    }
+  )
+  Assert-LlmCondition ($hostCandidates.Count -gt 0) `
+    'Unsupported host platform for Android NDK ELF audit.'
+
+  $ndkRoot = Join-Path (Join-Path $AndroidSdkRoot 'ndk') $NdkVersion
+  $llvmRoot = Join-Path (Join-Path $ndkRoot 'toolchains') 'llvm'
+  $prebuiltRoot = Join-Path $llvmRoot 'prebuilt'
+  $hostRoot = $hostCandidates |
+    ForEach-Object { Join-Path $prebuiltRoot $_ } |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+    Select-Object -First 1
+  Assert-LlmCondition `
+    (-not [string]::IsNullOrWhiteSpace($hostRoot)) `
+    "Android NDK host toolchain is missing under $prebuiltRoot."
+
+  $toolSuffix = if ($IsWindows) { '.exe' } else { '' }
+  $tools = [ordered]@{}
+  foreach ($toolName in @('readElf', 'nm', 'stringsTool', 'objdump')) {
+    $binaryName = switch ($toolName) {
+      'readElf' { "llvm-readelf$toolSuffix" }
+      'nm' { "llvm-nm$toolSuffix" }
+      'stringsTool' { "llvm-strings$toolSuffix" }
+      'objdump' { "llvm-objdump$toolSuffix" }
+    }
+    $toolPath = Join-Path (Join-Path $hostRoot 'bin') $binaryName
+    Assert-LlmCondition `
+      (Test-Path -LiteralPath $toolPath -PathType Leaf) `
+      "Pinned ELF audit tool is missing: $toolPath"
+    $tools[$toolName] = $toolPath
+  }
+  return [pscustomobject]$tools
+}
+
 function Get-LlmSha256Bytes {
   param(
     [Parameter(Mandatory = $true)]
@@ -252,6 +345,8 @@ function Invoke-LlmProcess {
 Export-ModuleMember -Function @(
   'Assert-LlmCondition',
   'Get-LlmSha256',
+  'Resolve-LlmAndroidSdkRoot',
+  'Resolve-LlmNdkAuditTools',
   'Get-LlmSha256Bytes',
   'Resolve-LlmRepoPath',
   'Read-LlmSourceLock',
