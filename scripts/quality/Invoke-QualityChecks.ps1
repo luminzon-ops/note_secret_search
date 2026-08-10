@@ -64,7 +64,7 @@ function Invoke-AndroidGradle {
 
 function Copy-AndroidPackageArtifacts {
   param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$OutputRoot
   )
 
@@ -87,6 +87,8 @@ function Copy-AndroidPackageArtifacts {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$prepareVersionScript = Join-Path $repoRoot 'scripts\quality\Prepare-FlutterAndroidVersion.ps1'
+$artifactAuditScript = Join-Path $repoRoot 'scripts\quality\Invoke-AndroidArtifactAudit.ps1'
 $workspaceParent = Split-Path $repoRoot -Parent
 if ((Split-Path $workspaceParent -Leaf) -eq 'worktrees') {
   $workspaceParent = Split-Path $workspaceParent -Parent
@@ -109,6 +111,13 @@ try {
   Invoke-NativeCommand 'flutter' @('analyze', '--no-pub')
   Invoke-NativeCommand 'flutter' @('test', '--no-pub')
 
+  if (-not $SkipAndroid -or -not $SkipBuild) {
+    & $prepareVersionScript -RepoRoot $repoRoot
+    if ($LASTEXITCODE -ne 0) {
+      throw "$prepareVersionScript exited with code $LASTEXITCODE"
+    }
+  }
+
   if (-not $SkipAndroid) {
     Invoke-AndroidGradle @(':app:testDebugUnitTest')
   }
@@ -124,6 +133,15 @@ try {
       Write-Host 'PackageOnce is the default Phase 9 packaging strategy; -PackageOnce is accepted for explicit local runs.'
     }
     Invoke-AndroidGradle $packageTasks
+    & $artifactAuditScript `
+      -RepoRoot $repoRoot `
+      -DebugApkPath (Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-debug.apk') `
+      -AndroidTestApkPath (Join-Path $repoRoot 'build\app\outputs\apk\androidTest\debug\app-debug-androidTest.apk') `
+      -ReleaseApkPath (Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk') `
+      -ReleaseAabPath (Join-Path $repoRoot 'build\app\outputs\bundle\release\app-release.aab')
+    if ($LASTEXITCODE -ne 0) {
+      throw "$artifactAuditScript exited with code $LASTEXITCODE"
+    }
     Copy-AndroidPackageArtifacts -OutputRoot $ArtifactOutputRoot
   }
 }

@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val flutterLocalProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    require(localPropertiesFile.isFile) {
+        "android/local.properties is missing; run flutter build apk --config-only --no-pub."
+    }
+    localPropertiesFile.inputStream().use { load(it) }
 }
 
 fun requiredIntProperty(name: String): Int =
@@ -10,11 +20,26 @@ fun requiredIntProperty(name: String): Int =
 fun requiredStringProperty(name: String): String =
     providers.gradleProperty(name).get()
 
+fun requiredFlutterProperty(name: String): String {
+    val value = flutterLocalProperties.getProperty(name)?.trim()
+    require(!value.isNullOrEmpty()) {
+        "$name is missing from android/local.properties; run flutter build apk --config-only --no-pub."
+    }
+    return value
+}
+
 val projectJavaVersion = JavaVersion.toVersion(
     requiredStringProperty("noteSecretSearch.javaVersion"),
 )
-val flutterVersionCode = flutter.versionCode
-val flutterVersionName = flutter.versionName
+val flutterVersionCode = requiredFlutterProperty("flutter.versionCode").toIntOrNull()
+    ?: error("flutter.versionCode must be an integer in android/local.properties.")
+val flutterVersionName = requiredFlutterProperty("flutter.versionName")
+require(flutterVersionCode != 1) {
+    "flutter.versionCode is still the Gradle default 1; run flutter build apk --config-only --no-pub."
+}
+require(flutterVersionName != "1.0") {
+    "flutter.versionName is still the Gradle default 1.0; run flutter build apk --config-only --no-pub."
+}
 
 android {
     namespace = "com.example.note_secret_search"

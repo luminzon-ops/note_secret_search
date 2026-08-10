@@ -6,8 +6,6 @@ on:
     branches:
       - master
       - "codex/**"
-    tags:
-      - "v*"
   pull_request:
 
 permissions:
@@ -111,6 +109,10 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get --enforce-lockfile
 
+      - name: Prepare Flutter Android version
+        shell: pwsh
+        run: ./scripts/quality/Prepare-FlutterAndroidVersion.ps1 -RepoRoot "$PWD"
+
       - name: Run Android JVM tests
         working-directory: android
         run: |
@@ -190,6 +192,10 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get --enforce-lockfile
 
+      - name: Prepare Flutter Android version
+        shell: pwsh
+        run: ./scripts/quality/Prepare-FlutterAndroidVersion.ps1 -RepoRoot "$PWD"
+
       - name: Package Android DAG
         working-directory: android
         run: |
@@ -203,8 +209,8 @@ jobs:
           mkdir -p artifacts/android/manifests artifacts/android/reports
           cp build/app/outputs/flutter-apk/app-debug.apk artifacts/android/
           cp build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk artifacts/android/
-          find build/app/outputs -name '*release*.apk' -exec cp {} artifacts/android/ \;
-          find build/app/outputs -name '*release*.aab' -exec cp {} artifacts/android/ \;
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-release.apk
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-release.aab
           cp -R android/app/build/intermediates/merged_manifests artifacts/android/manifests || true
           cp -R android/app/build/reports artifacts/android/reports || true
           find artifacts/android -type f -print0 | xargs -0 sha256sum > artifacts/android/SHA256SUMS
@@ -241,41 +247,16 @@ jobs:
           name: android-package-once
           path: artifacts/android
 
-      - name: Audit provenance, hash, ABI, assets, and manifest
+      - name: Audit provenance, version, ABI, assets, and manifest
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $policy = Get-Content config/release/release_artifact_policy.json -Raw | ConvertFrom-Json
-          $aarHash = (Get-FileHash $policy.llamacppAarPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($aarHash -ne $policy.llamacppAarSha256) { throw 'AAR hash drifted.' }
-          $debugApk = Get-ChildItem artifacts/android -Filter app-debug.apk -Recurse | Select-Object -First 1
-          $testApk = Get-ChildItem artifacts/android -Filter app-debug-androidTest.apk -Recurse | Select-Object -First 1
-          $releaseApk = Get-ChildItem artifacts/android -Filter '*release*.apk' -Recurse | Select-Object -First 1
-          $releaseAab = Get-ChildItem artifacts/android -Filter '*release*.aab' -Recurse | Select-Object -First 1
-          foreach ($item in @($debugApk, $testApk, $releaseApk, $releaseAab)) {
-            if ($null -eq $item) { throw 'Expected Android package artifact is missing.' }
-          }
-          jar tf $debugApk.FullName | Set-Content artifacts/android/debug-apk.entries.txt
-          jar tf $releaseApk.FullName | Set-Content artifacts/android/release-apk.entries.txt
-          $debugEntries = Get-Content artifacts/android/debug-apk.entries.txt
-          foreach ($asset in $policy.requiredTokenizerAssets) {
-            if ($debugEntries -notcontains $asset) { throw "Missing tokenizer asset: $asset" }
-          }
-          foreach ($prefix in $policy.forbiddenAssetPrefixes) {
-            if ($debugEntries | Where-Object { $_.StartsWith($prefix) }) { throw "Forbidden asset packaged: $prefix" }
-          }
-          foreach ($library in $policy.forbiddenReleaseNativeLibraries) {
-            if ((Get-Content artifacts/android/release-apk.entries.txt) | Where-Object { $_.EndsWith($library) }) {
-              throw "Forbidden release native library packaged: $library"
-            }
-          }
-          Get-ChildItem artifacts/android -File -Recurse | ForEach-Object {
-            [pscustomobject]@{
-              path = $_.FullName.Replace((Resolve-Path artifacts/android).Path, '').TrimStart('/','\\')
-              bytes = $_.Length
-              sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            }
-          } | ConvertTo-Json -Depth 5 | Set-Content artifacts/android/provenance.json
+          ./scripts/quality/Invoke-AndroidArtifactAudit.ps1 `
+            -RepoRoot "$PWD" `
+            -DebugApkPath artifacts/android/app-debug.apk `
+            -AndroidTestApkPath artifacts/android/app-debug-androidTest.apk `
+            -ReleaseApkPath artifacts/android/app-release.apk `
+            -ReleaseAabPath artifacts/android/app-release.aab `
+            -OutputPath artifacts/android/android-artifact-audit.json
 
       - name: Upload audit diagnostics
         if: always()
@@ -283,8 +264,7 @@ jobs:
         with:
           name: artifact-audit
           path: |
-            artifacts/android/provenance.json
-            artifacts/android/*apk.entries.txt
+            artifacts/android/android-artifact-audit.json
             artifacts/android/SHA256SUMS
           retention-days: 14
 
@@ -332,7 +312,6 @@ jobs:
           name: api24-smoke-diagnostics
           path: artifacts/android/*logcat.txt
           retention-days: 14
-
   api34-smoke:
     name: API 34 artifact smoke
     runs-on: ubuntu-latest
@@ -377,101 +356,3 @@ jobs:
           name: api34-smoke-diagnostics
           path: artifacts/android/*logcat.txt
           retention-days: 14
-
-  sign-release-candidate:
-    name: Sign release candidate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs:
-      - artifact-audit
-      - api24-smoke
-      - api34-smoke
-    environment: release-signing
-    permissions:
-      contents: write
-      attestations: write
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Download package artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: android-package-once
-          path: artifacts/android
-
-      - name: Sign APK and AAB from package-once payload
-        shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.NSS_RELEASE_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.NSS_RELEASE_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.NSS_RELEASE_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.NSS_RELEASE_KEY_PASSWORD }}
-          EXPECTED_CERT_SHA256: ${{ secrets.NSS_RELEASE_CERT_SHA256 }}
-        run: |
-          set -euo pipefail
-          mkdir -p signed
-          keystore="$RUNNER_TEMP/nss-release.jks"
-          trap 'rm -f "$keystore" "$RUNNER_TEMP/key.properties"' EXIT
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
-          chmod 600 "$keystore"
-          release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-          release_aab=$(find artifacts/android -name '*release*.aab' | head -n 1)
-          zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
-          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
-          "$zipalign" -p -f 4 "$release_apk" signed/app-release-aligned.apk
-          "$apksigner" sign --ks "$keystore" --ks-key-alias "$KEY_ALIAS" --ks-pass pass:"$KEYSTORE_PASSWORD" --key-pass pass:"$KEY_PASSWORD" --out signed/app-release-signed.apk signed/app-release-aligned.apk
-          "$apksigner" verify --print-certs signed/app-release-signed.apk > signed/app-release-apk-certs.txt
-          jarsigner -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" -signedjar signed/app-release-signed.aab "$release_aab" "$KEY_ALIAS"
-          jarsigner -verify -verbose -certs signed/app-release-signed.aab > signed/app-release-aab-certs.txt
-          if [ -n "$EXPECTED_CERT_SHA256" ]; then
-            grep -qi "$EXPECTED_CERT_SHA256" signed/app-release-apk-certs.txt
-          fi
-          sha256sum signed/app-release-signed.apk signed/app-release-signed.aab > signed/SHA256SUMS
-
-      - name: Upload signed release candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: signed-release-candidate
-          path: signed
-          retention-days: 30
-
-      - name: Attest signed release candidate
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            signed/app-release-signed.apk
-            signed/app-release-signed.aab
-
-  draft-release:
-    name: Draft GitHub release
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: sign-release-candidate
-    environment: release-publish
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download signed candidate
-        uses: actions/download-artifact@v4
-        with:
-          name: signed-release-candidate
-          path: signed
-
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" signed/* --draft --title "$GITHUB_REF_NAME" --notes-file docs/release/v0.2.0-release-notes.md

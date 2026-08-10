@@ -22,6 +22,18 @@ This document is the parent plan for all `v0.2.0` repair work.
 - P0 containment work may be pulled forward, but no phase may be declared complete until its full gate passes.
 - No public release is allowed between security containment and completion of the security/data migration phases.
 
+## v0.2.0 Closeout Status
+
+Evidence-backed status as of `2026-08-10`:
+
+- [x] Phases 0-8 implementation histories and their recorded phase gates are present through `codex/repair-phase-8` (`2ff2db6`).
+- [x] Phase 9 local contracts, analysis, full Dart suite, Android JVM tests, one-shot Android packaging, artifact audit, and AAR provenance gates pass on `codex/v0.2.0-closeout`.
+- [x] Huawei closeout passes on `H8B4C19731000256` with `HUAWEI / SPN-AL00 / API 29 / arm64-v8a`, installed product `0.2.0+2`, and preserved user model files.
+- [ ] Formal signed-candidate validation against the historical `v0.1.0` installation remains open because the connected Huawei device already contained `0.2.0+2` before this closeout run.
+- [ ] Formal signing and public binary publication remain open; the current release workflow is intentionally in source-draft mode.
+
+The phase lists below remain the scope checklist. The evidence-backed block above is the release-status authority for this closeout; no unchecked scope item is treated as complete by documentation alone.
+
 ## Repair Phases
 
 ### Phase 0: Restore a Trustworthy Engineering Baseline

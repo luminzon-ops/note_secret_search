@@ -72,6 +72,10 @@ void main() {
       ]) {
         expect(workflow, contains(task));
       }
+      expect(workflow, contains('Prepare Flutter Android version'));
+      expect(workflow, contains('Invoke-AndroidArtifactAudit.ps1'));
+      expect(workflow, isNot(contains('sign-release-candidate')));
+      expect(workflow, isNot(contains('release-signing')));
       expect(workflow, isNot(contains('flutter build apk --debug')));
       expect(workflow, contains('retention-days: 7'));
       expect(workflow, contains('retention-days: 14'));
@@ -90,17 +94,81 @@ void main() {
     expect(workflow, contains('apksigner'));
   });
 
-  test('tag workflow signs and attests only in protected release jobs', () {
-    final workflow = _read('.github/workflows/quality.yml');
+  test('release workflow keeps source and formal modes explicit', () {
+    final workflow = _read('.github/workflows/release.yml');
+    expect(workflow, contains('NSS_FORMAL_RELEASE_ENABLED'));
+    expect(workflow, contains("vars.NSS_FORMAL_RELEASE_ENABLED != 'true'"));
+    expect(workflow, contains("vars.NSS_FORMAL_RELEASE_ENABLED == 'true'"));
     expect(workflow, contains('release-signing'));
+    expect(workflow, contains('release-publish'));
     expect(workflow, contains('NSS_RELEASE_KEYSTORE_BASE64'));
     expect(workflow, contains('verify --print-certs'));
     expect(workflow, contains('jarsigner -verify'));
     expect(workflow, contains('actions/attest-build-provenance'));
     expect(workflow, contains('gh release create'));
     expect(workflow, contains('contents: write'));
-    expect(workflow, contains('attestations: write'));
-    expect(workflow, contains('id-token: write'));
+    expect(workflow, contains('app-release-signed.apk'));
+    expect(workflow, contains('app-release-signed.aab'));
+  });
+
+  test('version preparation and artifact audit fail closed', () {
+    final prepare = _read(
+      'scripts/quality/Prepare-FlutterAndroidVersion.ps1',
+    );
+    expect(prepare, contains('build apk --config-only --no-pub'));
+    expect(prepare, contains('flutter.versionName'));
+    expect(prepare, contains('flutter.versionCode'));
+    expect(prepare, contains('Gradle default 1.0/1'));
+
+    final gradle = _read('android/app/build.gradle.kts');
+    expect(gradle, contains('Properties'));
+    expect(gradle, contains('local.properties is missing'));
+    expect(gradle, contains('flutterVersionCode != 1'));
+    expect(gradle, contains('flutterVersionName != "1.0"'));
+
+    final audit = _read(
+      'scripts/quality/Invoke-AndroidArtifactAudit.ps1',
+    );
+    expect(audit, contains("dump', 'badging'"));
+    expect(audit, contains('VersionName'));
+    expect(audit, contains('VersionCode'));
+    expect(audit, contains('requiredTokenizerAssets'));
+    expect(audit, contains('allowBackup'));
+    expect(audit, contains('forbiddenReleaseNativeLibraries'));
+  });
+
+  test('Huawei closeout is serial-gated and backs up before installation', () {
+    final script = _read(
+      'scripts/quality/Invoke-HuaweiV020Closeout.ps1',
+    );
+    final common = _read(
+      'scripts/quality/HuaweiV020Closeout.Common.ps1',
+    );
+    expect(script, contains('H8B4C19731000256'));
+    expect(script, contains('HUAWEI'));
+    expect(script, contains('SPN-AL00'));
+    expect(script, contains('0.2.0+2'));
+    expect(script, contains("Invoke-Adb @('install', '-r'"));
+    expect(script, contains('E:\\Archive\\Flutter\\.note_secret_search_device_backups'));
+    expect(script, contains('Backup-DeviceState'));
+    expect(script, contains('finally'));
+    expect(script, contains(r'uninstall $testPackageName'));
+    expect(common, contains(r"@('-s', $Serial)"));
+    expect(common, contains('get-state'));
+    expect(common, contains("'run-as'"));
+    expect(common, contains("'sha256sum'"));
+    expect(common, contains('RequireApplicationPid'));
+    expect(script, contains('-RequireApplicationPid'));
+    expect(common, contains(r'$ToolName.bat'));
+    expect(common, contains('device-files-before.json'));
+    expect(
+      script.indexOf('Backup-DeviceState'),
+      lessThan(script.indexOf("Invoke-Adb @('install', '-r'")),
+    );
+    expect(
+      script.indexOf('install', script.indexOf("Invoke-Adb @('install', '-r'")),
+      lessThan(script.indexOf(r'uninstall $testPackageName')),
+    );
   });
 
   test('v0.2.0 release documents exist and avoid unsupported claims', () {
@@ -138,6 +206,7 @@ void main() {
       final quality = _read('scripts/quality/Invoke-QualityChecks.ps1');
       expect(quality, contains('Resolve-GradleWrapper'));
       expect(quality, contains('-PackageOnce'));
+      expect(quality, contains(r'Mandatory = $false'));
       expect(quality, isNot(contains('.\\gradlew.bat')));
 
       final aarGate = _read('scripts/quality/Invoke-LlmAarProvenanceGate.ps1');

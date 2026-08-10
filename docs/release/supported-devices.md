@@ -6,7 +6,7 @@
 - Target Android API: 34.
 - Compile SDK: 36.
 - Release smoke coverage: API 24 and API 34 emulator jobs consume the package-once artifacts.
-- Physical evidence reused from Phase 8: Huawei SPN-AL00 / API 29.
+- Physical closeout evidence: Huawei SPN-AL00 / API 29, serial-gated on August 10, 2026.
 
 ## Runtime Notes
 
@@ -18,3 +18,4 @@
 
 - A new signed release candidate must pass clean install, cold start, force-stop, relaunch, and v0.1.0 upgrade/data-preservation smoke before publishing.
 - Phase 8 Huawei BGE and sensitive-log suites are reused unless runtime source, AAR, native packaging, tokenizer/assets, relevant instrumentation, ABI, or dependency inputs materially change.
+- The v0.2.0 debug APK installed on the Huawei device is a local validation artifact only; it is not a public distribution binary.

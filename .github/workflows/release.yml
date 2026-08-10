@@ -1,0 +1,213 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.41.5"
+  JAVA_VERSION: "17"
+
+jobs:
+  source-draft:
+    name: Create source-only draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: vars.NSS_FORMAL_RELEASE_ENABLED != 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create source-only draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file docs/release/v0.2.0-release-notes.md
+
+  formal-package:
+    name: Package formal release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Prepare Flutter Android version
+        shell: pwsh
+        run: ./scripts/quality/Prepare-FlutterAndroidVersion.ps1 -RepoRoot "$PWD"
+
+      - name: Package Android artifacts
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
+
+      - name: Audit Android artifacts
+        shell: pwsh
+        run: |
+          ./scripts/quality/Invoke-AndroidArtifactAudit.ps1 `
+            -RepoRoot "$PWD" `
+            -DebugApkPath build/app/outputs/flutter-apk/app-debug.apk `
+            -AndroidTestApkPath build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk `
+            -ReleaseApkPath build/app/outputs/flutter-apk/app-release.apk `
+            -ReleaseAabPath build/app/outputs/bundle/release/app-release.aab
+
+      - name: Collect formal release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/android
+          cp build/app/outputs/flutter-apk/app-release.apk artifacts/android/app-release.apk
+          cp build/app/outputs/bundle/release/app-release.aab artifacts/android/app-release.aab
+
+      - name: Upload formal release inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: formal-release-inputs
+          path: artifacts/android
+          retention-days: 14
+
+  sign-formal:
+    name: Sign formal release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
+    needs: formal-package
+    environment: release-signing
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Download formal release inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: formal-release-inputs
+          path: artifacts/android
+
+      - name: Sign and verify formal release
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NSS_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NSS_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NSS_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NSS_RELEASE_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ secrets.NSS_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p signed
+          keystore="$RUNNER_TEMP/nss-release.jks"
+          trap 'rm -f "$keystore"' EXIT
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+          chmod 600 "$keystore"
+          zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          "$zipalign" -p -f 4 artifacts/android/app-release.apk signed/app-release-aligned.apk
+          "$apksigner" sign \
+            --ks "$keystore" \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass pass:"$KEYSTORE_PASSWORD" \
+            --key-pass pass:"$KEY_PASSWORD" \
+            --out signed/app-release-signed.apk \
+            signed/app-release-aligned.apk
+          "$apksigner" verify --print-certs signed/app-release-signed.apk \
+            > signed/app-release-apk-certs.txt
+          jarsigner \
+            -keystore "$keystore" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            -signedjar signed/app-release-signed.aab \
+            artifacts/android/app-release.aab \
+            "$KEY_ALIAS"
+          jarsigner -verify -verbose -certs signed/app-release-signed.aab \
+            > signed/app-release-aab-certs.txt
+          if [ -n "$EXPECTED_CERT_SHA256" ]; then
+            grep -qi "$EXPECTED_CERT_SHA256" signed/app-release-apk-certs.txt
+          fi
+          sha256sum signed/app-release-signed.apk signed/app-release-signed.aab \
+            > signed/SHA256SUMS
+
+      - name: Upload signed formal release
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-formal-release
+          path: signed
+          retention-days: 30
+
+      - name: Attest signed formal release
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            signed/app-release-signed.apk
+            signed/app-release-signed.aab
+
+  publish-formal:
+    name: Publish formal draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
+    needs: sign-formal
+    environment: release-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download signed formal release
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-formal-release
+          path: signed
+
+      - name: Create formal draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            signed/app-release-signed.apk \
+            signed/app-release-signed.aab \
+            --draft \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file docs/release/v0.2.0-release-notes.md

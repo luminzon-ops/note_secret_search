@@ -51,6 +51,7 @@ flutter pub get
 flutter run --debug
 
 # 构建 Android debug / androidTest / release APK / release AAB（单次 Gradle DAG）
+flutter build apk --config-only --no-pub
 cd android
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --stacktrace
 ```
@@ -61,7 +62,7 @@ cd android
 .\scripts\quality\Invoke-QualityChecks.ps1
 ```
 
-CI 使用同一 release contract、Dart/JVM/static gates，并通过 `package-once` job 产出 debug APK、androidTest APK、unsigned release APK/AAB。后续 artifact audit、API 24/API 34 smoke、tag-only signing 和 draft release 均消费同一批 artifacts。
+CI 使用同一 release contract、Dart/JVM/static gates，并通过 `package-once` job 产出 debug APK、androidTest APK、unsigned release APK/AAB。后续 artifact audit、API 24/API 34 smoke 消费同一批 artifacts；tag 发布由独立 release workflow 管理，默认只创建源码说明草稿。
 
 ### 发布文档
 
