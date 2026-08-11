@@ -287,7 +287,7 @@ jobs:
           target: default
           arch: x86_64
           script: |
-            set -euo pipefail
+            set -eu
             adb install -r artifacts/android/app-debug.apk
             adb install -r artifacts/android/app-debug-androidTest.apk
             adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner
@@ -331,7 +331,7 @@ jobs:
           target: google_apis
           arch: x86_64
           script: |
-            set -euo pipefail
+            set -eu
             adb install -r artifacts/android/app-debug.apk
             adb install -r artifacts/android/app-debug-androidTest.apk
             adb shell am instrument -w -e class com.example.note_secret_search.ReleaseReadinessSmokeInstrumentationTest com.example.note_secret_search.test/androidx.test.runner.AndroidJUnitRunner

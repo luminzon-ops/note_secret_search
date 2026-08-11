@@ -92,6 +92,11 @@ void main() {
     expect(workflow, contains('app-debug-androidTest.apk'));
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
+    final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
+    final bashPipefail =
+        RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);
+    expect(smokeSetEu.allMatches(workflow), hasLength(2));
+    expect(bashPipefail.allMatches(workflow), hasLength(1));
   });
 
   test('release workflow keeps source and formal modes explicit', () {
