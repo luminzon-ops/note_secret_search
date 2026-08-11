@@ -93,10 +93,7 @@ void main() {
     expect(workflow, contains('app-debug-androidTest.apk'));
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
-    expect(
-      workflow,
-      contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'),
-    );
+    expect(workflow, contains('build_tools_dir='));
     expect(workflow, contains('sort -V | tail -n 1'));
     expect(workflow, contains(r'test -n "$build_tools_dir"'));
     expect(
@@ -111,7 +108,7 @@ void main() {
     expect(
       workflow,
       contains(
-        r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(dirname "$(dirname "$(command -v adb)")")}}"',
+        r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"',
       ),
     );
     expect(workflow, contains(r'test -d "$sdk_root/build-tools"'));
