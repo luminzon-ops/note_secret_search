@@ -108,10 +108,10 @@ void main() {
         ),
       ),
     );
-    expect(
-      workflow,
-      contains(r'ANDROID_HOME or ANDROID_SDK_ROOT is required'),
-    );
+    expect(workflow, contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'));
+    expect(workflow, contains(r'adb_path="$(command -v adb)"'));
+    expect(workflow, contains(r'test -d "$sdk_root/build-tools"'));
+    expect(workflow, contains(r'debug_keystore="${ANDROID_DEBUG_KEYSTORE:-$HOME/.android/debug.keystore}"'));
     expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
@@ -135,13 +135,11 @@ void main() {
     expect(workflow, contains('contents: write'));
     expect(workflow, contains('app-release-signed.apk'));
     expect(workflow, contains('app-release-signed.aab'));
-    expect(
-      workflow,
-      contains(
-        r'sdkmanager --sdk_root="$sdk_root" --install '
-        "'build-tools;35.0.0'",
-      ),
-    );
+    expect(workflow, contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'));
+    expect(workflow, contains(r'sdkmanager_path="$(command -v sdkmanager)"'));
+    expect(workflow, contains(r'../../.."'));
+    expect(workflow, contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'));
+    expect(workflow, contains(r'test -n "$build_tools_dir"'));
   });
 
   test('version preparation and artifact audit fail closed', () {
