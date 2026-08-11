@@ -94,6 +94,8 @@ void main() {
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
     expect(workflow, contains("sdkmanager --install 'build-tools;35.0.0'"));
+    expect(workflow, contains(r'ANDROID_HOME:?ANDROID_HOME is required'));
+    expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
         RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);

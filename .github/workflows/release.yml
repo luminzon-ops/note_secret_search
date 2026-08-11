@@ -144,11 +144,12 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
           chmod 600 "$keystore"
           sdkmanager --install 'build-tools;35.0.0' > /dev/null
-          sdk_root=$(cd "$(dirname "$(command -v sdkmanager)")/../../.." && pwd)
+          sdk_root="${ANDROID_HOME:?ANDROID_HOME is required}"
           zipalign="$sdk_root/build-tools/35.0.0/zipalign"
           apksigner="$sdk_root/build-tools/35.0.0/apksigner"
-          test -x "$zipalign"
-          test -x "$apksigner"
+          test -f "$zipalign"
+          test -f "$apksigner"
+          chmod +x "$zipalign" "$apksigner"
           "$zipalign" -p -f 4 artifacts/android/app-release.apk signed/app-release-aligned.apk
           "$apksigner" sign \
             --ks "$keystore" \
