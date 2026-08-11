@@ -95,9 +95,17 @@ void main() {
     expect(workflow, contains('apksigner'));
     expect(
       workflow,
-      contains(
-        r'sdkmanager --sdk_root="$sdk_root" --install '
-        "'build-tools;35.0.0'",
+      contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'),
+    );
+    expect(workflow, contains('sort -V | tail -n 1'));
+    expect(workflow, contains(r'test -n "$build_tools_dir"'));
+    expect(
+      workflow,
+      isNot(
+        contains(
+          r'sdkmanager --sdk_root="$sdk_root" --install '
+          "'build-tools;35.0.0'",
+        ),
       ),
     );
     expect(
