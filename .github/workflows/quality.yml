@@ -304,9 +304,10 @@ jobs:
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
             sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}"
-            sdkmanager --sdk_root="$sdk_root" --install 'build-tools;35.0.0' > /dev/null
-            zipalign="$sdk_root/build-tools/35.0.0/zipalign"
-            apksigner="$sdk_root/build-tools/35.0.0/apksigner"
+            build_tools_dir=$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
+            test -n "$build_tools_dir"
+            zipalign="$build_tools_dir/zipalign"
+            apksigner="$build_tools_dir/apksigner"
             test -f "$zipalign"
             test -f "$apksigner"
             chmod +x "$zipalign" "$apksigner"
@@ -362,9 +363,10 @@ jobs:
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
             sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}"
-            sdkmanager --sdk_root="$sdk_root" --install 'build-tools;35.0.0' > /dev/null
-            zipalign="$sdk_root/build-tools/35.0.0/zipalign"
-            apksigner="$sdk_root/build-tools/35.0.0/apksigner"
+            build_tools_dir=$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
+            test -n "$build_tools_dir"
+            zipalign="$build_tools_dir/zipalign"
+            apksigner="$build_tools_dir/apksigner"
             test -f "$zipalign"
             test -f "$apksigner"
             chmod +x "$zipalign" "$apksigner"
