@@ -303,11 +303,7 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-            if [ -z "$sdk_root" ]; then
-              adb_path="$(command -v adb)"
-              sdk_root="$(cd "$(dirname "$adb_path")/.." && pwd)"
-            fi
+            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(dirname "$(dirname "$(command -v adb)")")}}"
             test -d "$sdk_root/build-tools"
             build_tools_dir=$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
             test -n "$build_tools_dir"
@@ -369,11 +365,7 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-            if [ -z "$sdk_root" ]; then
-              adb_path="$(command -v adb)"
-              sdk_root="$(cd "$(dirname "$adb_path")/.." && pwd)"
-            fi
+            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(dirname "$(dirname "$(command -v adb)")")}}"
             test -d "$sdk_root/build-tools"
             build_tools_dir=$(find "$sdk_root/build-tools" -mindepth 1 -maxdepth 1 -type d -print | sort -V | tail -n 1)
             test -n "$build_tools_dir"

@@ -108,8 +108,12 @@ void main() {
         ),
       ),
     );
-    expect(workflow, contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'));
-    expect(workflow, contains(r'adb_path="$(command -v adb)"'));
+    expect(
+      workflow,
+      contains(
+        r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$(dirname "$(dirname "$(command -v adb)")")}}"',
+      ),
+    );
     expect(workflow, contains(r'test -d "$sdk_root/build-tools"'));
     expect(workflow, contains(r'debug_keystore="${ANDROID_DEBUG_KEYSTORE:-$HOME/.android/debug.keystore}"'));
     expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
