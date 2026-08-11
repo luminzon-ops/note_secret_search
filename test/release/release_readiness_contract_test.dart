@@ -42,6 +42,7 @@ void main() {
   test('Android release config keeps cleartext and debug flags closed', () {
     final manifest = _read('android/app/src/main/AndroidManifest.xml');
     expect(manifest, isNot(contains('usesCleartextTraffic="true"')));
+    expect(manifest, contains('android:usesCleartextTraffic="false"'));
     expect(manifest, isNot(contains('android:debuggable="true"')));
 
     final appGradle = _read('android/app/build.gradle.kts');
@@ -92,6 +93,7 @@ void main() {
     expect(workflow, contains('app-debug-androidTest.apk'));
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
+    expect(workflow, contains("sdkmanager --install 'build-tools;35.0.0'"));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
         RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);
@@ -114,6 +116,7 @@ void main() {
     expect(workflow, contains('contents: write'));
     expect(workflow, contains('app-release-signed.apk'));
     expect(workflow, contains('app-release-signed.aab'));
+    expect(workflow, contains("sdkmanager --install 'build-tools;35.0.0'"));
   });
 
   test('version preparation and artifact audit fail closed', () {

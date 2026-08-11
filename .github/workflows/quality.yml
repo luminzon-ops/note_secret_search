@@ -294,8 +294,12 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
-            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            sdkmanager --install 'build-tools;35.0.0' > /dev/null
+            sdk_root=$(cd "$(dirname "$(command -v sdkmanager)")/../../.." && pwd)
+            zipalign="$sdk_root/build-tools/35.0.0/zipalign"
+            apksigner="$sdk_root/build-tools/35.0.0/apksigner"
+            test -x "$zipalign"
+            test -x "$apksigner"
             "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
             "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
             "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
@@ -338,8 +342,12 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            zipalign=$(find "$ANDROID_HOME/build-tools" -name zipalign | sort -V | tail -n 1)
-            apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+            sdkmanager --install 'build-tools;35.0.0' > /dev/null
+            sdk_root=$(cd "$(dirname "$(command -v sdkmanager)")/../../.." && pwd)
+            zipalign="$sdk_root/build-tools/35.0.0/zipalign"
+            apksigner="$sdk_root/build-tools/35.0.0/apksigner"
+            test -x "$zipalign"
+            test -x "$apksigner"
             "$zipalign" -p -f 4 "$release_apk" "$RUNNER_TEMP/release-aligned.apk"
             "$apksigner" sign --ks "$ANDROID_HOME/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-signed.apk" "$RUNNER_TEMP/release-aligned.apk"
             "$apksigner" verify --print-certs "$RUNNER_TEMP/release-signed.apk"
