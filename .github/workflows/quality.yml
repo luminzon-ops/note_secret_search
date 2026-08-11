@@ -294,8 +294,8 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            sdkmanager --install 'build-tools;35.0.0' > /dev/null
-            sdk_root="${ANDROID_HOME:?ANDROID_HOME is required}"
+            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}"
+            sdkmanager --sdk_root="$sdk_root" --install 'build-tools;35.0.0' > /dev/null
             zipalign="$sdk_root/build-tools/35.0.0/zipalign"
             apksigner="$sdk_root/build-tools/35.0.0/apksigner"
             test -f "$zipalign"
@@ -343,8 +343,8 @@ jobs:
             adb uninstall com.example.note_secret_search.test || true
             adb uninstall com.example.note_secret_search || true
             release_apk=$(find artifacts/android -name '*release*.apk' | head -n 1)
-            sdkmanager --install 'build-tools;35.0.0' > /dev/null
-            sdk_root="${ANDROID_HOME:?ANDROID_HOME is required}"
+            sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?ANDROID_HOME or ANDROID_SDK_ROOT is required}}"
+            sdkmanager --sdk_root="$sdk_root" --install 'build-tools;35.0.0' > /dev/null
             zipalign="$sdk_root/build-tools/35.0.0/zipalign"
             apksigner="$sdk_root/build-tools/35.0.0/apksigner"
             test -f "$zipalign"

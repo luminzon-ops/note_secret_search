@@ -93,8 +93,17 @@ void main() {
     expect(workflow, contains('app-debug-androidTest.apk'));
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
-    expect(workflow, contains("sdkmanager --install 'build-tools;35.0.0'"));
-    expect(workflow, contains(r'ANDROID_HOME:?ANDROID_HOME is required'));
+    expect(
+      workflow,
+      contains(
+        r'sdkmanager --sdk_root="$sdk_root" --install '
+        "'build-tools;35.0.0'",
+      ),
+    );
+    expect(
+      workflow,
+      contains(r'ANDROID_HOME or ANDROID_SDK_ROOT is required'),
+    );
     expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
@@ -118,7 +127,13 @@ void main() {
     expect(workflow, contains('contents: write'));
     expect(workflow, contains('app-release-signed.apk'));
     expect(workflow, contains('app-release-signed.aab'));
-    expect(workflow, contains("sdkmanager --install 'build-tools;35.0.0'"));
+    expect(
+      workflow,
+      contains(
+        r'sdkmanager --sdk_root="$sdk_root" --install '
+        "'build-tools;35.0.0'",
+      ),
+    );
   });
 
   test('version preparation and artifact audit fail closed', () {
