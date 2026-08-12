@@ -250,29 +250,18 @@ Assert-ArraysEqual `
   -Message 'Provenance class list does not match classes.jar.'
 
 if ([string]::IsNullOrWhiteSpace($AndroidSdkRoot)) {
-  $sdkCandidates = @(
-    $env:ANDROID_SDK_ROOT,
-    $env:ANDROID_HOME,
-    'D:\Program\Android\SDK',
-    (Join-Path $env:LOCALAPPDATA 'Android\Sdk')
-  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-  $AndroidSdkRoot = $sdkCandidates |
-    Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
-    Select-Object -First 1
+  $AndroidSdkRoot = Resolve-LlmAndroidSdkRoot
 }
 Assert-Text -Condition (-not [string]::IsNullOrWhiteSpace($AndroidSdkRoot)) `
   -Message 'Pinned Android SDK was not found for ELF audit.'
 $AndroidSdkRoot = (Resolve-Path -LiteralPath $AndroidSdkRoot).Path
-$ndkBin = Join-Path $AndroidSdkRoot `
-  "ndk\$($lock.toolchain.ndk)\toolchains\llvm\prebuilt\windows-x86_64\bin"
-$readElf = Join-Path $ndkBin 'llvm-readelf.exe'
-$nm = Join-Path $ndkBin 'llvm-nm.exe'
-$stringsTool = Join-Path $ndkBin 'llvm-strings.exe'
-$objdump = Join-Path $ndkBin 'llvm-objdump.exe'
-foreach ($tool in @($readElf, $nm, $stringsTool, $objdump)) {
-  Assert-Text -Condition (Test-Path -LiteralPath $tool -PathType Leaf) `
-    -Message "Pinned ELF audit tool is missing: $tool"
-}
+$auditTools = Resolve-LlmNdkAuditTools `
+  -AndroidSdkRoot $AndroidSdkRoot `
+  -NdkVersion $lock.toolchain.ndk
+$readElf = $auditTools.readElf
+$nm = $auditTools.nm
+$stringsTool = $auditTools.stringsTool
+$objdump = $auditTools.objdump
 $nativeBytes = Get-LlmZipEntryBytes `
   -ZipPath $artifactPath `
   -EntryPath $nativeRecords[0].Path

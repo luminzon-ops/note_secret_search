@@ -42,6 +42,7 @@ void main() {
   test('Android release config keeps cleartext and debug flags closed', () {
     final manifest = _read('android/app/src/main/AndroidManifest.xml');
     expect(manifest, isNot(contains('usesCleartextTraffic="true"')));
+    expect(manifest, contains('android:usesCleartextTraffic="false"'));
     expect(manifest, isNot(contains('android:debuggable="true"')));
 
     final appGradle = _read('android/app/build.gradle.kts');
@@ -92,6 +93,40 @@ void main() {
     expect(workflow, contains('app-debug-androidTest.apk'));
     expect(workflow, contains('zipalign'));
     expect(workflow, contains('apksigner'));
+    expect(workflow, contains('build_tools_dir='));
+    expect(workflow, contains('sort -V | tail -n 1'));
+    expect(workflow, contains(r'test -n "$build_tools_dir"'));
+    expect(
+      workflow,
+      isNot(
+        contains(
+          r'sdkmanager --sdk_root="$sdk_root" --install '
+          "'build-tools;35.0.0'",
+        ),
+      ),
+    );
+    expect(
+      workflow,
+      contains(
+        r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"',
+      ),
+    );
+    expect(workflow, contains(r'test -d "$sdk_root/build-tools"'));
+    expect(
+      workflow,
+      contains(
+        r'debug_keystore="${ANDROID_DEBUG_KEYSTORE:-$RUNNER_TEMP/nss-debug.keystore}"',
+      ),
+    );
+    expect(workflow, contains('keytool -genkeypair -noprompt'));
+    expect(workflow, contains(r'test -s "$debug_keystore"'));
+    expect(workflow, contains(r'test -x "$zipalign"'));
+    expect(workflow, contains(r'test -x "$apksigner"'));
+    final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
+    final bashPipefail =
+        RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);
+    expect(smokeSetEu.allMatches(workflow), hasLength(2));
+    expect(bashPipefail.allMatches(workflow), hasLength(1));
   });
 
   test('release workflow keeps source and formal modes explicit', () {
@@ -109,6 +144,11 @@ void main() {
     expect(workflow, contains('contents: write'));
     expect(workflow, contains('app-release-signed.apk'));
     expect(workflow, contains('app-release-signed.aab'));
+    expect(workflow, contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'));
+    expect(workflow, contains(r'sdkmanager_path="$(command -v sdkmanager)"'));
+    expect(workflow, contains(r'../../.."'));
+    expect(workflow, contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'));
+    expect(workflow, contains(r'test -n "$build_tools_dir"'));
   });
 
   test('version preparation and artifact audit fail closed', () {
@@ -210,7 +250,14 @@ void main() {
       expect(quality, isNot(contains('.\\gradlew.bat')));
 
       final aarGate = _read('scripts/quality/Invoke-LlmAarProvenanceGate.ps1');
+      final aarCommon = _read('scripts/llm/LlmAarCommon.psm1');
       expect(aarGate, contains('SkipRebuild'));
+      expect(aarGate, contains('Resolve-LlmNdkAuditTools'));
+      expect(aarCommon, contains('Resolve-LlmAndroidSdkRoot'));
+      expect(aarCommon, contains('Resolve-LlmNdkAuditTools'));
+      expect(aarCommon, contains('linux-x86_64'));
+      expect(aarCommon, contains('windows-x86_64'));
+      expect(aarCommon, contains('LOCALAPPDATA'));
 
       final deviceGate = _read(
         'scripts/quality/Invoke-EmbeddingRuntimeDeviceGate.ps1',
