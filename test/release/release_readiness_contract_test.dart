@@ -120,7 +120,8 @@ void main() {
     );
     expect(workflow, contains('keytool -genkeypair -noprompt'));
     expect(workflow, contains(r'test -s "$debug_keystore"'));
-    expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
+    expect(workflow, contains(r'test -x "$zipalign"'));
+    expect(workflow, contains(r'test -x "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
         RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);

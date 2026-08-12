@@ -155,7 +155,8 @@ jobs:
           apksigner="$build_tools_dir/apksigner"
           test -f "$zipalign"
           test -f "$apksigner"
-          chmod +x "$zipalign" "$apksigner"
+          test -x "$zipalign"
+          test -x "$apksigner"
           "$zipalign" -p -f 4 artifacts/android/app-release.apk signed/app-release-aligned.apk
           "$apksigner" sign \
             --ks "$keystore" \
