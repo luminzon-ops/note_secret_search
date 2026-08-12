@@ -112,7 +112,14 @@ void main() {
       ),
     );
     expect(workflow, contains(r'test -d "$sdk_root/build-tools"'));
-    expect(workflow, contains(r'debug_keystore="${ANDROID_DEBUG_KEYSTORE:-$HOME/.android/debug.keystore}"'));
+    expect(
+      workflow,
+      contains(
+        r'debug_keystore="${ANDROID_DEBUG_KEYSTORE:-$RUNNER_TEMP/nss-debug.keystore}"',
+      ),
+    );
+    expect(workflow, contains('keytool -genkeypair -noprompt'));
+    expect(workflow, contains(r'test -s "$debug_keystore"'));
     expect(workflow, contains(r'chmod +x "$zipalign" "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
     final bashPipefail =
