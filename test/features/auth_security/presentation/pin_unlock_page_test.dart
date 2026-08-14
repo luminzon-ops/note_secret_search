@@ -32,9 +32,7 @@ void main() {
       final secureKeyGateway = _FakeSecureKeyGateway(pin: '2468');
       sessionController.setPinEnabled(true);
       pinStateController.configureEnabled(true);
-      final routeGuard = LockRouteGuard(
-        navigation: PostUnlockNavigation(),
-      );
+      final routeGuard = LockRouteGuard(navigation: PostUnlockNavigation());
       final router = GoRouter(
         initialLocation: '/unlock/pin',
         redirect: (context, state) => routeGuard.redirect(
@@ -74,7 +72,7 @@ void main() {
                 sessionKeyStore: DatabaseSessionKeyStore(),
                 database: FakeAppDatabase(),
                 logger: const AppLogger(),
-                appIsForeground: () => true,
+                appUnlockVisibility: () => AppUnlockVisibility.foreground,
               ),
             ),
             securitySettingsRepositoryProvider.overrideWith(
@@ -157,12 +155,10 @@ void main() {
               sessionKeyStore: DatabaseSessionKeyStore(),
               database: FakeAppDatabase(),
               logger: const AppLogger(),
-              appIsForeground: () => true,
+              appUnlockVisibility: () => AppUnlockVisibility.foreground,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith(
-            (ref) => repository,
-          ),
+          securitySettingsRepositoryProvider.overrideWith((ref) => repository),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,
@@ -213,12 +209,10 @@ void main() {
               sessionKeyStore: DatabaseSessionKeyStore(),
               database: FakeAppDatabase(),
               logger: const AppLogger(),
-              appIsForeground: () => true,
+              appUnlockVisibility: () => AppUnlockVisibility.foreground,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith(
-            (ref) => repository,
-          ),
+          securitySettingsRepositoryProvider.overrideWith((ref) => repository),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,
@@ -269,12 +263,10 @@ void main() {
               sessionKeyStore: DatabaseSessionKeyStore(),
               database: FakeAppDatabase(),
               logger: const AppLogger(),
-              appIsForeground: () => true,
+              appUnlockVisibility: () => AppUnlockVisibility.foreground,
             ),
           ),
-          securitySettingsRepositoryProvider.overrideWith(
-            (ref) => repository,
-          ),
+          securitySettingsRepositoryProvider.overrideWith((ref) => repository),
           securitySettingsControllerProvider.overrideWith(
             (ref) => SecuritySettingsController(
               repository: repository,

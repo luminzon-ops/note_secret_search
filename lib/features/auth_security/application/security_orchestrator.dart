@@ -7,6 +7,10 @@ import 'package:note_secret_search/features/auth_security/application/pin_state_
 import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
 
+enum AppUnlockVisibility { foreground, inactive, background }
+
+typedef AppUnlockVisibilityReader = AppUnlockVisibility Function();
+
 class SecurityOrchestrator {
   SecurityOrchestrator({
     required BiometricGateway biometricGateway,
@@ -17,7 +21,7 @@ class SecurityOrchestrator {
     required DatabaseSessionKeyStore sessionKeyStore,
     required AppDatabase database,
     required AppLogger logger,
-    required bool Function() appIsForeground,
+    required AppUnlockVisibilityReader appUnlockVisibility,
     LegacySecurityMigrationRunner? legacySecurityMigration,
   }) : _screenshotProtectionGateway = screenshotProtectionGateway,
        _secureKeyGateway = secureKeyGateway,
@@ -26,7 +30,7 @@ class SecurityOrchestrator {
        _sessionKeyStore = sessionKeyStore,
        _database = database,
        _logger = logger,
-       _appIsForeground = appIsForeground,
+       _appUnlockVisibility = appUnlockVisibility,
        _legacySecurityMigration = legacySecurityMigration;
 
   final ScreenshotProtectionGateway _screenshotProtectionGateway;
@@ -36,7 +40,7 @@ class SecurityOrchestrator {
   final DatabaseSessionKeyStore _sessionKeyStore;
   final AppDatabase _database;
   final AppLogger _logger;
-  final bool Function() _appIsForeground;
+  final AppUnlockVisibilityReader _appUnlockVisibility;
   final LegacySecurityMigrationRunner? _legacySecurityMigration;
   int _operationEpoch = 0;
   bool _unlockInProgress = false;
@@ -213,13 +217,24 @@ class SecurityOrchestrator {
       return false;
     }
 
-    try {
-      await _screenshotProtectionGateway.updateRecentTaskProtection(
-        obscured: false,
-      );
-    } catch (_) {
-      await _revokeFailedUnlock();
-      return false;
+    if (_canRevealSensitiveContent()) {
+      try {
+        await _screenshotProtectionGateway.updateRecentTaskProtection(
+          obscured: false,
+        );
+      } catch (_) {
+        await _revokeFailedUnlock();
+        return false;
+      }
+
+      if (!_canCompleteUnlock(expectedLockEpoch, expectedOperationEpoch)) {
+        await _revokeFailedUnlock();
+        await _restoreShieldAfterStaleUnlock();
+        return false;
+      }
+      if (!_canRevealSensitiveContent()) {
+        await _restoreShieldAfterStaleUnlock();
+      }
     }
 
     if (!_canCompleteUnlock(expectedLockEpoch, expectedOperationEpoch)) {
@@ -261,11 +276,11 @@ class SecurityOrchestrator {
     return !_sessionController.isUnlocked &&
         _sessionController.lockEpoch == expectedLockEpoch &&
         _operationEpoch == expectedOperationEpoch &&
-        _appIsForeground();
+        _appUnlockVisibility() != AppUnlockVisibility.background;
   }
 
   Future<void> _restoreShieldAfterStaleUnlock() async {
-    if (_sessionController.isUnlocked && _appIsForeground()) {
+    if (_sessionController.isUnlocked && _canRevealSensitiveContent()) {
       return;
     }
     try {
@@ -275,6 +290,10 @@ class SecurityOrchestrator {
     } catch (_) {
       _sessionController.lock();
     }
+  }
+
+  bool _canRevealSensitiveContent() {
+    return _appUnlockVisibility() == AppUnlockVisibility.foreground;
   }
 
   void registerPinFailure({

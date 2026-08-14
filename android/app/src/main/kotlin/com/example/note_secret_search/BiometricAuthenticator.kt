@@ -23,6 +23,9 @@ class BiometricAuthenticator(
     private val executor = ContextCompat.getMainExecutor(activity)
     private val sessions = BiometricAuthenticationSessionGate()
     private var activePrompt: BiometricPrompt? = null
+    private var activePromptSession: BiometricAuthenticationSession? = null
+    private var promptLostWindowFocus = false
+    private var focusRecoveryGeneration = 0L
 
     override fun authenticate(
         request: SystemAuthRequest,
@@ -41,13 +44,11 @@ class BiometricAuthenticator(
                 val prompt = BiometricPrompt(
                     hostActivity,
                     executor,
-                    callback(request, dispatcher) {
-                        if (sessions.complete(session)) {
-                            activePrompt = null
-                        }
-                    },
+                    callback(request, dispatcher, session),
                 )
                 activePrompt = prompt
+                activePromptSession = session
+                promptLostWindowFocus = false
                 val promptInfo = promptInfo(request)
                 val cipher = request.cipher
                 if (cipher == null) {
@@ -60,7 +61,7 @@ class BiometricAuthenticator(
                 }
             } catch (error: Throwable) {
                 if (sessions.complete(session)) {
-                    activePrompt = null
+                    clearActivePrompt(session)
                 }
                 terminal.failed(
                     error as? NativeSecurityException
@@ -77,9 +78,40 @@ class BiometricAuthenticator(
         hostActivity.runOnUiThread {
             sessions.cancel(operationId) {
                 val prompt = activePrompt
-                activePrompt = null
+                clearActivePrompt()
                 prompt?.cancelAuthentication()
             }
+        }
+    }
+
+    fun onWindowFocusChanged(hasFocus: Boolean) {
+        hostActivity.runOnUiThread {
+            val session = activePromptSession ?: return@runOnUiThread
+            val prompt = activePrompt ?: return@runOnUiThread
+            if (!hasFocus) {
+                promptLostWindowFocus = true
+                focusRecoveryGeneration += 1
+                return@runOnUiThread
+            }
+            if (!promptLostWindowFocus) {
+                return@runOnUiThread
+            }
+            val generation = ++focusRecoveryGeneration
+            hostActivity.window.decorView.postDelayed({
+                if (
+                    generation != focusRecoveryGeneration ||
+                    activePrompt !== prompt ||
+                    activePromptSession !== session ||
+                    !sessions.isActive(session) ||
+                    !hostActivity.hasWindowFocus()
+                ) {
+                    return@postDelayed
+                }
+                sessions.cancelSession(session) {
+                    clearActivePrompt(session)
+                    prompt.cancelAuthentication()
+                }
+            }, PROMPT_DISMISS_GRACE_MILLIS)
         }
     }
 
@@ -162,30 +194,46 @@ class BiometricAuthenticator(
     private fun callback(
         request: SystemAuthRequest,
         dispatcher: AuthenticationResultDispatcher,
-        onTerminal: () -> Unit,
+        session: BiometricAuthenticationSession,
     ): BiometricPrompt.AuthenticationCallback {
         return object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(
                 result: BiometricPrompt.AuthenticationResult,
             ) {
-                onTerminal()
-                dispatcher.onAuthenticationSucceeded(
-                    result.cryptoObject?.cipher ?: request.cipher,
-                )
+                if (sessions.complete(session)) {
+                    clearActivePrompt(session)
+                    dispatcher.onAuthenticationSucceeded(
+                        result.cryptoObject?.cipher ?: request.cipher,
+                    )
+                }
             }
 
             override fun onAuthenticationError(
                 errorCode: Int,
                 errString: CharSequence,
             ) {
-                onTerminal()
-                dispatcher.onAuthenticationError(mapPromptError(errorCode))
+                if (sessions.complete(session)) {
+                    clearActivePrompt(session)
+                    dispatcher.onAuthenticationError(mapPromptError(errorCode))
+                }
             }
 
             override fun onAuthenticationFailed() {
                 dispatcher.onAuthenticationFailed()
             }
         }
+    }
+
+    private fun clearActivePrompt(
+        session: BiometricAuthenticationSession? = null,
+    ) {
+        if (session != null && activePromptSession !== session) {
+            return
+        }
+        activePrompt = null
+        activePromptSession = null
+        promptLostWindowFocus = false
+        focusRecoveryGeneration += 1
     }
 
     private fun mapPromptError(errorCode: Int): AuthPromptError {
@@ -200,6 +248,10 @@ class BiometricAuthenticator(
                 AuthPromptError.NO_DEVICE_CREDENTIAL
             else -> AuthPromptError.OTHER
         }
+    }
+
+    private companion object {
+        const val PROMPT_DISMISS_GRACE_MILLIS = 500L
     }
 }
 
@@ -235,6 +287,34 @@ internal class BiometricAuthenticationSessionGate {
             active = null
             true
         }
+    }
+
+    fun isActive(session: BiometricAuthenticationSession): Boolean {
+        return synchronized(lock) { active === session }
+    }
+
+    fun cancelSession(
+        session: BiometricAuthenticationSession,
+        beforeNotify: () -> Unit = {},
+    ): Boolean {
+        val claimed = synchronized(lock) {
+            if (active !== session) {
+                return@synchronized null
+            }
+            active = null
+            session
+        }
+        try {
+            beforeNotify()
+        } catch (_: Throwable) {
+            // A detached vendor prompt must not block app-side cancellation.
+        }
+        try {
+            claimed?.onCancel?.invoke()
+        } catch (_: Throwable) {
+            // Result transports may already be gone during activity teardown.
+        }
+        return claimed != null
     }
 
     fun cancel(

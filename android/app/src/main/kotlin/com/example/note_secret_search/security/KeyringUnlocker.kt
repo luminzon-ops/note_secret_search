@@ -83,7 +83,6 @@ internal class KeyringUnlocker(
         error: NativeSecurityException,
     ): Boolean {
         return when (error.code) {
-            NativeSecurityErrorCode.AUTH_CANCELLED,
             NativeSecurityErrorCode.AUTH_LOCKOUT,
             NativeSecurityErrorCode.KEY_INVALIDATED,
             NativeSecurityErrorCode.ENVELOPE_CORRUPT,

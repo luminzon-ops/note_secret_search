@@ -29,10 +29,12 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
   _FakeSecureKeyGateway({
     this.pinConfigured = false,
     this.status = NativeSecurityStatus.locked,
+    this.systemUnlockFuture,
   });
 
   bool pinConfigured;
   NativeSecurityStatus status;
+  final Future<NativeUnlockResult>? systemUnlockFuture;
   int provisionCalls = 0;
 
   @override
@@ -65,6 +67,10 @@ class _FakeSecureKeyGateway implements SecureKeyGateway {
 
   @override
   Future<NativeUnlockResult> unlockWithSystemAuth() async {
+    final pendingResult = systemUnlockFuture;
+    if (pendingResult != null) {
+      return pendingResult;
+    }
     return NativeUnlockResult(
       keyId: '123e4567-e89b-42d3-a456-426614174000',
       databaseKey: Uint8List(32),

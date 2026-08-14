@@ -1,6 +1,81 @@
 part of 'security_orchestrator_test.dart';
 
 void _registerSecurityRaceFailureCases() {
+  test('biometric result completes while the app is inactive', () async {
+    final sessionController = LockSessionController();
+    final unlockMaterial = NativeUnlockResult(
+      keyId: '123e4567-e89b-42d3-a456-426614174000',
+      databaseKey: Uint8List.fromList(List<int>.filled(32, 3)),
+      fieldKey: Uint8List.fromList(List<int>.filled(32, 4)),
+      unlockMethod: 'system',
+    );
+    final authenticationBlocker = Completer<NativeUnlockResult>();
+    final secureKeyGateway = _RecordingSecureKeyGateway(
+      systemUnlockFuture: authenticationBlocker.future,
+    );
+    final screenshotGateway = _RecordingScreenshotProtectionGateway();
+    var visibility = AppUnlockVisibility.foreground;
+    final orchestrator = _buildOrchestrator(
+      sessionController: sessionController,
+      screenshotGateway: screenshotGateway,
+      secureKeyGateway: secureKeyGateway,
+      appUnlockVisibility: () => visibility,
+    );
+
+    final unlockFuture = orchestrator.unlockWithBiometrics();
+    await _waitUntil(() => secureKeyGateway.systemUnlockCalls == 1);
+    visibility = AppUnlockVisibility.inactive;
+    authenticationBlocker.complete(unlockMaterial);
+
+    expect(await unlockFuture, isTrue);
+    expect(sessionController.isUnlocked, isTrue);
+    expect(screenshotGateway.obscuredUpdates, isEmpty);
+    expect(unlockMaterial.isCleared, isTrue);
+  });
+
+  for (final visibility in <AppUnlockVisibility>[
+    AppUnlockVisibility.background,
+  ]) {
+    test(
+      'biometric result is rejected when visibility is $visibility',
+      () async {
+        final sessionController = LockSessionController();
+        final unlockMaterial = NativeUnlockResult(
+          keyId: '123e4567-e89b-42d3-a456-426614174000',
+          databaseKey: Uint8List.fromList(List<int>.filled(32, 3)),
+          fieldKey: Uint8List.fromList(List<int>.filled(32, 4)),
+          unlockMethod: 'system',
+        );
+        final authenticationBlocker = Completer<NativeUnlockResult>();
+        final secureKeyGateway = _RecordingSecureKeyGateway(
+          systemUnlockFuture: authenticationBlocker.future,
+        );
+        final sessionKeyStore = DatabaseSessionKeyStore();
+        var currentVisibility = AppUnlockVisibility.foreground;
+        final database = _RecordingAppDatabase();
+        final orchestrator = _buildOrchestrator(
+          sessionController: sessionController,
+          screenshotGateway: _RecordingScreenshotProtectionGateway(),
+          secureKeyGateway: secureKeyGateway,
+          sessionKeyStore: sessionKeyStore,
+          database: database,
+          appUnlockVisibility: () => currentVisibility,
+        );
+
+        final unlockFuture = orchestrator.unlockWithBiometrics();
+        await _waitUntil(() => secureKeyGateway.systemUnlockCalls == 1);
+        currentVisibility = visibility;
+        authenticationBlocker.complete(unlockMaterial);
+
+        expect(await unlockFuture, isFalse);
+        expect(sessionController.isUnlocked, isFalse);
+        expect(sessionKeyStore.hasKeys, isFalse);
+        expect(database.state.status, DatabaseLifecycleStatus.locked);
+        expect(unlockMaterial.isCleared, isTrue);
+      },
+    );
+  }
+
   test(
     'a concurrent unlock is rejected before requesting new key material',
     () async {

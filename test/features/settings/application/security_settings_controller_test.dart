@@ -163,7 +163,7 @@ SecuritySettingsController _controller({
       sessionKeyStore: DatabaseSessionKeyStore(),
       database: FakeAppDatabase(),
       logger: const AppLogger(),
-      appIsForeground: () => true,
+      appUnlockVisibility: () => AppUnlockVisibility.foreground,
     ),
     pinStateController: pinStateController,
   );

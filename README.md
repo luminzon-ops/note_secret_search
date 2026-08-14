@@ -1,6 +1,6 @@
 # Note Secret Search
 
-**移动端密码管理 / 私密备忘录应用**，当前发布版本为 `0.2.0+2`，支持本地 AI 语义检索与本地/外部问答。
+**移动端密码管理 / 私密备忘录应用**，当前发布版本为 `0.2.1+3`，支持本地 AI 语义检索与本地/外部问答。
 
 ## 技术栈
 
@@ -22,7 +22,7 @@
 - **安全存储** — SQLCipher 全库加密，敏感字段二次加密，截屏保护
 - **关键词搜索** — 标题/标签/内容全文检索
 - **本地 AI 语义检索** — ONNX Runtime 驱动的 embedding 语义搜索
-- **本地 LLM 问答** — llama.cpp GGUF 模型本地推理；v0.2.0 本地 runtime 仅覆盖 arm64
+- **本地 LLM 问答** — llama.cpp GGUF 模型本地推理；v0.2.x 本地 runtime 仅覆盖 arm64
 - **模型管理** — 内置模型目录、下载、断点续传、自动切源、校验
 - **外部模型接入** — OpenAI 兼容 API / Ollama；Release 仅允许 HTTPS，Debug 仅允许 loopback HTTP
 - **明确边界** — MiniCPM / 多模态未实现，不声明硬件级防护或远程同步能力
@@ -67,15 +67,15 @@ CI 使用同一 release contract、Dart/JVM/static gates，并通过 `package-on
 ### 发布文档
 
 - [CHANGELOG](CHANGELOG.md)
-- [v0.2.0 Release Notes](docs/release/v0.2.0-release-notes.md)
+- [v0.2.1 Release Notes](docs/release/v0.2.1-release-notes.md)
 - [Supported Devices](docs/release/supported-devices.md)
 - [Threat Model](docs/release/threat-model.md)
 - [Known Limitations](docs/release/known-limitations.md)
-- [Release Ledger](docs/release/v0.2.0-release-ledger.md)
+- [Release Ledger](docs/release/v0.2.1-release-ledger.md)
 
 ### 下载安装包
 
-最新 APK 在 [GitHub Releases](https://github.com/luminzon-ops/note_secret_search/releases) 页面下载。
+当前 Release 默认为源码说明草稿，不上传 debug APK、APK 或 AAB。华为设备上的 debug APK 仅用于本地原地升级验证。
 
 ## 项目结构
 

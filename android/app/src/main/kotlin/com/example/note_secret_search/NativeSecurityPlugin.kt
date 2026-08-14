@@ -34,6 +34,10 @@ class NativeSecurityPlugin(
         keyManager.close()
     }
 
+    fun onWindowFocusChanged(hasFocus: Boolean) {
+        biometricAuthenticator.onWindowFocusChanged(hasFocus)
+    }
+
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "enableScreenshotProtection" -> {

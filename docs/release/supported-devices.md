@@ -1,5 +1,12 @@
 # Supported Devices
 
+## v0.2.1 Policy
+
+- Android SDK and ABI policy remains unchanged from v0.2.0.
+- Physical hotfix evidence is restricted to Huawei SPN-AL00 / API 29 / arm64-v8a with serial `H8B4C19731000256`.
+- Device acceptance requires one cancelled biometric attempt with lock-screen recovery, two successful fingerprint unlocks including a cold start, clean Logcat, and unchanged GGUF inventories.
+- The v0.2.1 debug APK installed on the Huawei device is a local validation artifact only; it is not a public distribution binary.
+
 ## v0.2.0 Policy
 
 - Minimum Android API: 24.

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/features/auth_security/application/app_lock_lifecycle_controller.dart';
 import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 
 class AppLifecycleGuard extends ConsumerStatefulWidget {
@@ -12,17 +13,20 @@ class AppLifecycleGuard extends ConsumerStatefulWidget {
 }
 
 class _AppLifecycleGuardState extends ConsumerState<AppLifecycleGuard> {
+  late final AppLockLifecycleController _lifecycleController;
+
   @override
   void initState() {
     super.initState();
+    _lifecycleController = ref.read(appLockLifecycleControllerProvider);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(appLockLifecycleControllerProvider).start();
+      _lifecycleController.start();
     });
   }
 
   @override
   void dispose() {
-    ref.read(appLockLifecycleControllerProvider).dispose();
+    _lifecycleController.dispose();
     super.dispose();
   }
 

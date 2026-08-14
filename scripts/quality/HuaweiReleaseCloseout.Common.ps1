@@ -452,6 +452,7 @@ function Backup-DeviceState {
   $remoteApkPath = $matches[1]
   $localApkPath = Join-Path $Destination 'installed-before.apk'
   Invoke-Adb @('pull', $remoteApkPath, $localApkPath) | Out-Null
+  $beforeMetadata = Get-ApkMetadata -ApkPath $localApkPath
   $beforeDigest = Get-CertificateDigest -ApkPath $localApkPath
   Assert-Condition `
     -Condition ($beforeDigest -eq $ExpectedCertSha256.ToLowerInvariant()) `
@@ -474,6 +475,8 @@ function Backup-DeviceState {
     -Condition ((Get-Item -LiteralPath $tarPath).Length -gt 0) `
     -Message 'App-private backup archive is empty.'
   $tarListingPath = Assert-TarArchive -Path $tarPath
+  Assert-ExtractedBackupMatchesInventory `
+    -TarPath $tarPath -Inventory $inventory -Destination $Destination
   $manifest = [ordered]@{
     createdAtUtc = [DateTime]::UtcNow.ToString('o')
     packageName = $packageName
@@ -481,6 +484,9 @@ function Backup-DeviceState {
     tarPath = $tarPath
     tarSha256 = (Get-FileHash -LiteralPath $tarPath -Algorithm SHA256).Hash.ToLowerInvariant()
     tarListingPath = $tarListingPath
+    installedVersionName = $beforeMetadata.VersionName
+    installedVersionCode = $beforeMetadata.VersionCode
+    installedCertificateSha256 = $beforeDigest
     files = $inventory
   }
   Save-Json -Value $manifest `

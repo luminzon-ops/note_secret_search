@@ -5,6 +5,7 @@ import 'package:note_secret_search/core/security/core_security_providers.dart';
 import 'package:note_secret_search/core/storage/migration/legacy_database_migrator.dart';
 import 'package:note_secret_search/core/storage/migration/sqlcipher_migration_database_factory.dart';
 import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
+import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/native_security_bridge.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/platform_secure_gateways.dart';
 import 'package:note_secret_search/features/auth_security/infrastructure/shared_preferences_legacy_pin_migration_store.dart';
@@ -47,10 +48,15 @@ final List<Override> securityCompositionOverrides = <Override>[
       bridge: ref.watch(nativeSecurityBridgeProvider),
     );
   }),
-  appForegroundReaderProvider.overrideWithValue(() {
+  appUnlockVisibilityReaderProvider.overrideWithValue(() {
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
-    return lifecycleState == null ||
-        lifecycleState == AppLifecycleState.resumed;
+    return switch (lifecycleState) {
+      null || AppLifecycleState.resumed => AppUnlockVisibility.foreground,
+      AppLifecycleState.inactive => AppUnlockVisibility.inactive,
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => AppUnlockVisibility.background,
+    };
   }),
   securitySettingsRepositoryProvider.overrideWith((ref) {
     return SharedPreferencesSecuritySettingsRepository(
