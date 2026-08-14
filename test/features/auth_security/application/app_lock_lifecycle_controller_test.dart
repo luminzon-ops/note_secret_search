@@ -1,43 +1,87 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:note_secret_search/core/security/lock_session.dart';
 import 'package:note_secret_search/features/auth_security/application/app_lock_lifecycle_controller.dart';
+import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
+import 'package:note_secret_search/features/auth_security/presentation/app_lifecycle_guard.dart';
 
 void main() {
-  test('inactive and resumed lifecycle work is serialized', () async {
+  test(
+    'inactive only shields and does not trigger immediate auto-lock',
+    () async {
+      final sessionController = LockSessionController()
+        ..markUnlocked(UnlockMethod.biometric);
+      final initialLockEpoch = sessionController.lockEpoch;
+      var lockCalls = 0;
+      final obscureBlocker = Completer<void>();
+      final gateway = _RecordingScreenshotProtectionGateway(
+        onUpdate: (obscured) async {
+          if (obscured && !obscureBlocker.isCompleted) {
+            await obscureBlocker.future;
+          }
+        },
+      );
+      final controller = AppLockLifecycleController(
+        sessionController: sessionController,
+        autoLockSecondsLoader: () async => 0,
+        screenshotProtectionGateway: gateway,
+        lockApplication: () async {
+          lockCalls += 1;
+          sessionController.lock();
+        },
+      );
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+      await _waitUntil(() => gateway.obscuredUpdates.isNotEmpty);
+
+      controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await _drainEventQueue();
+
+      expect(gateway.obscuredUpdates, [true]);
+
+      obscureBlocker.complete();
+      await _waitUntil(() => gateway.obscuredUpdates.length == 2);
+
+      expect(gateway.obscuredUpdates, [true, false]);
+      expect(sessionController.state.isUnlocked, isTrue);
+      expect(sessionController.lockEpoch, initialLockEpoch);
+      expect(lockCalls, 0);
+    },
+  );
+
+  test('inactive shield failure does not lock or increment epoch', () async {
     final sessionController = LockSessionController()
       ..markUnlocked(UnlockMethod.biometric);
-    final obscureBlocker = Completer<void>();
+    final initialLockEpoch = sessionController.lockEpoch;
+    var lockCalls = 0;
     final gateway = _RecordingScreenshotProtectionGateway(
       onUpdate: (obscured) async {
-        if (obscured && !obscureBlocker.isCompleted) {
-          await obscureBlocker.future;
+        if (obscured) {
+          throw StateError('shield unavailable');
         }
       },
     );
     final controller = AppLockLifecycleController(
       sessionController: sessionController,
-      autoLockSecondsLoader: () async => 60,
+      autoLockSecondsLoader: () async => 0,
       screenshotProtectionGateway: gateway,
-      lockApplication: () async => sessionController.lock(),
+      lockApplication: () async {
+        lockCalls += 1;
+        sessionController.lock();
+      },
     );
 
     controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
-    await _waitUntil(() => gateway.obscuredUpdates.isNotEmpty);
-
-    controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
     await _drainEventQueue();
 
     expect(gateway.obscuredUpdates, [true]);
-
-    obscureBlocker.complete();
-    await _waitUntil(() => gateway.obscuredUpdates.length == 2);
-
-    expect(gateway.obscuredUpdates, [true, false]);
-    expect(sessionController.state.isUnlocked, isTrue);
+    expect(sessionController.isUnlocked, isTrue);
+    expect(sessionController.lockEpoch, initialLockEpoch);
+    expect(lockCalls, 0);
   });
 
   test(
@@ -78,8 +122,8 @@ void main() {
       controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
       await _drainEventQueue();
 
-      expect(gateway.obscuredUpdates, [true, true]);
-      expect(sessionController.state.isUnlocked, isFalse);
+      expect(gateway.obscuredUpdates, [true, true, false]);
+      expect(sessionController.state.isUnlocked, isTrue);
     },
   );
 
@@ -96,7 +140,7 @@ void main() {
         lockApplication: () async => sessionController.lock(),
       );
 
-      controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+      controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
       await _waitUntil(() => !sessionController.state.isUnlocked);
 
       controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
@@ -119,7 +163,7 @@ void main() {
       lockApplication: () async => sessionController.lock(),
     );
 
-    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     await _drainEventQueue();
 
     expect(gateway.obscuredUpdates, [true]);
@@ -144,7 +188,7 @@ void main() {
       lockApplication: () async => sessionController.lock(),
     );
 
-    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
     await _waitUntil(() => loadCount == 1);
 
     controller.didChangeAppLifecycleState(AppLifecycleState.resumed);
@@ -172,7 +216,7 @@ void main() {
       lockApplication: () async => sessionController.lock(),
     );
 
-    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     await _waitUntil(
       () =>
           gateway.obscuredUpdates.length == 1 && gateway.obscuredUpdates.single,
@@ -196,7 +240,7 @@ void main() {
       lockApplication: () async => sessionController.lock(),
     );
 
-    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    controller.didChangeAppLifecycleState(AppLifecycleState.paused);
     await _waitUntil(
       () =>
           gateway.obscuredUpdates.length == 1 && gateway.obscuredUpdates.single,
@@ -225,12 +269,56 @@ void main() {
       },
     );
 
-    controller.didChangeAppLifecycleState(AppLifecycleState.inactive);
+    controller.didChangeAppLifecycleState(AppLifecycleState.hidden);
     await Future<void>.delayed(const Duration(milliseconds: 1100));
     await _drainEventQueue();
 
     expect(lockCalls, 1);
     expect(sessionController.isUnlocked, isFalse);
+  });
+
+  testWidgets('AppLifecycleGuard forwards inactive and hidden transitions', (
+    tester,
+  ) async {
+    final sessionController = LockSessionController()
+      ..markUnlocked(UnlockMethod.biometric);
+    final initialLockEpoch = sessionController.lockEpoch;
+    final gateway = _RecordingScreenshotProtectionGateway();
+    final controller = AppLockLifecycleController(
+      sessionController: sessionController,
+      autoLockSecondsLoader: () async => 0,
+      screenshotProtectionGateway: gateway,
+      lockApplication: () async => sessionController.lock(),
+    );
+    addTearDown(() async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          appLockLifecycleControllerProvider.overrideWithValue(controller),
+        ],
+        child: const AppLifecycleGuard(child: SizedBox.shrink()),
+      ),
+    );
+    await tester.pump();
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    await _waitUntil(() => gateway.obscuredUpdates.isNotEmpty);
+
+    expect(gateway.obscuredUpdates, [true]);
+    expect(sessionController.isUnlocked, isTrue);
+    expect(sessionController.lockEpoch, initialLockEpoch);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    await _waitUntil(() => !sessionController.isUnlocked);
+
+    expect(gateway.obscuredUpdates, [true, true]);
+    expect(sessionController.lockEpoch, initialLockEpoch + 1);
   });
 }
 

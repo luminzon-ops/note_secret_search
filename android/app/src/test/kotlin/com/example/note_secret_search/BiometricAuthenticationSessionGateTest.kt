@@ -58,4 +58,18 @@ class BiometricAuthenticationSessionGateTest {
         assertTrue(cancellations == 1)
         assertNotNull(gate.begin(operationId = 42))
     }
+
+    @Test
+    fun `stale session cancellation cannot revoke a replacement session`() {
+        val gate = BiometricAuthenticationSessionGate()
+        var cancellations = 0
+        val first = gate.begin(operationId = 51) { cancellations += 1 }!!
+        assertTrue(gate.cancelSession(first))
+        val second = gate.begin(operationId = 52)!!
+
+        assertFalse(gate.cancelSession(first))
+        assertTrue(gate.isActive(second))
+        assertTrue(gate.cancelSession(second))
+        assertTrue(cancellations == 1)
+    }
 }

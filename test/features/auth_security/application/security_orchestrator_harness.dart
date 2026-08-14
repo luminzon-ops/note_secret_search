@@ -8,6 +8,7 @@ SecurityOrchestrator _buildOrchestrator({
   DatabaseSessionKeyStore? sessionKeyStore,
   AppDatabase? database,
   LegacySecurityMigrationRunner? legacySecurityMigration,
+  AppUnlockVisibilityReader? appUnlockVisibility,
 }) {
   return SecurityOrchestrator(
     biometricGateway: biometricGateway ?? _SuccessfulBiometricGateway(),
@@ -16,7 +17,8 @@ SecurityOrchestrator _buildOrchestrator({
     sessionController: sessionController,
     pinStateController: PinStateController(),
     logger: const AppLogger(),
-    appIsForeground: () => true,
+    appUnlockVisibility:
+        appUnlockVisibility ?? () => AppUnlockVisibility.foreground,
     sessionKeyStore: sessionKeyStore ?? DatabaseSessionKeyStore(),
     database: database ?? _RecordingAppDatabase(),
     legacySecurityMigration: legacySecurityMigration,

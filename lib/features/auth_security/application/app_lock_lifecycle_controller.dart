@@ -48,11 +48,11 @@ class AppLockLifecycleController with WidgetsBindingObserver {
     final previousState = _latestLifecycleState;
     _latestLifecycleState = state;
     switch (state) {
+      case AppLifecycleState.inactive:
+        _enqueue(_handleInactiveTransition);
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-      case AppLifecycleState.inactive:
-        if (previousState == null ||
-            previousState == AppLifecycleState.resumed) {
+        if (!_isBackgroundState(previousState)) {
           _pausedAt = DateTime.now();
         } else {
           _pausedAt ??= DateTime.now();
@@ -61,8 +61,7 @@ class AppLockLifecycleController with WidgetsBindingObserver {
       case AppLifecycleState.resumed:
         _enqueue(_handleResume);
       case AppLifecycleState.detached:
-        if (previousState == null ||
-            previousState == AppLifecycleState.resumed) {
+        if (!_isBackgroundState(previousState)) {
           _pausedAt = DateTime.now();
         } else {
           _pausedAt ??= DateTime.now();
@@ -75,6 +74,21 @@ class AppLockLifecycleController with WidgetsBindingObserver {
     _lifecycleQueue = _lifecycleQueue
         .then((_) => operation())
         .catchError((Object _, StackTrace __) => _lockApplication());
+  }
+
+  Future<void> _handleInactiveTransition() {
+    return _shieldForInactiveTransition();
+  }
+
+  Future<void> _shieldForInactiveTransition() async {
+    try {
+      await _screenshotProtectionGateway.updateRecentTaskProtection(
+        obscured: true,
+      );
+    } catch (_) {
+      // Inactive is a visible, focus-lost state. Keep the session usable while
+      // the platform shield retries on the next lifecycle transition.
+    }
   }
 
   Future<void> _handleBackgroundTransition() async {
@@ -126,5 +140,11 @@ class AppLockLifecycleController with WidgetsBindingObserver {
       _autoLockTimer = null;
       _enqueue(_lockApplication);
     });
+  }
+
+  bool _isBackgroundState(AppLifecycleState? state) {
+    return state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached;
   }
 }

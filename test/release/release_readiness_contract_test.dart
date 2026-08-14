@@ -4,11 +4,20 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('v0.2.0 version has one product owner', () {
-    expect(
-      _read('pubspec.yaml'),
-      contains(RegExp(r'^version: 0\.2\.0\+2$', multiLine: true)),
-    );
+  test('v0.2.1 version has one product owner', () {
+    final pubspec = _read('pubspec.yaml');
+    final versionMatch = RegExp(
+      r'^version: ([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$',
+      multiLine: true,
+    ).firstMatch(pubspec);
+    expect(versionMatch, isNotNull);
+    expect(versionMatch!.group(1), '0.2.1');
+    expect(versionMatch.group(2), '3');
+
+    final policy = _json('config/release/release_artifact_policy.json');
+    expect(policy['versionName'], versionMatch.group(1));
+    expect(policy['versionCode'].toString(), versionMatch.group(2));
+    expect(policy['tag'], 'v${versionMatch.group(1)}');
 
     final appGradle = _read('android/app/build.gradle.kts');
     expect(appGradle, isNot(contains('versionCode = 1')));
@@ -19,9 +28,9 @@ void main() {
 
   test('release artifact policy pins provenance and packaging invariants', () {
     final policy = _json('config/release/release_artifact_policy.json');
-    expect(policy['versionName'], '0.2.0');
-    expect(policy['versionCode'], 2);
-    expect(policy['tag'], 'v0.2.0');
+    expect(policy['versionName'], '0.2.1');
+    expect(policy['versionCode'], 3);
+    expect(policy['tag'], 'v0.2.1');
     expect(policy['flutter'], '3.41.5');
     expect(policy['dart'], '3.11.3');
     expect(policy['jdk'], '17');
@@ -123,8 +132,7 @@ void main() {
     expect(workflow, contains(r'test -x "$zipalign"'));
     expect(workflow, contains(r'test -x "$apksigner"'));
     final smokeSetEu = RegExp(r'^\s+set -eu\s*$', multiLine: true);
-    final bashPipefail =
-        RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);
+    final bashPipefail = RegExp(r'^\s+set -euo pipefail\s*$', multiLine: true);
     expect(smokeSetEu.allMatches(workflow), hasLength(2));
     expect(bashPipefail.allMatches(workflow), hasLength(1));
   });
@@ -144,17 +152,46 @@ void main() {
     expect(workflow, contains('contents: write'));
     expect(workflow, contains('app-release-signed.apk'));
     expect(workflow, contains('app-release-signed.aab'));
-    expect(workflow, contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'));
+    expect(
+      workflow,
+      contains(r'sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"'),
+    );
     expect(workflow, contains(r'sdkmanager_path="$(command -v sdkmanager)"'));
     expect(workflow, contains(r'../../.."'));
-    expect(workflow, contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'));
+    expect(
+      workflow,
+      contains(r'build_tools_dir=$(find "$sdk_root/build-tools"'),
+    );
     expect(workflow, contains(r'test -n "$build_tools_dir"'));
+    expect(workflow, contains('release-preflight'));
+    expect(workflow, contains('release_tag:'));
+    expect(workflow, contains('fetch-depth: 0'));
+    expect(workflow, contains('git fetch --force --tags origin master'));
+    expect(workflow, contains('git merge-base --is-ancestor'));
+    expect(
+      workflow,
+      contains(
+        'Release tag must point to the current origin/master merge commit.',
+      ),
+    );
+    expect(
+      workflow,
+      contains(r'docs/release/$($env:RELEASE_TAG)-release-notes.md'),
+    );
+    expect(workflow, contains('release-ledger.md'));
+    expect(workflow, contains('Release ledger still contains pending evidence'));
+    expect(
+      workflow,
+      contains('NSS_RELEASE_CERT_SHA256 must be a configured'),
+    );
+    expect(workflow, contains('keytool -printcert -jarfile'));
+    expect(workflow, contains('apk_cert'));
+    expect(workflow, contains('aab_cert'));
+    expect(workflow, isNot(contains('v0.2.0-release-notes.md')));
   });
 
   test('version preparation and artifact audit fail closed', () {
-    final prepare = _read(
-      'scripts/quality/Prepare-FlutterAndroidVersion.ps1',
-    );
+    final prepare = _read('scripts/quality/Prepare-FlutterAndroidVersion.ps1');
     expect(prepare, contains('build apk --config-only --no-pub'));
     expect(prepare, contains('flutter.versionName'));
     expect(prepare, contains('flutter.versionCode'));
@@ -166,9 +203,7 @@ void main() {
     expect(gradle, contains('flutterVersionCode != 1'));
     expect(gradle, contains('flutterVersionName != "1.0"'));
 
-    final audit = _read(
-      'scripts/quality/Invoke-AndroidArtifactAudit.ps1',
-    );
+    final audit = _read('scripts/quality/Invoke-AndroidArtifactAudit.ps1');
     expect(audit, contains("dump', 'badging'"));
     expect(audit, contains('VersionName'));
     expect(audit, contains('VersionCode'));
@@ -178,42 +213,65 @@ void main() {
   });
 
   test('Huawei closeout is serial-gated and backs up before installation', () {
-    final script = _read(
-      'scripts/quality/Invoke-HuaweiV020Closeout.ps1',
-    );
-    final common = _read(
-      'scripts/quality/HuaweiV020Closeout.Common.ps1',
-    );
+    final script = _read('scripts/quality/Invoke-HuaweiReleaseCloseout.ps1');
+    final common = _read('scripts/quality/HuaweiReleaseCloseout.Common.ps1');
     expect(script, contains('H8B4C19731000256'));
     expect(script, contains('HUAWEI'));
     expect(script, contains('SPN-AL00'));
-    expect(script, contains('0.2.0+2'));
+    expect(script, isNot(contains("VersionName -eq '0.2.0'")));
+    expect(script, isNot(contains('VersionCode -eq 2')));
+    expect(script, contains('release_artifact_policy.json'));
+    expect(script, contains('ExpectedVersionName'));
+    expect(script, contains('ExpectedVersionCode'));
+    expect(script, contains(r'$targetVersion = [version]$ExpectedVersionName'));
+    expect(script, contains(r'$installedVersion = [version]$beforeMetadata.VersionName'));
+    expect(script, contains(r'$isOlderOrSameTarget'));
+    expect(script, contains('must not be newer'));
+    expect(script, contains('MANUAL_UNLOCK_REQUIRED:huawei'));
+    expect(script, contains(r'[DateTime]::UtcNow.AddMinutes(10)'));
     expect(script, contains("Invoke-Adb @('install', '-r'"));
-    expect(script, contains('E:\\Archive\\Flutter\\.note_secret_search_device_backups'));
-    expect(script, contains('Backup-DeviceState'));
-    expect(script, contains('finally'));
-    expect(script, contains(r'uninstall $testPackageName'));
+    expect(
+      script,
+      contains('E:\\Archive\\Flutter\\.note_secret_search_device_backups'),
+    );
+     expect(script, contains('Backup-DeviceState'));
+     expect(script, contains('finally'));
+     expect(script, contains(r"'uninstall', $testPackageName"));
+    expect(script, contains('Assert-BiometricHotfixFlow'));
+    expect(script, contains('_UnmodifiableUint8ArrayView'));
+    expect(script, contains('Test-DevicePathMissing'));
+    expect(script, contains('Test-PackageMissing'));
+    expect(script, contains('NSS_PRIVACY_SHIELD_ACTIVE'));
+    expect(script, contains("'databases/'"));
+    expect(script, contains("'shared_prefs/'"));
+    expect(script, contains("'no_backup/security/'"));
+    expect(script, contains('qwen2.5-0.5b-instruct-q4_k_m.gguf'));
+    expect(script, contains('smollm2-360m-instruct-q8_0.gguf'));
+    expect(script, contains(r'if ($testInstalled)'));
+    expect(script, contains(r'throw $primaryError'));
     expect(common, contains(r"@('-s', $Serial)"));
     expect(common, contains('get-state'));
     expect(common, contains("'run-as'"));
     expect(common, contains("'sha256sum'"));
     expect(common, contains('RequireApplicationPid'));
-    expect(script, contains('-RequireApplicationPid'));
+     expect(script, contains('-RequireApplicationPid'));
     expect(common, contains(r'$ToolName.bat'));
     expect(common, contains('device-files-before.json'));
     expect(
       script.indexOf('Backup-DeviceState'),
       lessThan(script.indexOf("Invoke-Adb @('install', '-r'")),
     );
-    expect(
-      script.indexOf('install', script.indexOf("Invoke-Adb @('install', '-r'")),
-      lessThan(script.indexOf(r'uninstall $testPackageName')),
-    );
+     expect(
+       script.indexOf('install', script.indexOf("Invoke-Adb @('install', '-r'")),
+       lessThan(script.indexOf(r"'uninstall', $testPackageName")),
+     );
   });
 
-  test('v0.2.0 release documents exist and avoid unsupported claims', () {
+  test('v0.2.1 release documents exist and preserve v0.2.0 history', () {
     for (final path in const [
       'CHANGELOG.md',
+      'docs/release/v0.2.1-release-notes.md',
+      'docs/release/v0.2.1-release-ledger.md',
       'docs/release/v0.2.0-release-notes.md',
       'docs/release/supported-devices.md',
       'docs/release/threat-model.md',
@@ -224,18 +282,18 @@ void main() {
     }
 
     final readme = _read('README.md');
-    expect(readme, contains('0.2.0+2'));
+    expect(readme, contains('0.2.1+3'));
     expect(readme, contains('Flutter 3.41.5'));
     expect(readme, contains('Release 仅允许 HTTPS'));
     expect(readme, contains('MiniCPM / 多模态未实现'));
 
-    final ledger = _read('docs/release/v0.2.0-release-ledger.md');
-    expect(ledger, contains('2ff2db6'));
+    final ledger = _read('docs/release/v0.2.1-release-ledger.md');
+    expect(ledger, contains('c3685894c116613bffe24b4ddb0cae797cebcd03'));
     expect(ledger, contains('SPN-AL00 / API 29'));
     expect(
       ledger,
       contains(
-        '9583871b4179ae48ce3c57796fad21580167de4183ca6c28efdc2ed4724f9b41',
+        '8e0ddd3aba851740eb787e345b4df1cff4d60603f289549c53a916aac99ddead',
       ),
     );
   });

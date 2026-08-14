@@ -1,5 +1,11 @@
 # Known Limitations
 
+## v0.2.1
+
+- This hotfix changes biometric result handling and lock-screen recovery only; database format, keyring envelope, model runtimes, and network boundaries remain unchanged.
+- Formal signing and public binary publication remain disabled until the protected signing environment is configured.
+- All v0.2.0 runtime and product limitations below continue to apply.
+
 ## v0.2.0
 
 - MiniCPM / 多模态未实现；MiniCPM, mtmd, and mmproj assets must remain absent from packaged artifacts.

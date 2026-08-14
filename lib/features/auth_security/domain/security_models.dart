@@ -75,12 +75,19 @@ class NativeSecurityState {
 class NativeUnlockResult {
   NativeUnlockResult({
     required this.keyId,
-    required this.databaseKey,
-    required this.fieldKey,
+    required Uint8List databaseKey,
+    required Uint8List fieldKey,
     required this.unlockMethod,
-    this.searchIndexFingerprintKey,
-    this.legacyDatabasePassword,
-  });
+    Uint8List? searchIndexFingerprintKey,
+    Uint8List? legacyDatabasePassword,
+  }) : databaseKey = Uint8List.fromList(databaseKey),
+       fieldKey = Uint8List.fromList(fieldKey),
+       searchIndexFingerprintKey = searchIndexFingerprintKey == null
+           ? null
+           : Uint8List.fromList(searchIndexFingerprintKey),
+       legacyDatabasePassword = legacyDatabasePassword == null
+           ? null
+           : Uint8List.fromList(legacyDatabasePassword);
 
   final String keyId;
   final Uint8List databaseKey;

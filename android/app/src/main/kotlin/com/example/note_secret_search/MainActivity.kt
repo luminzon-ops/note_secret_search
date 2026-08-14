@@ -1,6 +1,7 @@
 package com.example.note_secret_search
 
 import android.os.Bundle
+import android.view.View
 import android.widget.FrameLayout
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -15,7 +16,9 @@ class MainActivity : FlutterFragmentActivity() {
             FrameLayout(this).apply {
                 setBackgroundColor(0xFF101418.toInt())
                 alpha = 0.98f
-                visibility = android.view.View.GONE
+                contentDescription = RECENT_TASK_SHIELD_MARKER
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                visibility = View.GONE
             }
         },
         attach = { shield ->
@@ -57,6 +60,13 @@ class MainActivity : FlutterFragmentActivity() {
         deviceProfilerChannel.setMethodCallHandler(deviceProfilerPlugin)
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (this::nativeSecurityPlugin.isInitialized) {
+            nativeSecurityPlugin.onWindowFocusChanged(hasFocus)
+        }
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         if (this::llmRuntimePlugin.isInitialized) {
             llmRuntimePlugin.detachFromEngine()
@@ -68,5 +78,9 @@ class MainActivity : FlutterFragmentActivity() {
             nativeSecurityPlugin.detachFromEngine()
         }
         super.cleanUpFlutterEngine(flutterEngine)
+    }
+
+    companion object {
+        internal const val RECENT_TASK_SHIELD_MARKER = "NSS_PRIVACY_SHIELD_ACTIVE"
     }
 }

@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:note_secret_search/core/logging/logging_providers.dart';
 import 'package:note_secret_search/core/storage/database/app_database.dart';
 import 'package:note_secret_search/core/storage/database/app_database_providers.dart';
 import 'package:note_secret_search/features/auth_security/application/security_providers.dart';
 import 'package:note_secret_search/features/auth_security/application/security_orchestrator.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_models.dart';
-
 class AppLockGate extends ConsumerStatefulWidget {
   const AppLockGate({
     required this.child,
@@ -14,21 +14,43 @@ class AppLockGate extends ConsumerStatefulWidget {
     this.onPinResetRequired,
     super.key,
   });
-
   final Widget child;
   final bool pinUnlockRouteActive;
   final Future<bool?> Function()? onPinUnlockRequested;
   final VoidCallback? onPinResetRequired;
-
   @override
   ConsumerState<AppLockGate> createState() => _AppLockGateState();
 }
-
-class _AppLockGateState extends ConsumerState<AppLockGate> {
+class _AppLockGateState extends ConsumerState<AppLockGate>
+    with WidgetsBindingObserver {
   var _hydrationStarted = false;
   final Set<int> _scheduledRevealEpochs = <int>{};
+  final Map<int, int> _safeSurfaceRevealAttempts = <int, int>{};
   int? _revealedLockEpoch;
   NativeSecurityState? _securityState;
+  static const _maxSafeSurfaceRevealAttempts = 3;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted) {
+      return;
+    }
+    final session = ref.read(lockSessionControllerProvider);
+    if (session.isUnlocked) {
+      return;
+    }
+    _revealedLockEpoch = null;
+    _scheduleSafeSurfaceReveal(session.lockEpoch);
+  }
 
   @override
   void didChangeDependencies() {
@@ -98,6 +120,13 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
         !_scheduledRevealEpochs.add(lockEpoch)) {
       return;
     }
+    final attempt = (_safeSurfaceRevealAttempts[lockEpoch] ?? 0) + 1;
+    if (attempt > _maxSafeSurfaceRevealAttempts) {
+      _scheduledRevealEpochs.remove(lockEpoch);
+      return;
+    }
+    _safeSurfaceRevealAttempts[lockEpoch] = attempt;
+    var retry = false;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         final lifecycleState = WidgetsBinding.instance.lifecycleState;
@@ -132,11 +161,22 @@ class _AppLockGateState extends ConsumerState<AppLockGate> {
             return;
           }
           _revealedLockEpoch = lockEpoch;
+          _safeSurfaceRevealAttempts.remove(lockEpoch);
         }
       } catch (_) {
-        return;
+        retry = true;
       } finally {
         _scheduledRevealEpochs.remove(lockEpoch);
+        if (retry && mounted) {
+          final session = ref.read(lockSessionControllerProvider);
+          final lifecycleState = WidgetsBinding.instance.lifecycleState;
+          if (!session.isUnlocked &&
+              session.lockEpoch == lockEpoch &&
+              (lifecycleState == null ||
+                  lifecycleState == AppLifecycleState.resumed)) {
+            _scheduleSafeSurfaceReveal(lockEpoch);
+          }
+        }
       }
     });
   }
@@ -321,6 +361,8 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
           .unlockWithBiometrics();
       if (unlocked && mounted) {
         widget.onUnlocked();
+      } else if (mounted) {
+        setState(() => _authenticationError = '身份验证失败，请重试');
       }
     } on NativeSecurityException catch (error) {
       if (mounted) {
@@ -340,6 +382,13 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
       if (mounted) {
         setState(() {
           _authenticationError = '安全数据库暂不可用，请重试';
+        });
+      }
+    } catch (_) {
+      _logUnexpected('biometric_unlock_unexpected');
+      if (mounted) {
+        setState(() {
+          _authenticationError = '身份验证失败，请重试';
         });
       }
     } finally {
@@ -363,6 +412,8 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
         if (mounted) {
           widget.onUnlocked();
         }
+      } else if (mounted) {
+        setState(() => _authenticationError = '安全存储启用失败，请重试');
       }
     } on NativeSecurityException catch (error) {
       if (mounted) {
@@ -378,6 +429,13 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
       if (mounted) {
         setState(() {
           _authenticationError = '安全数据库暂不可用，请重试';
+        });
+      }
+    } catch (_) {
+      _logUnexpected('system_provision_unexpected');
+      if (mounted) {
+        setState(() {
+          _authenticationError = '安全存储启用失败，请重试';
         });
       }
     } finally {
@@ -411,6 +469,7 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
         });
       }
     } catch (_) {
+      _logUnexpected('security_migration_unexpected');
       if (mounted) {
         setState(() {
           _authenticationError = '安全存储升级失败，请重试';
@@ -427,6 +486,14 @@ class _AppLockScreenState extends ConsumerState<AppLockScreen> {
     final unlocked = await widget.onPinUnlockRequested?.call();
     if (unlocked == true && mounted) {
       widget.onUnlocked();
+    }
+  }
+
+  void _logUnexpected(String event) {
+    try {
+      ref.read(loggerProvider).warning(event);
+    } catch (_) {
+      // Error reporting must never block lock-screen recovery.
     }
   }
 }

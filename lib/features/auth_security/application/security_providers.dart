@@ -14,7 +14,6 @@ import 'package:note_secret_search/features/auth_security/application/security_o
 import 'package:note_secret_search/features/auth_security/domain/pin_state.dart';
 import 'package:note_secret_search/features/auth_security/domain/security_gateways.dart';
 
-typedef AppForegroundReader = bool Function();
 typedef AutoLockSecondsLoader = Future<int> Function();
 
 final nativeSecurityBridgeProvider = Provider<NativeSecurityBridge>((ref) {
@@ -89,9 +88,11 @@ final secureKeyGatewayProvider = Provider<SecureKeyGateway>((ref) {
   );
 });
 
-final appForegroundReaderProvider = Provider<AppForegroundReader>((ref) {
+final appUnlockVisibilityReaderProvider = Provider<AppUnlockVisibilityReader>((
+  ref,
+) {
   throw StateError(
-    'appForegroundReaderProvider must be overridden by app composition',
+    'appUnlockVisibilityReaderProvider must be overridden by app composition',
   );
 });
 
@@ -136,7 +137,7 @@ final securityOrchestratorProvider = Provider<SecurityOrchestrator>((ref) {
     sessionKeyStore: ref.watch(databaseSessionKeyStoreProvider),
     database: ref.watch(appDatabaseProvider),
     logger: ref.watch(loggerProvider),
-    appIsForeground: ref.watch(appForegroundReaderProvider),
+    appUnlockVisibility: ref.watch(appUnlockVisibilityReaderProvider),
     legacySecurityMigration: ref.watch(legacySecurityMigrationProvider),
   );
 });

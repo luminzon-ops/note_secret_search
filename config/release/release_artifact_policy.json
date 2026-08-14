@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "product": "Note Secret Search",
-  "versionName": "0.2.0",
-  "versionCode": 2,
-  "tag": "v0.2.0",
+  "versionName": "0.2.1",
+  "versionCode": 3,
+  "tag": "v0.2.1",
   "flutter": "3.41.5",
   "dart": "3.11.3",
   "jdk": "17",

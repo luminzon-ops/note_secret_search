@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1+3 - 2026-08-13
+
+- Fixes Huawei biometric unlock crashes caused by clearing read-only `StandardMessageCodec` byte views.
+- Allows authenticated results to complete during the temporary inactive state while keeping sensitive content shielded until resume.
+- Restores the secure lock screen after system authentication is cancelled or fails, and adds sanitized fallback handling for unexpected bridge errors.
+- Makes release notes tag-driven and generalizes the Huawei closeout gate for versioned hotfix validation.
+
 ## 0.2.0+2 - 2026-08-05
 
 - Adds Phase 9 release readiness contracts for CI, artifact provenance, version ownership, signing boundaries, and release documentation.

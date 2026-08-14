@@ -24,7 +24,7 @@ void _registerAppLockProvisionMigrationCases() {
               sessionKeyStore: DatabaseSessionKeyStore(),
               database: FakeAppDatabase(),
               logger: const AppLogger(),
-              appIsForeground: () => true,
+              appUnlockVisibility: () => AppUnlockVisibility.foreground,
             ),
           ),
         ],
@@ -56,7 +56,7 @@ void _registerAppLockProvisionMigrationCases() {
       sessionKeyStore: DatabaseSessionKeyStore(),
       database: FakeAppDatabase(),
       logger: const AppLogger(),
-      appIsForeground: () => true,
+      appUnlockVisibility: () => AppUnlockVisibility.foreground,
     );
     var unlocked = false;
 
@@ -119,7 +119,7 @@ void _registerAppLockProvisionMigrationCases() {
       sessionKeyStore: DatabaseSessionKeyStore(),
       database: FakeAppDatabase(),
       logger: const AppLogger(),
-      appIsForeground: () => true,
+      appUnlockVisibility: () => AppUnlockVisibility.foreground,
       legacySecurityMigration: migration,
     );
 
@@ -168,7 +168,7 @@ void _registerAppLockProvisionMigrationCases() {
       sessionKeyStore: DatabaseSessionKeyStore(),
       database: database,
       logger: const AppLogger(),
-      appIsForeground: () => true,
+      appUnlockVisibility: () => AppUnlockVisibility.foreground,
     );
 
     await tester.pumpWidget(

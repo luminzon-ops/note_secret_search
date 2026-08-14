@@ -4,7 +4,7 @@ void _registerNativeSecurityUnlockDecodeCases({
   required MethodChannel channel,
   required TestDefaultBinaryMessenger messenger,
 }) {
-  test('NativeUnlockResult takes ownership of decoder key arrays', () {
+  test('NativeUnlockResult owns writable copies of decoder key arrays', () {
     final databaseKey = Uint8List.fromList(List<int>.filled(32, 7));
     final fieldKey = Uint8List.fromList(List<int>.filled(32, 9));
     final fingerprintKey = Uint8List.fromList(List<int>.filled(32, 11));
@@ -17,10 +17,120 @@ void _registerNativeSecurityUnlockDecodeCases({
     );
 
     result.clear();
+    result.clear();
 
-    expect(databaseKey, everyElement(0));
-    expect(fieldKey, everyElement(0));
-    expect(fingerprintKey, everyElement(0));
+    expect(databaseKey, everyElement(7));
+    expect(fieldKey, everyElement(9));
+    expect(fingerprintKey, everyElement(11));
+    expect(result.databaseKey, everyElement(0));
+    expect(result.fieldKey, everyElement(0));
+    expect(result.searchIndexFingerprintKey, everyElement(0));
+    expect(result.isCleared, isTrue);
+  });
+
+  test('codec-decoded key material can be parsed and cleared repeatedly', () {
+    const codec = StandardMessageCodec();
+    final encoded = codec.encodeMessage(<String, Object?>{
+      'keyId': _validKeyId,
+      'databaseKey': Uint8List.fromList(List<int>.filled(32, 7)),
+      'fieldKey': Uint8List.fromList(List<int>.filled(32, 9)),
+      'searchIndexFingerprintKey': Uint8List.fromList(List<int>.filled(32, 11)),
+      'unlockMethod': 'system',
+    });
+    final decoded = codec.decodeMessage(encoded) as Map<Object?, Object?>;
+    for (final field in <String>[
+      'databaseKey',
+      'fieldKey',
+      'searchIndexFingerprintKey',
+    ]) {
+      decoded[field] = (decoded[field] as Uint8List).asUnmodifiableView();
+    }
+
+    final result = parseNativeUnlockResult(
+      decoded,
+      expectedUnlockMethod: 'system',
+    );
+
+    expect(result.databaseKey, everyElement(7));
+    expect(result.fieldKey, everyElement(9));
+    expect(result.searchIndexFingerprintKey, everyElement(11));
+    expect(() => result.clear(), returnsNormally);
+    expect(() => result.clear(), returnsNormally);
+    expect(result.databaseKey, everyElement(0));
+    expect(result.fieldKey, everyElement(0));
+    expect(result.searchIndexFingerprintKey, everyElement(0));
+  });
+
+  test('read-only codec ByteData decodes into clearable owned keys', () {
+    const codec = StandardMessageCodec();
+    final encoded = codec.encodeMessage(<String, Object?>{
+      'keyId': _validKeyId,
+      'databaseKey': Uint8List.fromList(List<int>.filled(32, 7)),
+      'fieldKey': Uint8List.fromList(List<int>.filled(32, 9)),
+      'searchIndexFingerprintKey': Uint8List.fromList(List<int>.filled(32, 11)),
+      'unlockMethod': 'system',
+    });
+    final decoded = codec.decodeMessage(encoded!.asUnmodifiableView());
+
+    final result = parseNativeUnlockResult(
+      decoded,
+      expectedUnlockMethod: 'system',
+    );
+
+    expect(result.databaseKey, everyElement(7));
+    expect(result.fieldKey, everyElement(9));
+    expect(result.searchIndexFingerprintKey, everyElement(11));
+    expect(() => result.clear(), returnsNormally);
+    expect(() => result.clear(), returnsNormally);
+    expect(result.databaseKey, everyElement(0));
+    expect(result.fieldKey, everyElement(0));
+    expect(result.searchIndexFingerprintKey, everyElement(0));
+  });
+
+  test('malformed read-only payload preserves its format error', () {
+    final payload = _validUnlockPayload()
+      ..['keyId'] = 'invalid-key-id'
+      ..updateAll((key, value) {
+        if (value is Uint8List) {
+          return value.asUnmodifiableView();
+        }
+        return value;
+      });
+
+    expect(
+      () => parseNativeUnlockResult(payload),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('legacy migration password is copied from a read-only codec view', () {
+    const codec = StandardMessageCodec();
+    final encoded = codec.encodeMessage(<String, Object?>{
+      ..._validUnlockPayload(),
+      'legacyDatabasePassword': Uint8List.fromList('legacy-password'.codeUnits),
+    });
+    final decoded = codec.decodeMessage(encoded) as Map<Object?, Object?>;
+    for (final field in <String>[
+      'databaseKey',
+      'fieldKey',
+      'searchIndexFingerprintKey',
+      'legacyDatabasePassword',
+    ]) {
+      decoded[field] = (decoded[field] as Uint8List).asUnmodifiableView();
+    }
+
+    final result = parseNativeUnlockResult(
+      decoded,
+      expectedUnlockMethod: 'system',
+      requireLegacyDatabasePassword: true,
+    );
+
+    expect(
+      result.legacyDatabasePassword,
+      orderedEquals('legacy-password'.codeUnits),
+    );
+    expect(() => result.clear(), returnsNormally);
+    expect(result.legacyDatabasePassword, everyElement(0));
   });
 
   test('unlockWithSystemAuth decodes typed key material', () async {

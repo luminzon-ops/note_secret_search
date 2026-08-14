@@ -64,12 +64,11 @@ NativeUnlockResult parseNativeUnlockResult(
       unlockMethod: unlockMethod as String,
       legacyDatabasePassword: legacyDatabasePassword as Uint8List?,
     );
-  } catch (_) {
+  } finally {
     _clearReceivedKey(databaseKey);
     _clearReceivedKey(fieldKey);
     _clearReceivedKey(searchIndexFingerprintKey);
     _clearReceivedKey(legacyDatabasePassword);
-    rethrow;
   }
 }
 
@@ -210,7 +209,11 @@ String? _parseDigest(Object? value) {
 
 void _clearReceivedKey(Object? value) {
   if (value is Uint8List) {
-    value.fillRange(0, value.length, 0);
+    try {
+      value.fillRange(0, value.length, 0);
+    } on UnsupportedError {
+      // StandardMessageCodec can expose platform-owned read-only byte views.
+    }
   }
 }
 

@@ -41,9 +41,8 @@ void main() {
         ProviderScope(
           overrides: [
             cryptoServiceProvider.overrideWith(
-              (ref) => AesGcmFieldCrypto(
-                sessionKeyStore: DatabaseSessionKeyStore(),
-              ),
+              (ref) =>
+                  AesGcmFieldCrypto(sessionKeyStore: DatabaseSessionKeyStore()),
             ),
             lockSessionControllerProvider.overrideWith(
               (ref) => sessionController,
@@ -63,7 +62,7 @@ void main() {
                 sessionKeyStore: DatabaseSessionKeyStore(),
                 database: database,
                 logger: const AppLogger(),
-                appIsForeground: () => true,
+                appUnlockVisibility: () => AppUnlockVisibility.foreground,
               ),
             ),
             securitySettingsRepositoryProvider.overrideWith(
@@ -84,11 +83,10 @@ void main() {
               router = ref.watch(appRouterProvider);
               return MaterialApp.router(
                 routerConfig: router,
-                builder: (context, child) =>
-                    AppLockRouteGate(
-                      router: router,
-                      child: child ?? const SizedBox.shrink(),
-                    ),
+                builder: (context, child) => AppLockRouteGate(
+                  router: router,
+                  child: child ?? const SizedBox.shrink(),
+                ),
               );
             },
           ),

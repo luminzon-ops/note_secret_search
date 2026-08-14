@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,32 +23,101 @@ env:
   JAVA_VERSION: "17"
 
 jobs:
+  release-preflight:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      notes_file: ${{ steps.metadata.outputs.notes_file }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Validate tag, version, and release notes
+        id: metadata
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "Invalid release tag: $env:RELEASE_TAG"
+          }
+          git fetch --force --tags origin master
+          $tagSha = (git rev-parse "$($env:RELEASE_TAG)^{commit}").Trim()
+          $masterSha = (git rev-parse 'origin/master^{commit}').Trim()
+          if ([string]::IsNullOrWhiteSpace($tagSha) -or
+              [string]::IsNullOrWhiteSpace($masterSha)) {
+            throw 'Unable to resolve release tag or origin/master.'
+          }
+          git merge-base --is-ancestor $tagSha $masterSha
+          if ($LASTEXITCODE -ne 0 -or $tagSha -ne $masterSha) {
+            throw 'Release tag must point to the current origin/master merge commit.'
+          }
+          $pubspec = Get-Content pubspec.yaml -Raw
+          if ($pubspec -notmatch '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$') {
+            throw 'Unable to parse pubspec version.'
+          }
+          $versionName = $matches[1]
+          $versionCode = [int]$matches[2]
+          $policy = Get-Content config/release/release_artifact_policy.json -Raw |
+            ConvertFrom-Json
+          if ($env:RELEASE_TAG -ne "v$versionName" -or
+              $policy.tag -ne $env:RELEASE_TAG -or
+              $policy.versionName -ne $versionName -or
+              [int]$policy.versionCode -ne $versionCode) {
+            throw 'Release tag, pubspec, and artifact policy do not match.'
+          }
+          $notesFile = "docs/release/$($env:RELEASE_TAG)-release-notes.md"
+          if (-not (Test-Path -LiteralPath $notesFile -PathType Leaf)) {
+            throw "Release notes are missing: $notesFile"
+          }
+          $ledgerFile = "docs/release/$($env:RELEASE_TAG)-release-ledger.md"
+          if (-not (Test-Path -LiteralPath $ledgerFile -PathType Leaf)) {
+            throw "Release ledger is missing: $ledgerFile"
+          }
+          $ledger = Get-Content -LiteralPath $ledgerFile -Raw
+          if ($ledger -match '(?im)^\s*-\s*.*\bpending\b') {
+            throw "Release ledger still contains pending evidence: $ledgerFile"
+          }
+          "release_tag=$($env:RELEASE_TAG)" >> $env:GITHUB_OUTPUT
+          "notes_file=$notesFile" >> $env:GITHUB_OUTPUT
+
   source-draft:
     name: Create source-only draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: vars.NSS_FORMAL_RELEASE_ENABLED != 'true'
+    needs: release-preflight
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-preflight.outputs.release_tag }}
 
       - name: Create source-only draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ needs.release-preflight.outputs.release_tag }}" \
             --draft \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file docs/release/v0.2.0-release-notes.md
+            --title "${{ needs.release-preflight.outputs.release_tag }}" \
+            --notes-file "${{ needs.release-preflight.outputs.notes_file }}"
 
   formal-package:
     name: Package formal release candidate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
+    needs: release-preflight
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-preflight.outputs.release_tag }}
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -102,15 +176,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
-    needs: formal-package
+    needs:
+      - release-preflight
+      - formal-package
     environment: release-signing
     permissions:
       contents: read
       attestations: write
       id-token: write
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-preflight.outputs.release_tag }}
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -141,6 +219,12 @@ jobs:
           test -n "$KEYSTORE_PASSWORD"
           test -n "$KEY_ALIAS"
           test -n "$KEY_PASSWORD"
+          expected_cert=$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          if [[ ! "$expected_cert" =~ ^[0-9a-f]{64}$ ||
+                "$expected_cert" == "unsetreleasecertificatesha256" ]]; then
+            echo 'NSS_RELEASE_CERT_SHA256 must be a configured 64-character SHA-256 digest.' >&2
+            exit 1
+          fi
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
           chmod 600 "$keystore"
           sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -176,8 +260,20 @@ jobs:
             "$KEY_ALIAS"
           jarsigner -verify -verbose -certs signed/app-release-signed.aab \
             > signed/app-release-aab-certs.txt
-          if [ -n "$EXPECTED_CERT_SHA256" ]; then
-            grep -qi "$EXPECTED_CERT_SHA256" signed/app-release-apk-certs.txt
+          keytool -printcert -jarfile signed/app-release-signed.aab \
+            > signed/app-release-aab-fingerprint.txt
+          apk_cert=$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {
+            print $2; exit
+          }' signed/app-release-apk-certs.txt | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          aab_cert=$(awk -F': *' '/SHA-?256:/ {
+            print $2; exit
+          }' signed/app-release-aab-fingerprint.txt | tr -d '[:space:]:' | tr '[:upper:]' '[:lower:]')
+          if [[ ! "$apk_cert" =~ ^[0-9a-f]{64}$ ||
+                ! "$aab_cert" =~ ^[0-9a-f]{64}$ ||
+                "$apk_cert" != "$expected_cert" ||
+                "$aab_cert" != "$expected_cert" ]]; then
+            echo 'Signed APK/AAB certificate does not match NSS_RELEASE_CERT_SHA256.' >&2
+            exit 1
           fi
           sha256sum signed/app-release-signed.apk signed/app-release-signed.aab \
             > signed/SHA256SUMS
@@ -201,11 +297,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: vars.NSS_FORMAL_RELEASE_ENABLED == 'true'
-    needs: sign-formal
+    needs:
+      - release-preflight
+      - sign-formal
     environment: release-publish
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-preflight.outputs.release_tag }}
 
       - name: Download signed formal release
         uses: actions/download-artifact@v4
@@ -217,9 +317,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ needs.release-preflight.outputs.release_tag }}" \
             signed/app-release-signed.apk \
             signed/app-release-signed.aab \
             --draft \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file docs/release/v0.2.0-release-notes.md
+            --title "${{ needs.release-preflight.outputs.release_tag }}" \
+            --notes-file "${{ needs.release-preflight.outputs.notes_file }}"
